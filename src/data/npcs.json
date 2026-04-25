@@ -1,0 +1,33 @@
+[
+  {
+    "kind": "chicken",
+    "name": "Chicken",
+    "size": 1,
+    "isAttackable": true,
+    "ai": "wander",
+    "examine": "It\u2019s a chicken.",
+    "uniqueActions": ["Attack"],
+    "maxHp": 3,
+    "attack": 1,
+    "defense": 1,
+    "attackSpeedTicks": 16,
+    "respawnTicks": 150,
+    "drops": [
+      { "itemId": "egg", "quantity": 1, "rate": 1.0 }
+    ]
+  },
+  {
+    "kind": "shopkeeper",
+    "name": "Shopkeeper",
+    "size": 1,
+    "isAttackable": false,
+    "ai": "static",
+    "examine": "This is a friendly shopkeeper.",
+    "uniqueActions": ["Talk to"],
+    "maxHp": 10,
+    "attack": 0,
+    "defense": 0,
+    "attackSpeedTicks": 0,
+    "drops": []
+  }
+]

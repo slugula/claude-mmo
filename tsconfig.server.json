@@ -1,0 +1,21 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "outDir": "./dist-server",
+    "module": "CommonJS",
+    "moduleResolution": "node",
+    "lib": ["ES2020"],
+    "esModuleInterop": true
+  },
+  "include": [
+    "server/**/*",
+    "src/shared/**/*",
+    "src/systems/**/*",
+    "src/world/Pathfinder.ts",
+    "src/world/WorldState.ts",
+    "src/items/ItemRegistry.ts",
+    "src/npcs/NPCRegistry.ts",
+    "src/data/**/*"
+  ]
+}

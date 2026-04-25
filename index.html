@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>OSRS Prototype</title>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+        scrollbar-width: auto;
+        scrollbar-color: rgba(92, 58, 30, 0.80) rgba(0, 0, 0, 0.30);
+      }
+
+      ::-webkit-scrollbar {
+        width: 12px;
+        height: 12px;
+      }
+
+      ::-webkit-scrollbar-track {
+        background: rgba(0, 0, 0, 0.30);
+      }
+
+      ::-webkit-scrollbar-thumb {
+        background: rgba(92, 58, 30, 0.80);
+        border-radius: 3px;
+      }
+
+      ::-webkit-scrollbar-thumb:hover {
+        background: rgba(120, 80, 40, 0.90);
+      }
+
+      body {
+        background: #000;
+        overflow: hidden;
+        font-family: 'Segoe UI', system-ui, sans-serif;
+      }
+
+      #game-canvas {
+        width: 100vw;
+        height: 100vh;
+        display: block;
+        touch-action: none;
+      }
+
+      #game-ui {
+        position: fixed;
+        bottom: 12px;
+        right: 12px;
+        width: 220px;
+        height: auto;
+        z-index: 10;
+        display: flex;
+        flex-direction: column;
+        background: rgba(18, 9, 0, 0.72);
+        border: 2px solid rgba(92, 58, 30, 0.80);
+        border-radius: 4px;
+        user-select: none;
+        backdrop-filter: blur(1px);
+      }
+
+      #tab-bar {
+        display: flex;
+        border-bottom: 2px solid rgba(92, 58, 30, 0.80);
+        flex-shrink: 0;
+      }
+
+      .tab-button {
+        flex: 1;
+        padding: 8px 4px;
+        background: rgba(30, 16, 6, 0.80);
+        color: #a08060;
+        border: none;
+        border-right: 1px solid rgba(92, 58, 30, 0.60);
+        cursor: pointer;
+        font-size: 11px;
+        font-weight: 600;
+        letter-spacing: 0.5px;
+        text-transform: uppercase;
+        transition: background 0.1s, color 0.1s;
+      }
+
+      .tab-button:last-child {
+        border-right: none;
+      }
+
+      .tab-button:hover {
+        background: rgba(55, 30, 10, 0.90);
+        color: #d4a857;
+      }
+
+      .tab-button.active {
+        background: rgba(18, 9, 0, 0.70);
+        color: #ff981f;
+        border-bottom: 2px solid #ff981f;
+        margin-bottom: -2px;
+      }
+
+      #panel-content {
+        overflow-y: auto;
+        overflow-x: hidden;
+        height: 450px;
+      }
+
+      #debug-panel {
+        position: fixed;
+        top: 12px;
+        right: 12px;
+        z-index: 10;
+        background: rgba(18, 9, 0, 0.72);
+        border: 2px solid rgba(92, 58, 30, 0.80);
+        border-radius: 4px;
+        padding: 6px 10px;
+        font-size: 10px;
+        color: #806040;
+        user-select: none;
+        backdrop-filter: blur(1px);
+        line-height: 1.6;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="game-canvas"></canvas>
+    <div id="game-ui">
+      <div id="tab-bar"></div>
+      <div id="panel-content"></div>
+    </div>
+    <div id="debug-panel">
+      <span id="status-tick" style="display:block">Tick: 0</span>
+      <span id="status-pos" style="display:block">Pos: (32, 32)</span>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
