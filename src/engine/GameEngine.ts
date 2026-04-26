@@ -170,7 +170,7 @@ export class GameEngine {
       this.ui.update(this.currentState, localId);
     });
 
-    this.network.connect('ws://localhost:8080');
+    this.network.connect('ws://34.204.12.71/ws');
 
     this.setupResize(canvas);
     this.startRenderLoop();
