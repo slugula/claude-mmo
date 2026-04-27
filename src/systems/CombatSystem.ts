@@ -1,12 +1,56 @@
 import type {
   PlayerState, NPCState, DroppedItemState, GameAction, WorldState, GridPosition, RespawnEntry, Direction,
+  EquipSlot, ItemStack,
 } from '../shared/types';
 import { findPath } from '../world/Pathfinder';
 import { getNPCDef } from '../npcs/NPCRegistry';
+import { getItem } from '../items/ItemRegistry';
+import { addXP } from './SkillSystem';
 
 const PLAYER_ATTACK_SPEED = 12;
-const PLAYER_DAMAGE = 1;
 const DEATH_TICKS = 5;
+
+// ---- Equipment bonus helpers ----
+
+function getEquipBonuses(equipped: Partial<Record<EquipSlot, ItemStack>>): {
+  attackBonus: number; strengthBonus: number; defenceBonus: number;
+} {
+  let atk = 0, str = 0, def = 0;
+  for (const stack of Object.values(equipped)) {
+    if (!stack) continue;
+    const item = getItem(stack.itemId);
+    if (!item?.stats) continue;
+    atk += item.stats.attackBonus   ?? 0;
+    str += item.stats.strengthBonus ?? 0;
+    def += item.stats.defenseBonus  ?? 0;
+  }
+  return { attackBonus: atk, strengthBonus: str, defenceBonus: def };
+}
+
+// ---- Attack resolution ----
+
+/**
+ * Rolls whether an attack lands.
+ * attackRoll and defenceRoll are positive integers (higher = better).
+ */
+function rollHit(attackRoll: number, defenceRoll: number): boolean {
+  return Math.random() < attackRoll / (attackRoll + defenceRoll);
+}
+
+/**
+ * Computes the player's max hit based on warrior level and equipment strength bonus.
+ * Simplified OSRS formula.
+ */
+function playerMaxHit(warriorLevel: number, strengthBonus: number): number {
+  return Math.max(1, Math.floor(0.5 + warriorLevel * (strengthBonus + 64) / 640));
+}
+
+/**
+ * NPC max hit based on attack stat (OSRS-style: floor(attack / 2)).
+ */
+function npcMaxHit(attack: number): number {
+  return Math.floor(attack / 2);
+}
 
 export interface CombatResult {
   player: PlayerState;
@@ -126,15 +170,36 @@ export function processCombat(
 
       if (tick - nextPlayer.lastAttackTick >= PLAYER_ATTACK_SPEED) {
         const def = getNPCDef(target.kind);
-        const newHp = target.hp - PLAYER_DAMAGE;
         const idx = nextNPCs.findIndex(n => n.id === target.id);
+
+        // --- Accuracy & damage roll ---
+        const bonuses      = getEquipBonuses(nextPlayer.equipped);
+        const warriorLevel = nextPlayer.skills.warrior?.level ?? 1;
+        const attackRoll   = warriorLevel + bonuses.attackBonus + 9;
+        const defenceRoll  = def.defense + 9;
+        const hit          = rollHit(attackRoll, defenceRoll);
+        const maxHit       = playerMaxHit(warriorLevel, bonuses.strengthBonus);
+        const damage       = hit ? (Math.floor(Math.random() * maxHit) + 1) : 0;
+
+        // --- Apply to NPC ---
+        const newHp = target.hp - damage;
         if (newHp <= 0) {
-          nextNPCs[idx] = { ...target, hp: 0, dying: true, dyingTick: tick };
+          nextNPCs[idx] = { ...target, hp: 0, dying: true, dyingTick: tick, lastHitTick: tick, lastHitDamage: damage };
           nextPlayer = { ...nextPlayer, attackTargetId: null, lastAttackTick: tick };
           messages.push(`You have defeated the ${def.name}.`);
         } else {
-          nextNPCs[idx] = { ...target, hp: newHp };
+          nextNPCs[idx] = { ...target, hp: newHp, lastHitTick: tick, lastHitDamage: damage };
           nextPlayer = { ...nextPlayer, lastAttackTick: tick };
+        }
+
+        // --- Award Warrior XP: damage dealt × 4 ---
+        if (damage > 0) {
+          const xpResult = addXP(nextPlayer.skills.warrior, damage * 4);
+          const newSkills = { ...nextPlayer.skills, warrior: xpResult.skill };
+          nextPlayer = { ...nextPlayer, skills: newSkills };
+          if (xpResult.levelsGained > 0) {
+            messages.push(`Level up! Warrior is now level ${xpResult.skill.level}.`);
+          }
         }
       }
     } else {
@@ -169,7 +234,15 @@ export function processCombat(
     if (!is4Adjacent(pos(npc), pos(nextPlayer))) continue;
     if (tick - npc.lastAttackTick < def.attackSpeedTicks) continue;
 
-    const damage = rollDamage(def.attack);
+    // --- NPC accuracy vs player defence ---
+    const playerBonuses = getEquipBonuses(nextPlayer.equipped);
+    const defenceLevel  = nextPlayer.skills.defence?.level ?? 1;
+    const npcAttackRoll  = def.attack + 9;
+    const playerDefRoll  = defenceLevel + playerBonuses.defenceBonus + 9;
+    const npcHit         = rollHit(npcAttackRoll, playerDefRoll);
+    const maxDmg         = npcMaxHit(def.attack);
+    const damage         = npcHit ? (maxDmg > 0 ? Math.floor(Math.random() * maxDmg) + 1 : 0) : 0;
+
     const newHp = Math.max(0, nextPlayer.hp - damage);
     nextPlayer = {
       ...nextPlayer,
@@ -181,12 +254,6 @@ export function processCombat(
   }
 
   return { player: nextPlayer, npcs: nextNPCs, droppedItems: nextDropped, messages, newRespawns };
-}
-
-// Chicken has attack=1 → max hit=0 → always 0 damage (blue hitsplat).
-function rollDamage(attack: number): number {
-  const max = Math.floor(attack / 2);
-  return Math.floor(Math.random() * (max + 1));
 }
 
 export function findReachableAdjacent(

@@ -18,6 +18,9 @@ export class DroppedItemEntity {
       case 'logs':
       case 'oak_logs':
       case 'willow_logs':     return this.buildLog(id, itemId, tileX, tileY, scene);
+      case 'bronze_sword':
+      case 'iron_sword':
+      case 'bronze_longsword': return this.buildSword(id, itemId, tileX, tileY, scene);
       default:                return this.buildGeneric(id, itemId, tileX, tileY, scene);
     }
   }
@@ -155,6 +158,51 @@ export class DroppedItemEntity {
     spike.position = new Vector3(0.21, 0, -0.21);
     spike.isPickable = false;
     spike.parent = root;
+
+    return root;
+  }
+
+  // ---- Sword (lying flat on the ground, diagonal) ----
+
+  private buildSword(id: string, itemId: string, tileX: number, tileY: number, scene: Scene): Mesh {
+    const isLong = itemId === 'bronze_longsword';
+    const bladeLen = isLong ? 0.56 : 0.44;
+
+    const COLORS: Record<string, [Color3, Color3, Color3]> = {
+      bronze_sword:    [new Color3(0.78, 0.48, 0.19), new Color3(0.62, 0.36, 0.10), new Color3(0.36, 0.18, 0.04)],
+      iron_sword:      [new Color3(0.55, 0.55, 0.58), new Color3(0.40, 0.40, 0.42), new Color3(0.20, 0.20, 0.22)],
+      bronze_longsword:[new Color3(0.78, 0.48, 0.19), new Color3(0.62, 0.36, 0.10), new Color3(0.36, 0.18, 0.04)],
+    };
+    const [bladeColor, guardColor, handleColor] = COLORS[itemId] ?? COLORS['bronze_sword'];
+
+    // Invisible root / hitbox
+    const root = MeshBuilder.CreateBox(`item-${id}`, { width: 0.62, height: 0.06, depth: 0.62 }, scene);
+    root.position = new Vector3(tileX, 0.03, tileY);
+    root.isPickable = true;
+    root.visibility = 0;
+
+    const bladeMat  = flatMat(`sword-blade-${id}`,  bladeColor,  scene);
+    const guardMat  = flatMat(`sword-guard-${id}`,  guardColor,  scene);
+    const handleMat = flatMat(`sword-handle-${id}`, handleColor, scene);
+
+    // Blade — long flat bar, rotated 45° around Y, lying flat
+    const blade = box(`sword-blade-${id}`, bladeLen, 0.025, 0.06, 0, 0, 0, bladeMat, scene);
+    blade.rotation.y = Math.PI / 4;
+    blade.parent = root;
+
+    // Crossguard — perpendicular short bar
+    const guard = box(`sword-guard-${id}`, 0.05, 0.030, 0.22, 0, 0, 0, guardMat, scene);
+    guard.rotation.y = Math.PI / 4;
+    guard.position.x = -bladeLen * 0.30;
+    guard.position.z = bladeLen * 0.30;
+    guard.parent = root;
+
+    // Handle — grip below guard
+    const handle = box(`sword-handle-${id}`, 0.16, 0.025, 0.04, 0, 0, 0, handleMat, scene);
+    handle.rotation.y = Math.PI / 4;
+    handle.position.x = -bladeLen * 0.46;
+    handle.position.z = bladeLen * 0.46;
+    handle.parent = root;
 
     return root;
   }

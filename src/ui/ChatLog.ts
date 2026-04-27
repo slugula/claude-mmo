@@ -98,6 +98,10 @@ this.spacer = document.createElement('div');
 
   private setupKeyboard(): void {
     window.addEventListener('keydown', (e) => {
+      // Never intercept input while a real text field has focus (modal name box, etc.)
+      const tag = (document.activeElement?.tagName ?? '').toLowerCase();
+      if (tag === 'input' || tag === 'textarea') return;
+
       if (e.key.startsWith('Arrow')) return;
 
       if (e.key === 'Backspace') {

@@ -168,6 +168,93 @@ const CUSTOM_SPRITES: Record<string, DrawFn> = {
   // Same sprite for iron_axe
   iron_axe: (ctx, w, h) => CUSTOM_SPRITES['axe'](ctx, w, h),
 
+  // ---- Bronze Longsword ----
+  bronze_longsword: (ctx, w, h) => {
+    // Diagonal layout: tip upper-right, pommel lower-left
+    const angle = -Math.PI / 4;   // 45° diagonal
+
+    ctx.save();
+    ctx.translate(w * 0.50, h * 0.50);
+    ctx.rotate(angle);
+
+    // Blade — long, slightly tapered rectangle
+    const bladeLen = h * 0.72;
+    const bladeW   = w * 0.09;
+    ctx.fillStyle = '#c87c30';
+    ctx.strokeStyle = '#1a1a1a';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    // Base of blade (where guard meets)
+    ctx.moveTo(-bladeW / 2, bladeLen * 0.12);
+    ctx.lineTo( bladeW / 2, bladeLen * 0.12);
+    // Taper to tip
+    ctx.lineTo(1.5, -bladeLen * 0.72);
+    ctx.lineTo(-1.5, -bladeLen * 0.72);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    // Blade edge highlight
+    ctx.fillStyle = '#e8a855';
+    ctx.beginPath();
+    ctx.moveTo(0, bladeLen * 0.10);
+    ctx.lineTo(1, -bladeLen * 0.68);
+    ctx.lineTo(-0.5, -bladeLen * 0.68);
+    ctx.closePath();
+    ctx.globalAlpha = 0.4;
+    ctx.fill();
+    ctx.globalAlpha = 1;
+
+    // Crossguard — horizontal bar
+    const guardW = w * 0.42;
+    const guardH = h * 0.06;
+    ctx.fillStyle = '#a06020';
+    ctx.strokeStyle = '#1a1a1a';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.roundRect(-guardW / 2, bladeLen * 0.10, guardW, guardH, 2);
+    ctx.fill();
+    ctx.stroke();
+
+    // Guard highlight
+    ctx.fillStyle = 'rgba(220,160,80,0.35)';
+    ctx.fillRect(-guardW / 2 + 2, bladeLen * 0.10 + 1, guardW - 4, 2);
+
+    // Handle — shorter bar below guard
+    const handleLen = h * 0.30;
+    const handleW   = w * 0.07;
+    ctx.fillStyle = '#5c2e0a';
+    ctx.strokeStyle = '#1a1a1a';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.roundRect(-handleW / 2, bladeLen * 0.16, handleW, handleLen, 2);
+    ctx.fill();
+    ctx.stroke();
+
+    // Handle grip wrap
+    ctx.strokeStyle = '#3a1800';
+    ctx.lineWidth = 0.8;
+    for (let i = 0; i < 3; i++) {
+      const y = bladeLen * 0.20 + i * (handleLen * 0.28);
+      ctx.beginPath();
+      ctx.moveTo(-handleW / 2 + 1, y);
+      ctx.lineTo( handleW / 2 - 1, y);
+      ctx.stroke();
+    }
+
+    // Pommel — round cap at end of handle
+    const pommY = bladeLen * 0.16 + handleLen + w * 0.06;
+    ctx.fillStyle = '#a06020';
+    ctx.strokeStyle = '#1a1a1a';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.ellipse(0, pommY, w * 0.075, w * 0.065, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.restore();
+  },
+
   // ---- Log ----
   logs: (ctx, w, h) => drawLog(ctx, w, h, '#4a1e06', '#8b5020', '#6a3210'),
   oak_logs:    (ctx, w, h) => drawLog(ctx, w, h, '#5a2808', '#a06030', '#7a4420'),

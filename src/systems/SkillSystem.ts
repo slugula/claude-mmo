@@ -65,16 +65,18 @@ export function createDefaultSkills(): SkillsState {
   return skills;
 }
 
+
 export function getTotalLevel(skills: SkillsState): number {
   return ALL_SKILLS.reduce((sum, id) => sum + skills[id].level, 0);
 }
 
 export function getCombatLevel(skills: SkillsState): number {
-  const { attack, strength, defence, hitpoints, prayer, ranged, magic } = skills;
-  const base = 0.25 * (defence.level + hitpoints.level + Math.floor(prayer.level / 2));
-  const melee = 0.325 * (attack.level + strength.level);
-  const range = 0.325 * Math.floor(ranged.level * 1.5);
-  const mage  = 0.325 * Math.floor(magic.level * 1.5);
+  // Use optional chaining — server may send state from an older build
+  const def = (s: SkillState | undefined) => s?.level ?? 1;
+  const base  = 0.25 * (def(skills.defence) + def(skills.hitpoints) + Math.floor(def(skills.prayer) / 2));
+  const melee = 0.65 * def(skills.warrior);   // warrior merges attack + strength
+  const range = 0.325 * Math.floor(def(skills.ranged) * 1.5);
+  const mage  = 0.325 * Math.floor(def(skills.magic)  * 1.5);
   return Math.floor(base + Math.max(melee, range, mage));
 }
 

@@ -2,7 +2,23 @@ import {
   Scene, Mesh, MeshBuilder, StandardMaterial,
   Color3, Vector3,
 } from '@babylonjs/core';
-import type { PlayerState, Direction, EquipSlot, ItemStack } from '../shared/types';
+import type { PlayerState, Direction, EquipSlot, ItemStack, ShirtColor, SkinColor } from '../shared/types';
+
+// ---- Appearance colour tables ----
+
+export const SHIRT_COLORS: Record<ShirtColor, Color3> = {
+  blue:   new Color3(0.13, 0.27, 0.80),
+  red:    new Color3(0.80, 0.13, 0.13),
+  yellow: new Color3(0.80, 0.67, 0.13),
+  green:  new Color3(0.13, 0.53, 0.13),
+};
+
+export const SKIN_COLORS: Record<SkinColor, Color3> = {
+  fair:  new Color3(0.96, 0.83, 0.69),
+  tan:   new Color3(0.83, 0.58, 0.42),
+  olive: new Color3(0.61, 0.45, 0.27),
+  brown: new Color3(0.42, 0.26, 0.15),
+};
 
 const FACING_ROTATION: Record<Direction, number> = {
   south: 0,
@@ -26,6 +42,10 @@ export class PlayerEntity {
   private heldItemRoot: Mesh | null = null;
   private lastRightHandId: string | null = null;
   private lungeStartMs: number = -1;
+  private lastShirtColor: ShirtColor | null = null;
+  private lastSkinColor:  SkinColor  | null = null;
+  private shirtMat: StandardMaterial | null = null;
+  private skinMat:  StandardMaterial | null = null;
   private static readonly LUNGE_DURATION_MS = 220;
   private static readonly LUNGE_DIST = 0.20;
 
@@ -47,14 +67,16 @@ export class PlayerEntity {
   }
 
   private buildAvatar(scene: Scene, id = 'local'): typeof this.parts {
-    const skinMat = new StandardMaterial(`skin-${id}`, scene);
-    skinMat.diffuseColor = new Color3(0.78, 0.61, 0.46);
+    this.skinMat = new StandardMaterial(`skin-${id}`, scene);
+    this.skinMat.diffuseColor = SKIN_COLORS.fair.clone();
+    const skinMat = this.skinMat;
 
     const noseMat = new StandardMaterial(`nose-${id}`, scene);
     noseMat.diffuseColor = new Color3(0.55, 0.38, 0.28);
 
-    const shirtMat = new StandardMaterial(`shirt-${id}`, scene);
-    shirtMat.diffuseColor = new Color3(0.2, 0.35, 0.65);
+    this.shirtMat = new StandardMaterial(`shirt-${id}`, scene);
+    this.shirtMat.diffuseColor = SHIRT_COLORS.blue.clone();
+    const shirtMat = this.shirtMat;
 
     const pantsMat = new StandardMaterial(`pants-${id}`, scene);
     pantsMat.diffuseColor = new Color3(0.25, 0.22, 0.18);
@@ -85,6 +107,16 @@ export class PlayerEntity {
     return { head, torso, armL, armR, legL, legR };
   }
 
+  // ---- Appearance ----
+
+  updateAppearance(shirtColor: ShirtColor, skinColor: SkinColor): void {
+    if (shirtColor === this.lastShirtColor && skinColor === this.lastSkinColor) return;
+    this.lastShirtColor = shirtColor;
+    this.lastSkinColor  = skinColor;
+    if (this.shirtMat) this.shirtMat.diffuseColor = SHIRT_COLORS[shirtColor]?.clone() ?? SHIRT_COLORS.blue.clone();
+    if (this.skinMat)  this.skinMat.diffuseColor  = SKIN_COLORS[skinColor]?.clone()   ?? SKIN_COLORS.fair.clone();
+  }
+
   // ---- Equipped item mesh ----
 
   updateEquipped(equipped: Partial<Record<EquipSlot, ItemStack>>): void {
@@ -106,10 +138,13 @@ export class PlayerEntity {
 
   private buildHeldMesh(itemId: string, scene: Scene): Mesh | null {
     switch (itemId) {
-      case 'pickaxe':  return this.buildHeldPickaxe(scene);
+      case 'pickaxe':          return this.buildHeldPickaxe(scene);
       case 'axe':
-      case 'iron_axe': return this.buildHeldAxe(itemId, scene);
-      default:         return null;
+      case 'iron_axe':         return this.buildHeldAxe(itemId, scene);
+      case 'bronze_sword':
+      case 'iron_sword':       return this.buildHeldSword(itemId, scene, false);
+      case 'bronze_longsword': return this.buildHeldSword(itemId, scene, true);
+      default:                 return null;
     }
   }
 
@@ -169,6 +204,36 @@ export class PlayerEntity {
 
     // Poll — small protrusion on the right side (opposite the blade)
     pBox('haxe-poll', 0.06, 0.07, 0.06, 0.44, 0.82, 0.06, ironMat, scene, root);
+
+    return root;
+  }
+
+  private buildHeldSword(itemId: string, scene: Scene, isLong: boolean): Mesh {
+    // Sword held vertically in right hand — blade points up, pommel down
+    const root = new Mesh(`held-${itemId}`, scene);
+    root.isPickable = false;
+
+    const isBronze = itemId.startsWith('bronze');
+    const bladeColor  = isBronze ? new Color3(0.78, 0.48, 0.19) : new Color3(0.60, 0.60, 0.65);
+    const guardColor  = isBronze ? new Color3(0.62, 0.36, 0.10) : new Color3(0.42, 0.42, 0.44);
+    const handleColor = new Color3(0.36, 0.18, 0.04);
+
+    const bladeMat  = pMat(`hswrd-blade-${itemId}`,  bladeColor,  scene);
+    const guardMat  = pMat(`hswrd-guard-${itemId}`,  guardColor,  scene);
+    const handleMat = pMat(`hswrd-handle-${itemId}`, handleColor, scene);
+
+    // Blade — tall thin bar extending upward from the grip
+    const bladeH = isLong ? 0.58 : 0.44;
+    pBox(`hswrd-blade-${itemId}`,  0.04, bladeH, 0.04,  0.36, 0.88, 0.06, bladeMat,  scene, root);
+
+    // Crossguard — horizontal bar at blade base
+    pBox(`hswrd-guard-${itemId}`,  0.18, 0.04,  0.05,  0.36, 0.59, 0.06, guardMat,  scene, root);
+
+    // Handle — grip below guard
+    pBox(`hswrd-handle-${itemId}`, 0.04, 0.22,  0.04,  0.36, 0.46, 0.06, handleMat, scene, root);
+
+    // Pommel — small cap at base of handle
+    pBox(`hswrd-pommel-${itemId}`, 0.07, 0.04,  0.05,  0.36, 0.34, 0.06, guardMat,  scene, root);
 
     return root;
   }

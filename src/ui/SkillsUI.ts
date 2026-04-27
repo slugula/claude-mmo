@@ -3,23 +3,22 @@ import type { SkillsState, SkillId } from '../shared/types';
 import { progressToNextLevel } from '../systems/SkillSystem';
 
 const SKILL_COLORS: Record<SkillId, string> = {
-  attack:       '#e05050',
+  warrior:      '#d4882c',
   hitpoints:    '#e06060',
   mining:       '#8888cc',
-  strength:     '#e07040',
+  defence:      '#60a0e0',
   agility:      '#80c0d0',
   smithing:     '#c0a840',
-  defence:      '#60a0e0',
   herblore:     '#50c050',
   fishing:      '#6080d0',
+  cooking:      '#d08030',
   ranged:       '#70c060',
   thieving:     '#c060a0',
-  cooking:      '#d08030',
+  firemaking:   '#e08020',
   prayer:       '#e0d060',
   crafting:     '#c08050',
-  firemaking:   '#e08020',
-  magic:        '#8060e0',
   fletching:    '#60b060',
+  magic:        '#8060e0',
   woodcutting:  '#509040',
   runecraft:    '#d0c060',
   slayer:       '#c03030',
@@ -29,23 +28,22 @@ const SKILL_COLORS: Record<SkillId, string> = {
 };
 
 const SKILL_DISPLAY_NAMES: Record<SkillId, string> = {
-  attack:       'Attack',
+  warrior:      'Warrior',
   hitpoints:    'Hitpoints',
   mining:       'Mining',
-  strength:     'Strength',
+  defence:      'Defence',
   agility:      'Agility',
   smithing:     'Smithing',
-  defence:      'Defence',
   herblore:     'Herblore',
   fishing:      'Fishing',
+  cooking:      'Cooking',
   ranged:       'Ranged',
   thieving:     'Thieving',
-  cooking:      'Cooking',
+  firemaking:   'Firemaking',
   prayer:       'Prayer',
   crafting:     'Crafting',
-  firemaking:   'Firemaking',
-  magic:        'Magic',
   fletching:    'Fletching',
+  magic:        'Magic',
   woodcutting:  'Woodcutting',
   runecraft:    'Runecraft',
   slayer:       'Slayer',
@@ -65,7 +63,6 @@ export class SkillsUI {
       gap: 2px;
       padding: 6px;
       align-content: start;
-      min-height: 100%;
     `;
     this.buildCells();
   }
@@ -146,7 +143,7 @@ export class SkillsUI {
 
   update(skills: SkillsState): void {
     for (const id of VISIBLE_SKILLS) {
-      const skill = skills[id];
+      const skill = skills[id] ?? { level: 1, xp: 0 };  // safe against old server builds
       const lvlEl = this.container.querySelector(`.skill-lvl-${id}`) as HTMLElement | null;
       const barEl = this.container.querySelector(`.skill-bar-${id}`) as HTMLElement | null;
       if (lvlEl) lvlEl.textContent = String(skill.level);

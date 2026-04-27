@@ -32,15 +32,6 @@ export class InventoryUI {
     this.container = document.createElement('div');
     this.container.style.cssText = 'padding: 8px;';
 
-    const title = document.createElement('div');
-    title.style.cssText = `
-      color: #ff981f; font-size: 11px; font-weight: 700;
-      text-transform: uppercase; letter-spacing: 1px;
-      padding: 4px 0 6px; border-bottom: 1px solid #3d2010; margin-bottom: 6px;
-    `;
-    title.textContent = 'Inventory';
-    this.container.appendChild(title);
-
     const grid = document.createElement('div');
     grid.style.cssText = `
       display: grid;

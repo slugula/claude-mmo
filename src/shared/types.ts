@@ -5,10 +5,15 @@ export interface GridPosition {
   y: number;
 }
 
+// ---------- Appearance ----------
+
+export type ShirtColor = 'blue' | 'red' | 'yellow' | 'green';
+export type SkinColor  = 'fair' | 'tan' | 'olive' | 'brown';
+
 // ---------- Skills ----------
 
 export type SkillId =
-  | 'attack' | 'defence' | 'strength' | 'hitpoints'
+  | 'warrior' | 'defence' | 'hitpoints'
   | 'ranged' | 'prayer' | 'magic' | 'cooking'
   | 'woodcutting' | 'fletching' | 'fishing' | 'firemaking'
   | 'crafting' | 'smithing' | 'mining' | 'herblore'
@@ -16,19 +21,19 @@ export type SkillId =
   | 'runecraft' | 'hunter' | 'construction';
 
 export const ALL_SKILLS: SkillId[] = [
-  'attack', 'hitpoints', 'mining',
-  'strength', 'agility', 'smithing',
-  'defence', 'herblore', 'fishing',
-  'ranged', 'thieving', 'cooking',
-  'prayer', 'crafting', 'firemaking',
-  'magic', 'fletching', 'woodcutting',
-  'runecraft', 'slayer', 'farming',
-  'construction', 'hunter',
+  'warrior', 'hitpoints', 'mining',
+  'defence', 'agility', 'smithing',
+  'herblore', 'fishing', 'cooking',
+  'ranged', 'thieving', 'firemaking',
+  'prayer', 'crafting', 'fletching',
+  'magic', 'woodcutting', 'runecraft',
+  'slayer', 'farming', 'construction',
+  'hunter',
 ];
 
 // Only skills with active gameplay systems — shown in the Skills panel
 export const VISIBLE_SKILLS: SkillId[] = [
-  'attack', 'strength', 'defence', 'hitpoints', 'woodcutting',
+  'warrior', 'defence', 'hitpoints', 'woodcutting',
 ];
 
 export interface SkillState {
@@ -102,6 +107,8 @@ export interface NPCState {
   dying: boolean;
   dyingTick: number;
   lastAttackTick: number;
+  lastHitTick: number;
+  lastHitDamage: number;
 }
 
 // ---------- Entities ----------
@@ -125,6 +132,8 @@ export interface PlayerState {
   lastHitTick: number;
   lastHitDamage: number;
   playerName: string;
+  shirtColor: ShirtColor;
+  skinColor: SkinColor;
   chatMessage: string;
   chatMessageTick: number;
   chopTargetX: number | null;
@@ -207,10 +216,12 @@ export interface DropItemAction    { type: 'DROP_ITEM';   slotIndex: number; }
 export interface MoveSlotAction    { type: 'MOVE_SLOT';   fromSlot: number; toSlot: number; }
 export interface EquipItemAction   { type: 'EQUIP_ITEM';  slotIndex: number; }
 export interface UnequipItemAction { type: 'UNEQUIP_ITEM'; slot: EquipSlot; }
-export interface SendChatAction    { type: 'SEND_CHAT';   message: string; }
+export interface SendChatAction       { type: 'SEND_CHAT';      message: string; }
+export interface SetAppearanceAction  { type: 'SET_APPEARANCE'; playerName: string; shirtColor: ShirtColor; skinColor: SkinColor; }
 
 export type GameAction =
   | MoveToAction | ChopTreeAction | MineRockAction
   | AttackNPCAction | TalkToAction | TakeItemAction
   | DropItemAction | MoveSlotAction
-  | EquipItemAction | UnequipItemAction | SendChatAction;
+  | EquipItemAction | UnequipItemAction | SendChatAction
+  | SetAppearanceAction;

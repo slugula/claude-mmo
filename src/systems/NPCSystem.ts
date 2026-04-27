@@ -24,6 +24,8 @@ export function spawnNPC(id: string, kind: NPCKind, x: number, y: number): NPCSt
     dying: false,
     dyingTick: 0,
     lastAttackTick: -999,
+    lastHitTick: 0,
+    lastHitDamage: 0,
   };
 }
 

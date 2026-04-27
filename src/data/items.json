@@ -31,5 +31,6 @@
   { "id": "leather_gloves", "name": "Leather gloves",  "stackable": false, "value": 10,  "equipSlot": "hands",     "stats": { "defenseBonus": 1 } },
   { "id": "leather_boots",  "name": "Leather boots",   "stackable": false, "value": 15,  "equipSlot": "feet",      "stats": { "defenseBonus": 1 } },
   { "id": "gold_ring",      "name": "Gold ring",       "stackable": false, "value": 50,  "equipSlot": "ring",      "stats": {} },
-  { "id": "amulet",         "name": "Amulet of str",   "stackable": false, "value": 200, "equipSlot": "neck",      "stats": { "strengthBonus": 4 } }
+  { "id": "amulet",            "name": "Amulet of str",    "stackable": false, "value": 200, "equipSlot": "neck",      "stats": { "strengthBonus": 4 } },
+  { "id": "bronze_longsword", "name": "Bronze longsword", "stackable": false, "value": 60,  "examine": "Careful not to poke your eye out!", "equipSlot": "rightHand", "stats": { "attackBonus": 8, "strengthBonus": 7 } }
 ]

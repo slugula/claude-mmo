@@ -21,6 +21,7 @@ import { ClickFeedback } from '../ui/ClickFeedback';
 import type { ClickMarkerColor } from '../ui/ClickFeedback';
 import { OverheadChat } from '../ui/OverheadChat';
 import { SoundEngine } from '../audio/SoundEngine';
+import { PlayerJoinModal } from '../ui/PlayerJoinModal';
 import { PLAYER_START_X, PLAYER_START_Y, TICK_DURATION_MS } from '../shared/constants';
 
 export class GameEngine {
@@ -53,6 +54,7 @@ export class GameEngine {
   private overheadChat!: OverheadChat;
 
   private stumpMeshes: Map<string, Mesh> = new Map();
+  private joinModal!: PlayerJoinModal;
 
   private hoverIndicator: Mesh;
   private destIndicator: Mesh;
@@ -138,6 +140,12 @@ export class GameEngine {
     };
 
     const dispatch = (action: GameAction) => {
+      // Immediately apply appearance changes to the local player — no server roundtrip needed
+      // for pure visual updates. The server will also process the action so other players see it.
+      if (action.type === 'SET_APPEARANCE') {
+        ChatLog.setPlayerName(action.playerName);
+        this.player.updateAppearance(action.shirtColor, action.skinColor);
+      }
       this.network.sendActions([action]);
     };
 
@@ -146,10 +154,26 @@ export class GameEngine {
     this.ui = new GameUI(dispatch);
     this.ui.setContextInfo(this.contextInfo);
 
+    // ---- Join modal (shown immediately, hides on Join button) ----
+    this.joinModal = new PlayerJoinModal(dispatch);
+    this.joinModal.show();
+    this.joinModal.onJoin((name, shirtColor, skinColor) => {
+      // Apply appearance immediately (name was already set via dispatch interception,
+      // but also apply here in case the network wasn't ready yet)
+      ChatLog.setPlayerName(name);
+      this.player.updateAppearance(shirtColor, skinColor);
+      ChatLog.log(`${name} has joined the server. Welcome!`);
+    });
+
     this.network = new NetworkClient();
     this.network.onInit((msg) => {
       this.localPlayerId = msg.playerId;
       this.input.setLocalPlayerId(msg.playerId);
+      // Seed the modal with the server-assigned default name once we know our player ID.
+      // We use the first state broadcast (below) to get the real playerName; for now
+      // use a readable placeholder derived from the player counter in the ID.
+      const counter = msg.playerId.split('-')[1] ?? '';
+      this.joinModal.setDefaultName(counter ? `Player${counter}` : 'Player');
     });
     this.network.onState((msg) => {
       this.prevState = this.currentState;
@@ -160,6 +184,10 @@ export class GameEngine {
 
       const localId = this.localPlayerId;
       if (!localId) return;
+
+      // If the modal is still open, keep its name field in sync with what the server assigned
+      const serverName = msg.players[localId]?.playerName;
+      if (serverName) this.joinModal.setDefaultName(serverName);
 
       const msgs = msg.messages[localId] ?? [];
       for (const m of msgs) {
@@ -219,6 +247,7 @@ export class GameEngine {
       if (currPlayer && prevPlayer) {
         this.player.render(prevPlayer, currPlayer, alpha, this.currentState.tick);
         this.player.updateEquipped(currPlayer.equipped);
+        this.player.updateAppearance(currPlayer.shirtColor ?? 'blue', currPlayer.skinColor ?? 'fair');
         this.camera.update(dt, this.input.heldKeys, this.player.worldPosition);
       } else {
         this.camera.update(dt, this.input.heldKeys, new Vector3(PLAYER_START_X, 0, PLAYER_START_Y));
@@ -230,8 +259,8 @@ export class GameEngine {
 
         for (const curr of this.currentState.npcs) {
           const prev = this.prevState.npcs.find(n => n.id === curr.id);
-          if (prev && curr.hp < prev.hp) {
-            this.hitSplatManager.spawn(prev.hp - curr.hp, curr.tileX, curr.tileY, 0.9);
+          if (prev && curr.lastHitTick > (prev.lastHitTick ?? 0)) {
+            this.hitSplatManager.spawn(curr.lastHitDamage, curr.tileX, curr.tileY, 0.9);
             this.healthBarManager.recordHit(curr.id);
           }
         }
@@ -284,6 +313,7 @@ export class GameEngine {
         if (curr) {
           entity.render(prev, curr, alpha, this.currentState.tick);
           entity.updateEquipped(curr.equipped);
+          entity.updateAppearance(curr.shirtColor ?? 'blue', curr.skinColor ?? 'fair');
           this.remoteOverheadChats.get(id)?.update(
             curr.chatMessage, curr.chatMessageTick,
             curr.tileX, 1.05, curr.tileY,

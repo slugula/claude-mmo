@@ -14,6 +14,7 @@ export class GameUI {
   private statusTick: HTMLElement;
   private statusPos: HTMLElement;
   private activeTab: TabId = 'inventory';
+  private tabElements = new Map<TabId, HTMLElement>();
 
   private inventoryUI: InventoryUI;
   private skillsUI: SkillsUI;
@@ -45,13 +46,14 @@ export class GameUI {
   }
 
   private buildTabs(): void {
-    const tabs: { id: TabId; label: string }[] = [
-      { id: 'inventory',  label: 'Inv'   },
-      { id: 'skills',     label: 'Skills'},
-      { id: 'equipment',  label: 'Equip' },
+    const tabs: { id: TabId; label: string; el: HTMLElement }[] = [
+      { id: 'inventory', label: 'Inv',   el: this.inventoryUI.element },
+      { id: 'skills',    label: 'Skills',el: this.skillsUI.element    },
+      { id: 'equipment', label: 'Equip', el: this.equipmentUI.element },
     ];
 
     for (const tab of tabs) {
+      this.tabElements.set(tab.id, tab.el);
       const btn = document.createElement('button');
       btn.className = 'tab-button';
       btn.dataset.tab = tab.id;
@@ -59,15 +61,33 @@ export class GameUI {
       btn.addEventListener('click', () => this.showTab(tab.id));
       this.tabBar.appendChild(btn);
     }
+
+    this.equalizePanelHeight();
+  }
+
+  // Renders each tab temporarily to measure its natural height, then locks
+  // #panel-content to the tallest one. Re-run whenever tabs are added.
+  private equalizePanelHeight(): void {
+    this.panelContent.style.height   = 'auto';
+    this.panelContent.style.overflow = 'visible';
+
+    let maxH = 0;
+    for (const el of this.tabElements.values()) {
+      this.panelContent.innerHTML = '';
+      this.panelContent.appendChild(el);
+      maxH = Math.max(maxH, this.panelContent.offsetHeight);
+    }
+
+    this.panelContent.style.overflow = '';
+    this.panelContent.style.height   = `${maxH}px`;
+    this.panelContent.innerHTML = '';
   }
 
   private showTab(id: TabId): void {
     this.activeTab = id;
     this.panelContent.innerHTML = '';
-
-    if (id === 'inventory')  this.panelContent.appendChild(this.inventoryUI.element);
-    if (id === 'equipment')  this.panelContent.appendChild(this.equipmentUI.element);
-    if (id === 'skills')     this.panelContent.appendChild(this.skillsUI.element);
+    const el = this.tabElements.get(id);
+    if (el) this.panelContent.appendChild(el);
 
     this.tabBar.querySelectorAll('.tab-button').forEach((btn) => {
       btn.classList.toggle('active', (btn as HTMLElement).dataset.tab === id);

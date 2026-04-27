@@ -117,6 +117,8 @@ function createInitialPlayer(tileX: number, tileY: number, name: string): Player
     lastHitTick: -999,
     lastHitDamage: 0,
     playerName: name,
+    shirtColor: 'blue',
+    skinColor: 'fair',
     chatMessage: '',
     chatMessageTick: -999,
     chopTargetX: null,

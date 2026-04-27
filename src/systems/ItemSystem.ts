@@ -1,4 +1,4 @@
-import type { PlayerState, DroppedItemState, GameAction, WorldState, SkillId } from '../shared/types';
+import type { PlayerState, DroppedItemState, GameAction, WorldState, SkillId, ShirtColor, SkinColor } from '../shared/types';
 import { addItem, removeItem } from './InventorySystem';
 import { getItem } from '../items/ItemRegistry';
 import { findPath } from '../world/Pathfinder';
@@ -118,6 +118,15 @@ export function processItems(
       const msg = `${nextPlayer.playerName}: ${action.message}`;
       messages.push(`chat:${msg}`);
       nextPlayer = { ...nextPlayer, chatMessage: action.message, chatMessageTick: tick };
+    }
+
+    if (action.type === 'SET_APPEARANCE') {
+      const VALID_SHIRT: ShirtColor[] = ['blue', 'red', 'yellow', 'green'];
+      const VALID_SKIN:  SkinColor[]  = ['fair', 'tan', 'olive', 'brown'];
+      const name       = (action.playerName ?? '').trim().slice(0, 20) || 'Player';
+      const shirtColor = VALID_SHIRT.includes(action.shirtColor) ? action.shirtColor : 'blue';
+      const skinColor  = VALID_SKIN.includes(action.skinColor)   ? action.skinColor  : 'fair';
+      nextPlayer = { ...nextPlayer, playerName: name, shirtColor, skinColor };
     }
   }
 
