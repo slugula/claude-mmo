@@ -1,7 +1,7 @@
 import {
   Engine, Scene, HemisphericLight, DirectionalLight,
   Vector3, Color3, Color4, MeshBuilder, StandardMaterial,
-  Mesh, InstancedMesh, AbstractMesh, HighlightLayer,
+  Mesh, HighlightLayer,
 } from '@babylonjs/core';
 import type { GameState, NPCState, DroppedItemState, GameAction, HoverTarget } from '../shared/types';
 import { createWorldState, buildWorldMeshes } from '../world/World';
@@ -61,6 +61,12 @@ export class GameEngine {
   private joinModal!: PlayerJoinModal;
   private loginUI!: LoginUI;
 
+  // Proxy meshes for HighlightLayer on instanced world geometry (InstancedMesh is incompatible
+  // with HighlightLayer, so we overlay invisible regular Mesh copies at the hovered position)
+  private hlTrunkProxy!: Mesh;
+  private hlCanopyProxy!: Mesh;
+  private hlRockProxy!: Mesh;
+
   private hoverIndicator: Mesh;
   private destIndicator: Mesh;
   private destPulseDir = 1;
@@ -93,6 +99,16 @@ export class GameEngine {
 
     this.setupLights();
     buildWorldMeshes(worldState, this.scene);
+
+    // Invisible proxy meshes used to drive HighlightLayer on instanced trees/rocks
+    this.hlTrunkProxy  = MeshBuilder.CreateCylinder('hl-trunk',  { height: 0.6,  diameter: 0.18, tessellation: 6 }, this.scene);
+    this.hlCanopyProxy = MeshBuilder.CreateSphere('hl-canopy',   { diameter: 0.72, segments: 4 }, this.scene);
+    this.hlRockProxy   = MeshBuilder.CreateBox('hl-rock',        { width: 0.55,  height: 0.32, depth: 0.48 }, this.scene);
+    for (const p of [this.hlTrunkProxy, this.hlCanopyProxy, this.hlRockProxy]) {
+      p.isPickable = false;
+      p.visibility = 0.01; // effectively invisible; above the 0.01 threshold so HighlightLayer glow fires
+      p.setEnabled(false);
+    }
 
     this.player = new PlayerEntity(this.scene, 'local');
 
@@ -193,10 +209,23 @@ export class GameEngine {
         const localId = this.localPlayerId;
         if (!localId) return;
 
+        // Own system / chat messages echoed back by the server
         const msgs = msg.messages[localId] ?? [];
         for (const m of msgs) {
           if (m.startsWith('chat:')) ChatLog.chat(m.slice(5));
           else ChatLog.log(m);
+        }
+
+        // Remote players' chat messages — detect via chatMessageTick change
+        for (const [pid, player] of Object.entries(msg.players)) {
+          if (pid === localId) continue;
+          const prevPlayer = this.prevState.players[pid];
+          if (
+            player.chatMessage &&
+            player.chatMessageTick > (prevPlayer?.chatMessageTick ?? -Infinity)
+          ) {
+            ChatLog.chat(`${player.playerName}: ${player.chatMessage}`);
+          }
         }
 
         this.ui.update(this.currentState, localId);
@@ -394,30 +423,40 @@ export class GameEngine {
 
   private updateHoverHighlight(hover: HoverTarget): void {
     this.hoverHighlight.removeAllMeshes();
+    // Reset all proxy meshes each frame
+    this.hlTrunkProxy.setEnabled(false);
+    this.hlCanopyProxy.setEnabled(false);
+    this.hlRockProxy.setEnabled(false);
+
     if (hover.kind === 'none' || hover.kind === 'walkable') return;
 
     const cyan = new Color3(0, 0.9, 1);
     const tryAdd = (m: unknown) => {
-      if (!(m instanceof AbstractMesh)) return;
-      if ((m.visibility ?? 1) < 0.01) return;
-      if (m instanceof Mesh) {
-        if (m.getTotalVertices() === 0) return;
-        this.hoverHighlight.addMesh(m, cyan);
-      } else if (m instanceof InstancedMesh) {
-        // InstancedMesh shares vertex data with its source; HighlightLayer supports it at runtime
-        this.hoverHighlight.addMesh(m as unknown as Mesh, cyan);
-      }
+      if (!(m instanceof Mesh)) return;
+      if ((m.visibility ?? 1) < 0.01 || m.getTotalVertices() === 0) return;
+      this.hoverHighlight.addMesh(m, cyan);
     };
 
     switch (hover.kind) {
       case 'player': return;
       case 'tree':
-        tryAdd(this.scene.getMeshByName(`tree-trunk-${hover.tileX}-${hover.tileY}`));
-        tryAdd(this.scene.getMeshByName(`tree-canopy-${hover.tileX}-${hover.tileY}`));
+        // Position proxy Meshes over the hovered InstancedMesh so HighlightLayer can glow them
+        this.hlTrunkProxy.position.set(hover.tileX, 0.3, hover.tileY);
+        this.hlTrunkProxy.setEnabled(true);
+        this.hlCanopyProxy.position.set(hover.tileX, 0.9, hover.tileY);
+        this.hlCanopyProxy.setEnabled(true);
+        tryAdd(this.hlTrunkProxy);
+        tryAdd(this.hlCanopyProxy);
         break;
-      case 'rock':
-        tryAdd(this.scene.getMeshByName(`rock-${hover.tileX}-${hover.tileY}`));
+      case 'rock': {
+        // Match the rotation of the instanced rock so the glow outline aligns
+        const rockInstance = this.scene.getMeshByName(`rock-${hover.tileX}-${hover.tileY}`);
+        this.hlRockProxy.position.set(hover.tileX, 0.16, hover.tileY);
+        this.hlRockProxy.rotation.y = rockInstance?.rotation.y ?? 0;
+        this.hlRockProxy.setEnabled(true);
+        tryAdd(this.hlRockProxy);
         break;
+      }
       case 'npc': {
         if (!hover.npcId) break;
         const root = this.scene.getMeshByName(`npc-root-${hover.npcId}`);
