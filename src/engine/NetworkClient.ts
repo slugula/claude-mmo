@@ -4,6 +4,7 @@ export interface InitMessage {
   type: 'init';
   playerId: string;
   worldSeed: number;
+  isNewPlayer: boolean;
 }
 
 export interface StateMessage {

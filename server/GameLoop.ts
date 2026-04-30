@@ -1,5 +1,5 @@
 import type { GameState, PlayerState, ServerStatePatch } from '../src/shared/types';
-import { TICK_DURATION_MS, PLAYER_START_X, PLAYER_START_Y, INVENTORY_SLOTS } from '../src/shared/constants';
+import { TICK_DURATION_MS, PLAYER_START_X, PLAYER_START_Y } from '../src/shared/constants';
 import { createWorldState, findWalkableTileNear } from '../src/world/WorldState';
 import { spawnNPC } from '../src/systems/NPCSystem';
 import { createDefaultSkills } from '../src/systems/SkillSystem';
@@ -55,9 +55,27 @@ export class GameLoop {
     this.timer = null;
   }
 
-  addPlayer(playerId: string, name: string): void {
-    const spawn = findWalkableTileNear(this.state.world, PLAYER_START_X, PLAYER_START_Y);
-    const player = createInitialPlayer(spawn.x, spawn.y, name);
+  addPlayer(playerId: string, name: string, savedState?: PlayerState): void {
+    let player: PlayerState;
+    if (savedState) {
+      // Restore returning player — keep their stats, position, etc.
+      // Reset transient combat state so they don't resume mid-fight
+      player = {
+        ...savedState,
+        path: [],
+        attackTargetId: null,
+        talkTargetId: null,
+        pickupItemId: null,
+        chopTargetX: null,
+        chopTargetY: null,
+        chatMessage: '',
+        chatMessageTick: -999,
+      };
+    } else {
+      const spawn = findWalkableTileNear(this.state.world, PLAYER_START_X, PLAYER_START_Y);
+      player = createInitialPlayer(spawn.x, spawn.y, name);
+    }
+
     this.state = {
       ...this.state,
       players: { ...this.state.players, [playerId]: player },
@@ -65,10 +83,13 @@ export class GameLoop {
     this.pendingActions.set(playerId, []);
   }
 
-  removePlayer(playerId: string): void {
+  /** Removes the player and returns their final state for persistence. */
+  removePlayer(playerId: string): PlayerState | undefined {
+    const state = this.state.players[playerId];
     const { [playerId]: _removed, ...rest } = this.state.players;
     this.state = { ...this.state, players: rest };
     this.pendingActions.delete(playerId);
+    return state;
   }
 
   enqueueActions(playerId: string, actions: GameAction[]): void {
@@ -78,6 +99,15 @@ export class GameLoop {
 
   getWorldSeed(): number {
     return WORLD_SEED;
+  }
+
+  /** Returns a snapshot of all currently-connected players for checkpoint saves. */
+  getPlayerStates(): Map<string, PlayerState> {
+    const result = new Map<string, PlayerState>();
+    for (const [id, player] of Object.entries(this.state.players)) {
+      result.set(id, player);
+    }
+    return result;
   }
 
   private tick(): void {

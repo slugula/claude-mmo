@@ -1,7 +1,7 @@
 import {
   Engine, Scene, HemisphericLight, DirectionalLight,
   Vector3, Color3, Color4, MeshBuilder, StandardMaterial,
-  Mesh, HighlightLayer,
+  Mesh, InstancedMesh, AbstractMesh, HighlightLayer,
 } from '@babylonjs/core';
 import type { GameState, NPCState, DroppedItemState, GameAction, HoverTarget } from '../shared/types';
 import { createWorldState, buildWorldMeshes } from '../world/World';
@@ -22,7 +22,11 @@ import type { ClickMarkerColor } from '../ui/ClickFeedback';
 import { OverheadChat } from '../ui/OverheadChat';
 import { SoundEngine } from '../audio/SoundEngine';
 import { PlayerJoinModal } from '../ui/PlayerJoinModal';
+import { LoginUI } from '../ui/LoginUI';
 import { PLAYER_START_X, PLAYER_START_Y, TICK_DURATION_MS } from '../shared/constants';
+
+const AUTH_URL = (import.meta.env.VITE_AUTH_URL as string | undefined) ?? 'http://localhost:8080/auth';
+const WS_URL   = (import.meta.env.VITE_WS_URL  as string | undefined) ?? 'ws://localhost:8080';
 
 export class GameEngine {
   private engine: Engine;
@@ -55,6 +59,7 @@ export class GameEngine {
 
   private stumpMeshes: Map<string, Mesh> = new Map();
   private joinModal!: PlayerJoinModal;
+  private loginUI!: LoginUI;
 
   private hoverIndicator: Mesh;
   private destIndicator: Mesh;
@@ -154,51 +159,49 @@ export class GameEngine {
     this.ui = new GameUI(dispatch);
     this.ui.setContextInfo(this.contextInfo);
 
-    // ---- Join modal (shown immediately, hides on Join button) ----
-    this.joinModal = new PlayerJoinModal(dispatch);
-    this.joinModal.show();
-    this.joinModal.onJoin((name, shirtColor, skinColor) => {
-      // Apply appearance immediately (name was already set via dispatch interception,
-      // but also apply here in case the network wasn't ready yet)
-      ChatLog.setPlayerName(name);
-      this.player.updateAppearance(shirtColor, skinColor);
-      ChatLog.log(`${name} has joined the server. Welcome!`);
-    });
-
     this.network = new NetworkClient();
-    this.network.onInit((msg) => {
-      this.localPlayerId = msg.playerId;
-      this.input.setLocalPlayerId(msg.playerId);
-      // Seed the modal with the server-assigned default name once we know our player ID.
-      // We use the first state broadcast (below) to get the real playerName; for now
-      // use a readable placeholder derived from the player counter in the ID.
-      const counter = msg.playerId.split('-')[1] ?? '';
-      this.joinModal.setDefaultName(counter ? `Player${counter}` : 'Player');
+
+    // ---- Login UI — shown before the WS connects ----
+    this.loginUI = new LoginUI(AUTH_URL);
+    this.loginUI.show();
+    this.loginUI.onAuth(({ token, username }) => {
+      // Connect to game server with JWT; world renders once init fires
+      this.network.connect(`${WS_URL}?token=${encodeURIComponent(token)}`);
+
+      this.network.onInit((msg) => {
+        this.localPlayerId = msg.playerId;
+        this.input.setLocalPlayerId(msg.playerId);
+
+        // Show appearance modal after login — pre-fill name with account username
+        this.joinModal = new PlayerJoinModal(dispatch);
+        this.joinModal.setDefaultName(username);
+        this.joinModal.show();
+        this.joinModal.onJoin((name, shirtColor, skinColor) => {
+          ChatLog.setPlayerName(name);
+          this.player.updateAppearance(shirtColor, skinColor);
+          ChatLog.log(`${name} has joined the server. Welcome!`);
+        });
+      });
+
+      this.network.onState((msg) => {
+        this.prevState = this.currentState;
+        this.currentState = { ...msg, world: worldState };
+        this.lastServerTickTime = performance.now();
+
+        this.syncDepletedTrees(msg.depletedTrees ?? {});
+
+        const localId = this.localPlayerId;
+        if (!localId) return;
+
+        const msgs = msg.messages[localId] ?? [];
+        for (const m of msgs) {
+          if (m.startsWith('chat:')) ChatLog.chat(m.slice(5));
+          else ChatLog.log(m);
+        }
+
+        this.ui.update(this.currentState, localId);
+      });
     });
-    this.network.onState((msg) => {
-      this.prevState = this.currentState;
-      this.currentState = { ...msg, world: worldState };
-      this.lastServerTickTime = performance.now();
-
-      this.syncDepletedTrees(msg.depletedTrees ?? {});
-
-      const localId = this.localPlayerId;
-      if (!localId) return;
-
-      // If the modal is still open, keep its name field in sync with what the server assigned
-      const serverName = msg.players[localId]?.playerName;
-      if (serverName) this.joinModal.setDefaultName(serverName);
-
-      const msgs = msg.messages[localId] ?? [];
-      for (const m of msgs) {
-        if (m.startsWith('chat:')) ChatLog.chat(m.slice(5));
-        else ChatLog.log(m);
-      }
-
-      this.ui.update(this.currentState, localId);
-    });
-
-    this.network.connect('ws://34.204.12.71/ws');
 
     this.setupResize(canvas);
     this.startRenderLoop();
@@ -395,9 +398,15 @@ export class GameEngine {
 
     const cyan = new Color3(0, 0.9, 1);
     const tryAdd = (m: unknown) => {
-      if (!(m instanceof Mesh)) return;
-      if ((m.visibility ?? 1) < 0.01 || m.getTotalVertices() === 0) return;
-      this.hoverHighlight.addMesh(m, cyan);
+      if (!(m instanceof AbstractMesh)) return;
+      if ((m.visibility ?? 1) < 0.01) return;
+      if (m instanceof Mesh) {
+        if (m.getTotalVertices() === 0) return;
+        this.hoverHighlight.addMesh(m, cyan);
+      } else if (m instanceof InstancedMesh) {
+        // InstancedMesh shares vertex data with its source; HighlightLayer supports it at runtime
+        this.hoverHighlight.addMesh(m as unknown as Mesh, cyan);
+      }
     };
 
     switch (hover.kind) {
