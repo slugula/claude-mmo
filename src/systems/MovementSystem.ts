@@ -15,6 +15,9 @@ export function processMovement(
   world: WorldState,
   actions: GameAction[],
 ): PlayerState {
+  // Dying players cannot move or act
+  if (player.dying) return player;
+
   let state = { ...player, path: [...player.path] };
 
   // MOVE_TO overrides any ongoing action, including combat

@@ -18,7 +18,7 @@ export type SkillId =
   | 'woodcutting' | 'fletching' | 'fishing' | 'firemaking'
   | 'crafting' | 'smithing' | 'mining' | 'herblore'
   | 'agility' | 'thieving' | 'slayer' | 'farming'
-  | 'runecraft' | 'hunter' | 'construction';
+  | 'runecraft' | 'hunter' | 'construction' | 'gunner';
 
 export const ALL_SKILLS: SkillId[] = [
   'warrior', 'hitpoints', 'mining',
@@ -28,12 +28,12 @@ export const ALL_SKILLS: SkillId[] = [
   'prayer', 'crafting', 'fletching',
   'magic', 'woodcutting', 'runecraft',
   'slayer', 'farming', 'construction',
-  'hunter',
+  'hunter', 'gunner',
 ];
 
 // Only skills with active gameplay systems — shown in the Skills panel
 export const VISIBLE_SKILLS: SkillId[] = [
-  'warrior', 'defence', 'hitpoints', 'woodcutting',
+  'warrior', 'defence', 'hitpoints', 'woodcutting', 'gunner',
 ];
 
 export interface SkillState {
@@ -50,9 +50,12 @@ export type EquipSlot =
   | 'hands' | 'ring' | 'leftHand' | 'rightHand' | 'ammo';
 
 export interface EquipStats {
-  attackBonus: number;
-  defenseBonus: number;
-  strengthBonus: number;
+  meleeAttackBonus:    number;
+  meleeStrengthBonus:  number;
+  meleeDefenseBonus:   number;
+  rangedAttackBonus:   number;
+  rangedStrengthBonus: number;
+  rangedDefenseBonus:  number;
 }
 
 export interface ItemDefinition {
@@ -66,6 +69,8 @@ export interface ItemDefinition {
   stats?: Partial<EquipStats>;
   requirements?: Partial<Record<SkillId, number>>;
   toolType?: 'axe' | 'pickaxe';
+  combatStyle?: 'melee' | 'gunner';
+  twoHanded?: boolean;
 }
 
 export interface ItemStack {
@@ -85,6 +90,7 @@ export interface TileData {
   walkable: boolean;
   type: TileType;
   obstacle: ObstacleType;
+  blocksRanged: boolean;  // true for solid obstacles (trees, walls); rocks are false (safespot)
 }
 
 // ---------- NPCs ----------
@@ -139,6 +145,9 @@ export interface PlayerState {
   chopTargetX: number | null;
   chopTargetY: number | null;
   lastChopTick: number;
+  dying: boolean;
+  dyingTick: number;
+  lastRegenTick: number;
 }
 
 // ---------- World ----------
@@ -185,6 +194,7 @@ export interface DroppedItemState {
   tileX: number;
   tileY: number;
   droppedAtTick: number;
+  permanent?: boolean;  // if true: never despawns, stays on floor after pickup (test rack items)
 }
 
 // ---------- Hover / Clickbox ----------

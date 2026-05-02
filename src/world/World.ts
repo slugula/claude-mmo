@@ -88,15 +88,18 @@ export function buildWorldMeshes(world: WorldState, scene: Scene): Mesh {
       if (tile.obstacle === 'tree') {
         const trunk = sourceTrunk.createInstance(`tree-trunk-${x}-${y}`);
         trunk.position = new Vector3(x, 0.3, y);
+        trunk.isPickable = true;
         trunk.parent = root;
 
         const canopy = sourceCanopy.createInstance(`tree-canopy-${x}-${y}`);
         canopy.position = new Vector3(x, 0.9, y);
+        canopy.isPickable = true;
         canopy.parent = root;
       } else if (tile.obstacle === 'rock') {
         const rock = sourceRock.createInstance(`rock-${x}-${y}`);
         rock.position = new Vector3(x, 0.16, y);
         rock.rotation.y = seededRandom(x * 100 + y)() * Math.PI;
+        rock.isPickable = true;
         rock.parent = root;
       }
     }

@@ -22,3 +22,15 @@ export const MAX_XP = 200_000_000;
 
 export const OBSTACLE_CLEAR_RADIUS = 6;           // tiles around spawn kept clear
 export const OBSTACLE_DENSITY = 0.06;             // ~6% of tiles have obstacles
+
+// Combat / player death
+export const PLAYER_DEATH_TICKS = 12;             // ~2.4s dying state before respawn
+export const PLAYER_REGEN_INTERVAL_TICKS = 100;   // 1 HP healed passively every 20 seconds
+
+// Gunner skill
+export const GUNNER_ATTACK_SPEED = 3;             // ticks between chaingun shots (~600ms)
+export const GUNNER_ATTACK_RANGE  = 8;            // max Chebyshev distance for ranged attacks
+
+// Respawn location — change here to move the spawn point
+export const RESPAWN_X = PLAYER_START_X;
+export const RESPAWN_Y = PLAYER_START_Y;

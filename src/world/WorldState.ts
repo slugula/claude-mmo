@@ -21,7 +21,7 @@ export function createWorldState(seed = 42): WorldState {
   for (let y = 0; y < GRID_HEIGHT; y++) {
     tiles[y] = [];
     for (let x = 0; x < GRID_WIDTH; x++) {
-      tiles[y][x] = { x, y, walkable: true, type: 'grass', obstacle: 'none' };
+      tiles[y][x] = { x, y, walkable: true, type: 'grass', obstacle: 'none', blocksRanged: false };
     }
   }
 
@@ -34,8 +34,9 @@ export function createWorldState(seed = 42): WorldState {
 
       if (rng() < OBSTACLE_DENSITY) {
         const obstacle: ObstacleType = rng() < 0.6 ? 'tree' : 'rock';
-        tiles[y][x].walkable = false;
-        tiles[y][x].obstacle = obstacle;
+        tiles[y][x].walkable     = false;
+        tiles[y][x].obstacle     = obstacle;
+        tiles[y][x].blocksRanged = obstacle === 'tree'; // trees block shots; rocks are safespots
       }
     }
   }

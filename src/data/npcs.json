@@ -5,11 +5,13 @@
     "size": 1,
     "isAttackable": true,
     "ai": "wander",
-    "examine": "It\u2019s a chicken.",
+    "examine": "It’s a chicken.",
     "uniqueActions": ["Attack"],
     "maxHp": 3,
     "attack": 1,
-    "defense": 1,
+    "strength": 1,
+    "meleeDefense": 1,
+    "rangedDefense": 0,
     "attackSpeedTicks": 16,
     "respawnTicks": 150,
     "drops": [
@@ -26,7 +28,9 @@
     "uniqueActions": ["Talk to"],
     "maxHp": 10,
     "attack": 0,
-    "defense": 0,
+    "strength": 0,
+    "meleeDefense": 0,
+    "rangedDefense": 0,
     "attackSpeedTicks": 0,
     "drops": []
   }

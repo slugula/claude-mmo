@@ -23,6 +23,7 @@ export class NetworkClient {
   private ws: WebSocket | null = null;
   private initCallback: ((msg: InitMessage) => void) | null = null;
   private stateCallback: ((msg: StateMessage) => void) | null = null;
+  private closeCallback: ((code: number, reason: string) => void) | null = null;
 
   connect(url: string): void {
     this.ws = new WebSocket(url);
@@ -41,6 +42,10 @@ export class NetworkClient {
         this.stateCallback?.(msg);
       }
     });
+
+    this.ws.addEventListener('close', (event) => {
+      this.closeCallback?.(event.code, event.reason);
+    });
   }
 
   // Sends immediately — no batching, no flush interval
@@ -55,6 +60,10 @@ export class NetworkClient {
 
   onState(cb: (msg: StateMessage) => void): void {
     this.stateCallback = cb;
+  }
+
+  onClose(cb: (code: number, reason: string) => void): void {
+    this.closeCallback = cb;
   }
 
   disconnect(): void {

@@ -62,9 +62,9 @@ export function processTick(
   }
   const wcPlayers = wc.players;
 
-  // Expire dropped items older than 60 seconds (300 ticks at 200ms)
+  // Expire dropped items older than 60 seconds (300 ticks at 200ms). Permanent items never despawn.
   const ITEM_DESPAWN_TICKS = 300;
-  sharedDropped = sharedDropped.filter(item => tick - item.droppedAtTick < ITEM_DESPAWN_TICKS);
+  sharedDropped = sharedDropped.filter(item => item.permanent || tick - item.droppedAtTick < ITEM_DESPAWN_TICKS);
 
   // NPC AI runs once (shared world)
   const afterAI = processNPCs(sharedNpcs, wc.world);

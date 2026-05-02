@@ -4,17 +4,17 @@ Items exist in two states: in the world as 3D dropped meshes, or in the player's
 
 ## Item Definition Fields
 
-| Field | Description |
-|---|---|
-| `id` | Unique string identifier |
-| `name` | Player-facing display name |
-| `stackable` | Whether multiple instances stack in one inventory slot |
-| `value` | Base value in gold (GP) — shown on Examine |
-| `tradable` | Optional flag marking the item as tradable |
-| `equipSlot` | If present, the item is equippable into this slot |
-| `stats` | Combat bonuses: `attackBonus`, `defenceBonus`, `strengthBonus` |
-| `requirements` | Minimum skill levels required to equip |
-| `examine` | Text logged to chat when player examines the item |
+| Field          | Description                                                    |
+| -------------- | -------------------------------------------------------------- |
+| `id`           | Unique string identifier                                       |
+| `name`         | Player-facing display name                                     |
+| `stackable`    | Whether multiple instances stack in one inventory slot         |
+| `value`        | Base value in gold (GP) — shown on Examine                     |
+| `tradable`     | Optional flag marking the item as tradable                     |
+| `equipSlot`    | If present, the item is equippable into this slot              |
+| `stats`        | Combat bonuses: `attackBonus`, `defenceBonus`, `strengthBonus` |
+| `requirements` | Minimum skill levels required to equip                         |
+| `examine`      | Text logged to chat when player examines the item              |
 
 ## Overworld Items (Dropped)
 

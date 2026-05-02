@@ -38,7 +38,13 @@ export class GameLoop {
         ...chickenSpawns.map((s, i) => spawnNPC(`chicken-${i + 1}`, 'chicken', s.x, s.y)),
         spawnNPC('shopkeeper-1', 'shopkeeper', shopkeeperSpawn.x, shopkeeperSpawn.y),
       ],
-      droppedItems: [],
+      // Permanent test rack — items north of spawn, always available, never despawn
+      droppedItems: [
+        { id: 'rack-pickaxe',         itemId: 'pickaxe',         quantity: 1,   tileX: PLAYER_START_X - 2, tileY: PLAYER_START_Y - 2, droppedAtTick: 0, permanent: true },
+        { id: 'rack-iron-axe',        itemId: 'iron_axe',        quantity: 1,   tileX: PLAYER_START_X - 1, tileY: PLAYER_START_Y - 2, droppedAtTick: 0, permanent: true },
+        { id: 'rack-basic-chaingun',  itemId: 'basic_chaingun',  quantity: 1,   tileX: PLAYER_START_X,     tileY: PLAYER_START_Y - 2, droppedAtTick: 0, permanent: true },
+        { id: 'rack-kinetic-charges', itemId: 'kinetic_charges', quantity: 500, tileX: PLAYER_START_X + 1, tileY: PLAYER_START_Y - 2, droppedAtTick: 0, permanent: true },
+      ],
       pendingRespawns: [],
       messages: {},
       depletedTrees: {},
@@ -59,9 +65,13 @@ export class GameLoop {
     let player: PlayerState;
     if (savedState) {
       // Restore returning player — keep their stats, position, etc.
-      // Reset transient combat state so they don't resume mid-fight
+      // Reset transient combat state so they don't resume mid-fight.
+      // Recalculate maxHp from the hitpoints skill level so it stays in sync.
+      const restoredMaxHp = savedState.skills.hitpoints?.level ?? 10;
       player = {
         ...savedState,
+        hp: Math.min(savedState.hp, restoredMaxHp),
+        maxHp: restoredMaxHp,
         path: [],
         attackTargetId: null,
         talkTargetId: null,
@@ -70,6 +80,12 @@ export class GameLoop {
         chopTargetY: null,
         chatMessage: '',
         chatMessageTick: -999,
+        lastHitTick:    -999,
+        lastAttackTick: -999,
+        lastChopTick:   -999,
+        dying:         false,
+        dyingTick:     -999,
+        lastRegenTick: -999,
       };
     } else {
       const spawn = findWalkableTileNear(this.state.world, PLAYER_START_X, PLAYER_START_Y);
@@ -125,8 +141,14 @@ export class GameLoop {
 
 function createInitialPlayer(tileX: number, tileY: number, name: string): PlayerState {
   const inventory = createEmptyInventory();
-  inventory[0] = { itemId: 'pickaxe', quantity: 1 };
-  inventory[1] = { itemId: 'iron_axe', quantity: 1 };
+  // Starter items are on the floor near spawn (permanent test rack) — players pick up what they need.
+  // To restore starting inventory, uncomment these lines:
+  // inventory[0] = { itemId: 'pickaxe', quantity: 1 };
+  // inventory[1] = { itemId: 'iron_axe', quantity: 1 };
+  // inventory[2] = { itemId: 'basic_chaingun', quantity: 1 };
+
+  const skills = createDefaultSkills();
+  const startHp = skills.hitpoints.level; // 1 HP per hitpoints level (starts at level 10)
 
   return {
     tileX,
@@ -135,11 +157,11 @@ function createInitialPlayer(tileX: number, tileY: number, name: string): Player
     path: [],
     destinationX: tileX,
     destinationY: tileY,
-    skills: createDefaultSkills(),
+    skills,
     inventory,
     equipped: {},
-    hp: 100,
-    maxHp: 100,
+    hp: startHp,
+    maxHp: startHp,
     attackTargetId: null,
     talkTargetId: null,
     lastAttackTick: -999,
@@ -154,5 +176,8 @@ function createInitialPlayer(tileX: number, tileY: number, name: string): Player
     chopTargetX: null,
     chopTargetY: null,
     lastChopTick: -999,
+    dying: false,
+    dyingTick: -999,
+    lastRegenTick: -999,
   };
 }

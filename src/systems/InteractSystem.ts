@@ -17,6 +17,8 @@ export function processInteractions(
   actions: GameAction[],
   world: WorldState,
 ): InteractResult {
+  if (player.dying) return { player, messages: [] };
+
   let nextPlayer = { ...player };
   const messages: string[] = [];
 

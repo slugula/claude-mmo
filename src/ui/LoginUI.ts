@@ -30,6 +30,12 @@ export class LoginUI {
     setTimeout(() => this.usernameInput.focus(), 50);
   }
 
+  /** Re-show the overlay and display an error immediately (e.g. after WS rejection). */
+  showWithError(msg: string): void {
+    this.show();
+    this.showError(msg);
+  }
+
   hide(): void {
     this.overlay.style.display = 'none';
   }

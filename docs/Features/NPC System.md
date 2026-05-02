@@ -1,17 +1,11 @@
 ## Overview
 
 - NPCs are entities not directly controlled by the player.
-
 - NPCs have a name, as well as basic combat stats for attacking and defending.
-
 - NPCs have a flag for whether they can be attacked or not.
-
 - An NPC who can be attacked is considered a "Monster". The primary action for these NPCs is "Attack".
-
 - An NPC who cannot be attacked is considered an "NPC". The primary action for these NPCs is "Talk to".
-
 - NPCs can have different AI behaviors controlling how they move.
-
 ## Data
 
 NPC definitions are stored in `src/data/npcs.json` — adding a new NPC requires only a JSON entry, no code changes. `NPCRegistry.ts` is a thin wrapper that loads and indexes the JSON at startup.

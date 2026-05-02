@@ -11,8 +11,9 @@ const ITEM_COLORS: Record<string, string> = {
   shrimp:      '#f0d080',
   raw_trout:   '#609090',
   trout:       '#90c0c0',
-  tinderbox:   '#c04000',
-  arrow:       '#c09040',
+  tinderbox:       '#c04000',
+  arrow:           '#c09040',
+  kinetic_charges: '#00cfff',
 };
 
 const CUSTOM_SPRITES: Record<string, DrawFn> = {
@@ -277,6 +278,74 @@ const CUSTOM_SPRITES: Record<string, DrawFn> = {
     ctx.ellipse(cx - rx * 0.25, cy - ry * 0.3, rx * 0.22, ry * 0.15, -0.4, 0, Math.PI * 2);
     ctx.fillStyle = 'rgba(255,255,255,0.55)';
     ctx.fill();
+  },
+
+  // ---- Basic Chaingun ----
+  basic_chaingun: (ctx, w, h) => {
+    ctx.save();
+    const pad = w * 0.06;
+
+    // Long barrel — horizontal, left-to-right
+    const barrelY  = h * 0.38;
+    const barrelH  = h * 0.18;
+    const barrelX  = pad;
+    const barrelW  = w * 0.82;
+    ctx.fillStyle   = '#606060';
+    ctx.strokeStyle = '#1a1a1a';
+    ctx.lineWidth   = 1;
+    ctx.beginPath();
+    ctx.roundRect(barrelX, barrelY, barrelW, barrelH, 2);
+    ctx.fill();
+    ctx.stroke();
+
+    // Barrel highlight strip
+    ctx.fillStyle = '#888888';
+    ctx.beginPath();
+    ctx.roundRect(barrelX + 2, barrelY + 2, barrelW - 4, barrelH * 0.35, 1);
+    ctx.fill();
+
+    // Muzzle tip — brighter end
+    ctx.fillStyle   = '#909090';
+    ctx.strokeStyle = '#1a1a1a';
+    ctx.beginPath();
+    ctx.roundRect(barrelX + barrelW - w * 0.06, barrelY - 2, w * 0.08, barrelH + 4, 2);
+    ctx.fill();
+    ctx.stroke();
+
+    // Grip / handle — vertical, below center
+    const gripX = w * 0.55;
+    const gripY = barrelY + barrelH - 1;
+    const gripW = w * 0.16;
+    const gripH = h * 0.32;
+    ctx.fillStyle   = '#484848';
+    ctx.strokeStyle = '#1a1a1a';
+    ctx.beginPath();
+    ctx.roundRect(gripX, gripY, gripW, gripH, 3);
+    ctx.fill();
+    ctx.stroke();
+
+    // Kinetic energy cell — glowing cyan rectangle on the body
+    const cellX = w * 0.28;
+    const cellY = barrelY - h * 0.22;
+    const cellW = w * 0.22;
+    const cellH = h * 0.20;
+    ctx.shadowColor = '#00cfff';
+    ctx.shadowBlur  = 6;
+    ctx.fillStyle   = '#00cfff';
+    ctx.strokeStyle = '#007fa8';
+    ctx.beginPath();
+    ctx.roundRect(cellX, cellY, cellW, cellH, 3);
+    ctx.fill();
+    ctx.stroke();
+
+    // Cell inner glow highlight
+    ctx.shadowBlur  = 0;
+    ctx.fillStyle   = 'rgba(255,255,255,0.45)';
+    ctx.beginPath();
+    ctx.roundRect(cellX + 2, cellY + 2, cellW - 4, cellH * 0.4, 2);
+    ctx.fill();
+
+    ctx.restore();
   },
 };
 

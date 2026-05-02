@@ -17,6 +17,7 @@ import { ContextInfo } from '../ui/ContextInfo';
 import { ContextMenu } from '../ui/ContextMenu';
 import { HitSplatManager } from '../ui/HitSplatManager';
 import { HealthBarManager } from '../ui/HealthBarManager';
+import { PlayerHealthBar } from '../ui/PlayerHealthBar';
 import { ClickFeedback } from '../ui/ClickFeedback';
 import type { ClickMarkerColor } from '../ui/ClickFeedback';
 import { OverheadChat } from '../ui/OverheadChat';
@@ -53,6 +54,7 @@ export class GameEngine {
   private droppedItemEntities: Map<string, DroppedItemEntity> = new Map();
   private hitSplatManager!: HitSplatManager;
   private healthBarManager!: HealthBarManager;
+  private playerHealthBar!: PlayerHealthBar;
   private clickFeedback!: ClickFeedback;
   private lastHitTick = 0;
   private overheadChat!: OverheadChat;
@@ -122,6 +124,7 @@ export class GameEngine {
 
     this.hitSplatManager  = new HitSplatManager(this.scene);
     this.healthBarManager = new HealthBarManager(this.scene);
+    this.playerHealthBar  = new PlayerHealthBar(this.scene);
     this.clickFeedback    = new ClickFeedback();
     this.overheadChat     = new OverheadChat(this.scene);
     this.soundEngine      = new SoundEngine();
@@ -184,19 +187,34 @@ export class GameEngine {
       // Connect to game server with JWT; world renders once init fires
       this.network.connect(`${WS_URL}?token=${encodeURIComponent(token)}`);
 
+      this.network.onClose((code, reason) => {
+        this.localPlayerId = null;
+        if (code === 4002) {
+          this.loginUI.showWithError('This account is already logged in from another session.');
+        } else if (code !== 1000 && code !== 1001) {
+          // Unexpected disconnect — show login again with a generic message
+          this.loginUI.showWithError(`Disconnected from server (${code}). Please log in again.`);
+        }
+      });
+
       this.network.onInit((msg) => {
         this.localPlayerId = msg.playerId;
         this.input.setLocalPlayerId(msg.playerId);
 
-        // Show appearance modal after login — pre-fill name with account username
-        this.joinModal = new PlayerJoinModal(dispatch);
-        this.joinModal.setDefaultName(username);
-        this.joinModal.show();
-        this.joinModal.onJoin((name, shirtColor, skinColor) => {
-          ChatLog.setPlayerName(name);
-          this.player.updateAppearance(shirtColor, skinColor);
-          ChatLog.log(`${name} has joined the server. Welcome!`);
-        });
+        if (msg.isNewPlayer) {
+          // New player — show appearance/name selection modal
+          this.joinModal = new PlayerJoinModal(dispatch);
+          this.joinModal.setDefaultName(username);
+          this.joinModal.show();
+          this.joinModal.onJoin((name, shirtColor, skinColor) => {
+            ChatLog.setPlayerName(name);
+            this.player.updateAppearance(shirtColor, skinColor);
+            ChatLog.log(`${name} has joined the server. Welcome!`);
+          });
+        } else {
+          // Returning player — skip modal, restored state arrives on first tick
+          ChatLog.log(`Welcome back, ${username}!`);
+        }
       });
 
       this.network.onState((msg) => {
@@ -214,6 +232,12 @@ export class GameEngine {
         for (const m of msgs) {
           if (m.startsWith('chat:')) ChatLog.chat(m.slice(5));
           else ChatLog.log(m);
+        }
+
+        // Snap camera to player's saved position on the very first tick they appear
+        const localPlayer = msg.players[localId];
+        if (localPlayer && !this.prevState.players[localId]) {
+          this.camera.snapTo(new Vector3(localPlayer.tileX, 0, localPlayer.tileY));
         }
 
         // Remote players' chat messages — detect via chatMessageTick change
@@ -300,6 +324,7 @@ export class GameEngine {
         if (currPlayer && prevPlayer) {
           if (currPlayer.lastHitTick > prevPlayer.lastHitTick) {
             this.hitSplatManager.spawn(currPlayer.lastHitDamage, currPlayer.tileX, currPlayer.tileY, 1.2);
+            this.playerHealthBar.recordHit();
             this.soundEngine.playHit();
           }
           if (currPlayer.lastAttackTick > prevPlayer.lastAttackTick) {
@@ -308,6 +333,12 @@ export class GameEngine {
           }
           if (currPlayer.lastChopTick > prevPlayer.lastChopTick) {
             this.player.triggerLunge();
+          }
+          if (currPlayer.dying && !prevPlayer.dying) {
+            ChatLog.log('Your mortal coil has perished.');
+          }
+          if (!currPlayer.dying && prevPlayer.dying) {
+            this.camera.snapTo(new Vector3(currPlayer.tileX, 0, currPlayer.tileY));
           }
           const SLOTS = ['head','neck','body','legs','feet','hands','ring','leftHand','rightHand','ammo'] as const;
           for (const slot of SLOTS) {
@@ -321,6 +352,10 @@ export class GameEngine {
 
       this.hitSplatManager.update();
       this.healthBarManager.update(this.currentState.npcs);
+      if (currPlayer) {
+        const pp = this.player.worldPosition;
+        this.playerHealthBar.update(pp.x, pp.z, currPlayer.hp, currPlayer.maxHp);
+      }
       this.clickFeedback.update();
 
       if (currPlayer) {

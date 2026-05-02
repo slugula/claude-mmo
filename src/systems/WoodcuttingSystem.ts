@@ -79,6 +79,7 @@ export function processWoodcutting(
   const activelyChopped = new Set<string>();
 
   for (const [playerId, player] of Object.entries(players)) {
+    if (player.dying) { nextPlayers[playerId] = player; continue; }
     const actions = playerActions.get(playerId) ?? [];
     let p = { ...player };
 
@@ -183,8 +184,8 @@ export function processWoodcutting(
     // Check inventory space
     const freeSlot = p.inventory.findIndex(s => s === null);
     if (freeSlot === -1) {
-      messages[playerId].push('Your inventory is full.');
-      nextPlayers[playerId] = { ...p, lastChopTick: tick };
+      messages[playerId].push('Your inventory is too full to hold any more logs.');
+      nextPlayers[playerId] = { ...p, chopTargetX: null, chopTargetY: null };
       continue;
     }
 
@@ -210,7 +211,7 @@ export function processWoodcutting(
       // Mark tile as walkable
       const newTiles = nextWorld.tiles.map(row => [...row]);
       newTiles[ty] = [...newTiles[ty]];
-      newTiles[ty][tx] = { ...newTiles[ty][tx], walkable: true, obstacle: 'none' };
+      newTiles[ty][tx] = { ...newTiles[ty][tx], walkable: true, obstacle: 'none', blocksRanged: false };
       nextWorld = { ...nextWorld, tiles: newTiles };
 
       p = { ...p, chopTargetX: null, chopTargetY: null };
@@ -255,7 +256,7 @@ export function processWoodcutting(
 
     const newTiles = nextWorld.tiles.map(row => [...row]);
     newTiles[y] = [...newTiles[y]];
-    newTiles[y][x] = { ...newTiles[y][x], walkable: false, obstacle: 'tree' };
+    newTiles[y][x] = { ...newTiles[y][x], walkable: false, obstacle: 'tree', blocksRanged: true };
     nextWorld = { ...nextWorld, tiles: newTiles };
 
     delete nextDepleted[key];

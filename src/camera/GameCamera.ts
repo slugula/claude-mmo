@@ -91,6 +91,12 @@ export class GameCamera {
     }, { passive: false });
   }
 
+  /** Instantly move the camera to a position — no lerp. Call on first login. */
+  snapTo(position: Vector3): void {
+    this.currentTarget.copyFrom(position);
+    this.camera.target.copyFrom(position);
+  }
+
   update(dt: number, heldKeys: Set<string>, playerPosition: Vector3): void {
     // Arrow key camera rotation
     const rotStep = CAMERA_ROTATE_SPEED * dt;

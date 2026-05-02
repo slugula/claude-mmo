@@ -16,7 +16,9 @@ export interface NPCDefinition {
   uniqueActions: string[];
   maxHp: number;
   attack: number;
-  defense: number;
+  strength: number;       // max hit ceiling (separate from attack which governs accuracy)
+  meleeDefense: number;
+  rangedDefense: number;
   attackSpeedTicks: number;
   drops: DropEntry[];
   respawnTicks?: number;

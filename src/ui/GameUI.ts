@@ -99,7 +99,7 @@ export class GameUI {
     if (!player) return;
 
     this.inventoryUI.update(player.inventory);
-    this.skillsUI.update(player.skills);
+    this.skillsUI.update(player.skills, player.hp, player.maxHp);
     this.equipmentUI.update(player);
 
     ChatLog.setPlayerName(player.playerName);

@@ -10,6 +10,8 @@ export function processItems(
   world: WorldState,
   tick: number,
 ): { player: PlayerState; droppedItems: DroppedItemState[]; messages: string[] } {
+  if (player.dying) return { player, droppedItems, messages: [] };
+
   let nextPlayer = player;
   let nextDropped = [...droppedItems];
   const messages: string[] = [];
@@ -23,7 +25,8 @@ export function processItems(
         const result = addItem(nextPlayer.inventory, item.itemId, item.quantity);
         if (result.added) {
           nextPlayer = { ...nextPlayer, inventory: result.inventory, pickupItemId: null };
-          nextDropped = nextDropped.filter(d => d.id !== item.id);
+          // Permanent items stay on the floor — don't remove them
+          if (!item.permanent) nextDropped = nextDropped.filter(d => d.id !== item.id);
         } else {
           messages.push('Your inventory is full.');
           nextPlayer = { ...nextPlayer, pickupItemId: null };
@@ -87,9 +90,36 @@ export function processItems(
       }
 
       const slot = def.equipSlot;
-      const equipped = { ...nextPlayer.equipped };
+      let equipped = { ...nextPlayer.equipped };
       let inv = [...nextPlayer.inventory];
 
+      // --- Two-handed weapon rules ---
+      if (def.twoHanded) {
+        // Equipping a two-hander: must free both hand slots first
+        for (const hand of ['rightHand', 'leftHand'] as const) {
+          if (equipped[hand]) {
+            const displaced = equipped[hand]!;
+            const addResult = addItem(inv.map((s, i) => i === action.slotIndex ? null : s), displaced.itemId, displaced.quantity);
+            if (!addResult.added) { messages.push('Your inventory is full.'); break; }
+            inv = addResult.inventory;
+            delete equipped[hand];
+          }
+        }
+        // Re-check we actually freed the slots (break above may have left one)
+        if (equipped.rightHand || equipped.leftHand) continue;
+      } else if (slot === 'rightHand' || slot === 'leftHand') {
+        // Equipping a one-handed item: strip two-hander from rightHand if present
+        const rhDef = getItem(equipped.rightHand?.itemId ?? '');
+        if (rhDef?.twoHanded) {
+          const displaced = equipped.rightHand!;
+          const addResult = addItem(inv.map((s, i) => i === action.slotIndex ? null : s), displaced.itemId, displaced.quantity);
+          if (!addResult.added) { messages.push('Your inventory is full.'); continue; }
+          inv = addResult.inventory;
+          delete equipped.rightHand;
+        }
+      }
+
+      // Swap out whatever is currently in the target slot
       if (equipped[slot]) {
         const current = equipped[slot]!;
         const addResult = addItem(inv.map((s, i) => i === action.slotIndex ? null : s), current.itemId, current.quantity);
@@ -139,7 +169,8 @@ export function processItems(
       const result = addItem(nextPlayer.inventory, item.itemId, item.quantity);
       if (result.added) {
         nextPlayer = { ...nextPlayer, inventory: result.inventory, pickupItemId: null };
-        nextDropped = nextDropped.filter(d => d.id !== item.id);
+        // Permanent items stay on the floor — don't remove them
+        if (!item.permanent) nextDropped = nextDropped.filter(d => d.id !== item.id);
       } else {
         messages.push('Your inventory is full.');
         nextPlayer = { ...nextPlayer, pickupItemId: null };

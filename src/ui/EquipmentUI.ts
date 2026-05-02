@@ -150,21 +150,30 @@ export class EquipmentUI {
       }
     }
 
-    let atk = 0, def = 0, str = 0;
+    let mAtk = 0, mStr = 0, mDef = 0, rAtk = 0, rStr = 0, rDef = 0;
     for (const stack of Object.values(state.equipped)) {
       if (!stack) continue;
       const s = getItem(stack.itemId)?.stats;
       if (!s) continue;
-      atk += s.attackBonus   ?? 0;
-      def += s.defenseBonus  ?? 0;
-      str += s.strengthBonus ?? 0;
+      mAtk += s.meleeAttackBonus    ?? 0;
+      mStr += s.meleeStrengthBonus  ?? 0;
+      mDef += s.meleeDefenseBonus   ?? 0;
+      rAtk += s.rangedAttackBonus   ?? 0;
+      rStr += s.rangedStrengthBonus ?? 0;
+      rDef += s.rangedDefenseBonus  ?? 0;
     }
 
+    const fmt = (n: number) => (n >= 0 ? `+${n}` : `${n}`);
     this.bonusesEl.innerHTML = `
-      <div style="color:#ff981f;font-size:9px;font-weight:700;margin-bottom:2px;text-transform:uppercase;letter-spacing:1px;">Combat Bonuses</div>
-      <div>Attack bonus: <span style="color:#ffffff">+${atk}</span></div>
-      <div>Defence bonus: <span style="color:#ffffff">+${def}</span></div>
-      <div>Strength bonus: <span style="color:#ffffff">+${str}</span></div>
+      <div style="color:#ff981f;font-size:9px;font-weight:700;margin-bottom:3px;text-transform:uppercase;letter-spacing:1px;">Combat Bonuses</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;column-gap:6px;">
+        <div>Melee Atk: <span style="color:#ffffff">${fmt(mAtk)}</span></div>
+        <div>Ranged Atk: <span style="color:#ffffff">${fmt(rAtk)}</span></div>
+        <div>Melee Str: <span style="color:#ffffff">${fmt(mStr)}</span></div>
+        <div>Ranged Str: <span style="color:#ffffff">${fmt(rStr)}</span></div>
+        <div>Melee Def: <span style="color:#ffffff">${fmt(mDef)}</span></div>
+        <div>Ranged Def: <span style="color:#ffffff">${fmt(rDef)}</span></div>
+      </div>
     `;
   }
 

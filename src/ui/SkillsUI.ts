@@ -25,6 +25,7 @@ const SKILL_COLORS: Record<SkillId, string> = {
   farming:      '#709050',
   construction: '#c0a060',
   hunter:       '#906030',
+  gunner:       '#00cfff',
 };
 
 const SKILL_DISPLAY_NAMES: Record<SkillId, string> = {
@@ -50,6 +51,7 @@ const SKILL_DISPLAY_NAMES: Record<SkillId, string> = {
   farming:      'Farming',
   construction: 'Construction',
   hunter:       'Hunter',
+  gunner:       'Gunner',
 };
 
 export class SkillsUI {
@@ -60,7 +62,7 @@ export class SkillsUI {
     this.container.style.cssText = `
       display: grid;
       grid-template-columns: 1fr 1fr;
-      gap: 2px;
+      gap: 3px;
       padding: 6px;
       align-content: start;
     `;
@@ -73,50 +75,85 @@ export class SkillsUI {
 
   private buildCells(): void {
     for (const id of VISIBLE_SKILLS) {
+      // Outer card — horizontal flex
       const cell = document.createElement('div');
       cell.style.cssText = `
         background: #0d0600;
         border: 1px solid #3d2010;
         border-radius: 2px;
-        padding: 4px 5px;
+        padding: 4px;
         cursor: default;
         position: relative;
         overflow: hidden;
+        display: flex;
+        align-items: center;
+        gap: 6px;
       `;
 
-      const pip = document.createElement('div');
-      pip.style.cssText = `
-        width: 8px; height: 8px;
-        border-radius: 50%;
-        background: ${SKILL_COLORS[id]};
-        display: inline-block;
-        margin-right: 4px;
-        vertical-align: middle;
-        flex-shrink: 0;
+      // Icon — use image file if one exists, otherwise fall back to coloured square
+      const ICON_BASE = '/icons/skills/';
+      const ICON_IDS = new Set<SkillId>(['woodcutting']);
+
+      let icon: HTMLElement;
+      if (ICON_IDS.has(id)) {
+        const img = document.createElement('img');
+        img.src = `${ICON_BASE}${id}.png`;
+        img.alt = SKILL_DISPLAY_NAMES[id];
+        img.style.cssText = `
+          width: 36px;
+          height: 36px;
+          border-radius: 2px;
+          flex-shrink: 0;
+          image-rendering: pixelated;
+          object-fit: contain;
+        `;
+        icon = img;
+      } else {
+        const div = document.createElement('div');
+        div.style.cssText = `
+          width: 36px;
+          height: 36px;
+          background: ${SKILL_COLORS[id]};
+          border-radius: 2px;
+          flex-shrink: 0;
+        `;
+        icon = div;
+      }
+
+      // Right-hand column: name on top, level below
+      const right = document.createElement('div');
+      right.style.cssText = `
+        flex: 1;
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 1px;
       `;
 
-      const label = document.createElement('span');
+      const label = document.createElement('div');
       label.style.cssText = `
         font-size: 9px;
         color: #c8a060;
-        vertical-align: middle;
-        display: block;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
       `;
       label.textContent = SKILL_DISPLAY_NAMES[id];
 
-      const lvl = document.createElement('span');
+      const lvl = document.createElement('div');
       lvl.className = `skill-lvl-${id}`;
       lvl.style.cssText = `
-        font-size: 12px;
+        font-size: 14px;
         font-weight: 700;
         color: #ffcc44;
-        display: block;
+        line-height: 1.1;
+        white-space: nowrap;
       `;
       lvl.textContent = '1';
 
+      // Thin XP progress bar along the bottom edge of the card
       const bar = document.createElement('div');
       bar.className = `skill-bar-${id}`;
       bar.style.cssText = `
@@ -128,25 +165,28 @@ export class SkillsUI {
         transition: width 0.3s ease;
       `;
 
-      const row = document.createElement('div');
-      row.style.cssText = `display: flex; align-items: center; gap: 3px;`;
-      row.appendChild(pip);
-      row.appendChild(label);
-
-      cell.appendChild(row);
-      cell.appendChild(lvl);
-
+      right.appendChild(label);
+      right.appendChild(lvl);
+      cell.appendChild(icon);
+      cell.appendChild(right);
       cell.appendChild(bar);
       this.container.appendChild(cell);
     }
   }
 
-  update(skills: SkillsState): void {
+  update(skills: SkillsState, hp?: number, maxHp?: number): void {
     for (const id of VISIBLE_SKILLS) {
       const skill = skills[id] ?? { level: 1, xp: 0 };  // safe against old server builds
       const lvlEl = this.container.querySelector(`.skill-lvl-${id}`) as HTMLElement | null;
       const barEl = this.container.querySelector(`.skill-bar-${id}`) as HTMLElement | null;
-      if (lvlEl) lvlEl.textContent = String(skill.level);
+      if (lvlEl) {
+        // Hitpoints shows current / max HP; all other skills show their level
+        if (id === 'hitpoints' && hp !== undefined && maxHp !== undefined) {
+          lvlEl.textContent = `${hp} / ${maxHp}`;
+        } else {
+          lvlEl.textContent = String(skill.level);
+        }
+      }
       if (barEl) barEl.style.width = `${Math.round(progressToNextLevel(skill.xp) * 100)}%`;
     }
   }
