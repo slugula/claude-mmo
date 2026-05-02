@@ -1,4 +1,4 @@
-# deploy.ps1 — Build and push to production
+﻿# deploy.ps1 — Build and push to production
 # Run from the project root on main: .\deploy.ps1
 #
 # What it does:
@@ -50,7 +50,7 @@ if ($LASTEXITCODE -ne 0) {
     # There are staged changes (dist changed)
     git -C $ProjectRoot commit -m "Deploy: rebuild dist $timestamp"
 } else {
-    Write-Host "  dist unchanged — no new commit needed." -ForegroundColor DarkGray
+    Write-Host "  dist unchanged - no new commit needed." -ForegroundColor DarkGray
 }
 git -C $ProjectRoot push origin production
 
