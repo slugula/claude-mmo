@@ -24,6 +24,8 @@ import { OverheadChat } from '../ui/OverheadChat';
 import { SoundEngine } from '../audio/SoundEngine';
 import { PlayerJoinModal } from '../ui/PlayerJoinModal';
 import { LoginUI } from '../ui/LoginUI';
+import { showWorldTooltip, hideWorldTooltip } from '../ui/Tooltip';
+import { getPrimaryAction } from '../world/Interactables';
 import { PLAYER_START_X, PLAYER_START_Y, TICK_DURATION_MS } from '../shared/constants';
 
 const AUTH_URL = (import.meta.env.VITE_AUTH_URL as string | undefined) ?? 'http://localhost:8080/auth';
@@ -429,6 +431,28 @@ export class GameEngine {
       }
 
       this.contextInfo.update(hover, this.currentState.npcs);
+
+      // World hover tooltip — shown below the cursor for interactable targets
+      if (hover.kind !== 'none' && hover.kind !== 'walkable') {
+        const primary = getPrimaryAction(hover, this.currentState.npcs);
+        if (primary) {
+          const lines: import('../ui/Tooltip').TooltipLine[] = [[
+            { text: primary.verb },
+            ...(primary.subject
+              ? [{ text: ` ${primary.subject}`, color: '#ff981f' }]
+              : []),
+            ...(primary.subjectSuffix
+              ? [{ text: ` ${primary.subjectSuffix}`, color: '#ffcc44' }]
+              : []),
+          ]];
+          showWorldTooltip(lines);
+        } else {
+          hideWorldTooltip();
+        }
+      } else {
+        hideWorldTooltip();
+      }
+
       this.updateHoverHighlight(hover);
       this.canvas.style.cursor = this.cursorFor(hover.kind);
 

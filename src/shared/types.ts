@@ -14,26 +14,16 @@ export type SkinColor  = 'fair' | 'tan' | 'olive' | 'brown';
 
 export type SkillId =
   | 'warrior' | 'defence' | 'hitpoints'
-  | 'ranged' | 'prayer' | 'magic' | 'cooking'
-  | 'woodcutting' | 'fletching' | 'fishing' | 'firemaking'
-  | 'crafting' | 'smithing' | 'mining' | 'herblore'
-  | 'agility' | 'thieving' | 'slayer' | 'farming'
-  | 'runecraft' | 'hunter' | 'construction' | 'gunner';
+  | 'woodcutting' | 'mining' | 'gunner';
 
 export const ALL_SKILLS: SkillId[] = [
-  'warrior', 'hitpoints', 'mining',
-  'defence', 'agility', 'smithing',
-  'herblore', 'fishing', 'cooking',
-  'ranged', 'thieving', 'firemaking',
-  'prayer', 'crafting', 'fletching',
-  'magic', 'woodcutting', 'runecraft',
-  'slayer', 'farming', 'construction',
-  'hunter', 'gunner',
+  'warrior', 'defence', 'hitpoints',
+  'woodcutting', 'mining', 'gunner'
 ];
 
 // Only skills with active gameplay systems — shown in the Skills panel
 export const VISIBLE_SKILLS: SkillId[] = [
-  'warrior', 'defence', 'hitpoints', 'woodcutting', 'gunner',
+  'hitpoints', 'defence', 'warrior', 'gunner', 'woodcutting'
 ];
 
 export interface SkillState {

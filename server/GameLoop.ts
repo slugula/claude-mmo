@@ -67,9 +67,13 @@ export class GameLoop {
       // Restore returning player — keep their stats, position, etc.
       // Reset transient combat state so they don't resume mid-fight.
       // Recalculate maxHp from the hitpoints skill level so it stays in sync.
-      const restoredMaxHp = savedState.skills.hitpoints?.level ?? 10;
+      // Merge defaults under saved skills so any skill added since the player's
+      // last login (e.g. 'gunner') starts at level 1 rather than crashing.
+      const skills = { ...createDefaultSkills(), ...savedState.skills };
+      const restoredMaxHp = skills.hitpoints?.level ?? 10;
       player = {
         ...savedState,
+        skills,
         hp: Math.min(savedState.hp, restoredMaxHp),
         maxHp: restoredMaxHp,
         path: [],
