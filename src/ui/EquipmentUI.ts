@@ -80,7 +80,9 @@ export class EquipmentUI {
             el.style.borderColor = '#ff981f';
             const name = getItem(stack.itemId)?.name ?? 'Item';
             this.contextInfo?.setOverride('Remove', name);
-            showItemTooltip(name, el);
+            showItemTooltip([
+              [{ text: 'Remove' }, { text: ` ${name}`, color: '#ff981f' }],
+            ]);
           } else {
             el.style.borderColor = '#5a3020';
             this.contextInfo?.setOverride(SLOT_LABEL[slot], '');

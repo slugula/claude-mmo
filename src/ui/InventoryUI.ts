@@ -62,7 +62,9 @@ export class InventoryUI {
             ? (def.equipSlot === 'rightHand' ? 'Wield' : 'Wear')
             : 'Examine';
           this.contextInfo?.setOverride(verb, name);
-          showItemTooltip(name, slot);
+          showItemTooltip([
+            [{ text: verb }, { text: ` ${name}`, color: '#ff981f' }],
+          ]);
         }
       });
       slot.addEventListener('mouseleave', () => {

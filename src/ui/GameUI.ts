@@ -5,6 +5,7 @@ import { EquipmentUI } from './EquipmentUI';
 import { ChatLog } from './ChatLog';
 import type { ContextInfo } from './ContextInfo';
 import { getCombatLevel, getTotalLevel } from '../systems/SkillSystem';
+import { setUITooltip, clearUITooltip } from './Tooltip';
 
 type TabId = 'inventory' | 'skills' | 'equipment';
 
@@ -46,10 +47,10 @@ export class GameUI {
   }
 
   private buildTabs(): void {
-    const tabs: { id: TabId; label: string; el: HTMLElement }[] = [
-      { id: 'inventory', label: 'Inv',   el: this.inventoryUI.element },
-      { id: 'skills',    label: 'Skills',el: this.skillsUI.element    },
-      { id: 'equipment', label: 'Equip', el: this.equipmentUI.element },
+    const tabs: { id: TabId; label: string; fullName: string; el: HTMLElement }[] = [
+      { id: 'inventory', label: 'Inv',   fullName: 'Inventory',  el: this.inventoryUI.element },
+      { id: 'skills',    label: 'Skills',fullName: 'Skills',     el: this.skillsUI.element    },
+      { id: 'equipment', label: 'Equip', fullName: 'Equipment',  el: this.equipmentUI.element },
     ];
 
     for (const tab of tabs) {
@@ -59,6 +60,12 @@ export class GameUI {
       btn.dataset.tab = tab.id;
       btn.textContent = tab.label;
       btn.addEventListener('click', () => this.showTab(tab.id));
+      btn.addEventListener('mouseenter', () => {
+        setUITooltip([[{ text: tab.fullName, color: '#ffcc44' }]]);
+      });
+      btn.addEventListener('mouseleave', () => {
+        clearUITooltip();
+      });
       this.tabBar.appendChild(btn);
     }
 

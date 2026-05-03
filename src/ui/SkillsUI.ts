@@ -1,30 +1,14 @@
 import { VISIBLE_SKILLS } from '../shared/types';
 import type { SkillsState, SkillId } from '../shared/types';
-import { progressToNextLevel } from '../systems/SkillSystem';
+import { progressToNextLevel, xpForLevel, xpToNextLevel } from '../systems/SkillSystem';
+import { setUITooltip, clearUITooltip } from './Tooltip';
 
 const SKILL_COLORS: Record<SkillId, string> = {
   warrior:      '#d4882c',
   hitpoints:    '#e06060',
-  mining:       '#8888cc',
   defence:      '#60a0e0',
-  agility:      '#80c0d0',
-  smithing:     '#c0a840',
-  herblore:     '#50c050',
-  fishing:      '#6080d0',
-  cooking:      '#d08030',
-  ranged:       '#70c060',
-  thieving:     '#c060a0',
-  firemaking:   '#e08020',
-  prayer:       '#e0d060',
-  crafting:     '#c08050',
-  fletching:    '#60b060',
-  magic:        '#8060e0',
   woodcutting:  '#509040',
-  runecraft:    '#d0c060',
-  slayer:       '#c03030',
-  farming:      '#709050',
-  construction: '#c0a060',
-  hunter:       '#906030',
+  mining:       '#8888aa',
   gunner:       '#00cfff',
 };
 
@@ -33,29 +17,17 @@ const SKILL_DISPLAY_NAMES: Record<SkillId, string> = {
   hitpoints:    'Hitpoints',
   mining:       'Mining',
   defence:      'Defence',
-  agility:      'Agility',
-  smithing:     'Smithing',
-  herblore:     'Herblore',
-  fishing:      'Fishing',
-  cooking:      'Cooking',
-  ranged:       'Ranged',
-  thieving:     'Thieving',
-  firemaking:   'Firemaking',
-  prayer:       'Prayer',
-  crafting:     'Crafting',
-  fletching:    'Fletching',
-  magic:        'Magic',
   woodcutting:  'Woodcutting',
-  runecraft:    'Runecraft',
-  slayer:       'Slayer',
-  farming:      'Farming',
-  construction: 'Construction',
-  hunter:       'Hunter',
   gunner:       'Gunner',
 };
 
 export class SkillsUI {
   private container: HTMLElement;
+
+  // Stored on each update so hover tooltips can read live data
+  private currentSkills: SkillsState | null = null;
+  private currentHp: number                 = 0;
+  private currentMaxHp: number              = 0;
 
   constructor() {
     this.container = document.createElement('div');
@@ -78,7 +50,7 @@ export class SkillsUI {
       // Outer card — horizontal flex
       const cell = document.createElement('div');
       cell.style.cssText = `
-        background: #0d0600;
+        background: #0d060048;
         border: 1px solid #3d2010;
         border-radius: 2px;
         padding: 4px;
@@ -92,33 +64,36 @@ export class SkillsUI {
 
       // Icon — use image file if one exists, otherwise fall back to coloured square
       const ICON_BASE = '/icons/skills/';
-      const ICON_IDS = new Set<SkillId>(['woodcutting']);
-
       let icon: HTMLElement;
-      if (ICON_IDS.has(id)) {
-        const img = document.createElement('img');
-        img.src = `${ICON_BASE}${id}.png`;
-        img.alt = SKILL_DISPLAY_NAMES[id];
-        img.style.cssText = `
-          width: 36px;
-          height: 36px;
-          border-radius: 2px;
-          flex-shrink: 0;
-          image-rendering: pixelated;
-          object-fit: contain;
-        `;
-        icon = img;
-      } else {
+
+      const img = document.createElement('img');
+      img.src = `${ICON_BASE}${id}.png`;
+      img.style.cssText = `
+        width: 36px;
+        height: 36px;
+        border-radius: 2px;
+        flex-shrink: 0;
+        image-rendering: pixelated;
+        object-fit: none;
+      `;
+
+      img.onerror = () => {
+        // If image fails to load, replace with the fallback div
         const div = document.createElement('div');
         div.style.cssText = `
-          width: 36px;
-          height: 36px;
+          width: 32px;
+          height: 32px;
           background: ${SKILL_COLORS[id]};
           border-radius: 2px;
           flex-shrink: 0;
-        `;
-        icon = div;
-      }
+      `;
+
+        if (img.parentNode) {
+          img.parentNode.replaceChild(div, img);
+        }
+      };
+
+      icon = img
 
       // Right-hand column: name on top, level below
       const right = document.createElement('div');
@@ -171,10 +146,66 @@ export class SkillsUI {
       cell.appendChild(right);
       cell.appendChild(bar);
       this.container.appendChild(cell);
+
+      // ---- Hover tooltip ----
+      cell.addEventListener('mouseenter', () => {
+        if (!this.currentSkills) return;
+        const skill  = this.currentSkills[id] ?? { level: 1, xp: 0 };
+        const lines  = this.buildSkillTooltip(id, skill.xp, skill.level);
+        setUITooltip(lines);
+      });
+      cell.addEventListener('mouseleave', () => {
+        clearUITooltip();
+      });
     }
   }
 
+  private buildSkillTooltip(
+    id: SkillId,
+    xp: number,
+    level: number,
+  ) {
+    const displayName = SKILL_DISPLAY_NAMES[id];
+    const color       = SKILL_COLORS[id];
+    const remaining   = xpToNextLevel(xp);
+    const nextAt      = level < 99 ? xpForLevel(level + 1) : null;
+
+    const fmt = (n: number) => n.toLocaleString();
+
+    const lines: import('./Tooltip').TooltipLine[] = [
+      // Skill name row — coloured
+      [{ text: displayName, color }],
+    ];
+
+    // Hitpoints also shows current / max HP
+    if (id === 'hitpoints') {
+      lines.push([
+        { text: 'HP: ', color: '#888888' },
+        { text: `${this.currentHp} / ${this.currentMaxHp}`, color: '#ffffff' },
+      ]);
+    }
+
+    lines.push(
+      [{ text: 'XP: ', color: '#888888' }, { text: fmt(xp), color: '#ffffff' }],
+    );
+
+    if (nextAt !== null) {
+      lines.push(
+        [{ text: 'Next level at: ', color: '#888888' }, { text: `${fmt(nextAt)} XP`, color: '#ffcc44' }],
+        [{ text: 'Remaining: ',    color: '#888888' }, { text: `${fmt(remaining)} XP`, color: '#ffffff' }],
+      );
+    } else {
+      lines.push([{ text: 'Maximum level reached', color: '#ffcc44' }]);
+    }
+
+    return lines;
+  }
+
   update(skills: SkillsState, hp?: number, maxHp?: number): void {
+    this.currentSkills  = skills;
+    this.currentHp      = hp    ?? 0;
+    this.currentMaxHp   = maxHp ?? 0;
+
     for (const id of VISIBLE_SKILLS) {
       const skill = skills[id] ?? { level: 1, xp: 0 };  // safe against old server builds
       const lvlEl = this.container.querySelector(`.skill-lvl-${id}`) as HTMLElement | null;

@@ -71,13 +71,11 @@ export function getTotalLevel(skills: SkillsState): number {
 }
 
 export function getCombatLevel(skills: SkillsState): number {
-  // Use optional chaining — server may send state from an older build
   const def = (s: SkillState | undefined) => s?.level ?? 1;
-  const base  = 0.25 * (def(skills.defence) + def(skills.hitpoints) + Math.floor(def(skills.prayer) / 2));
+  const base   = 0.25 * (def(skills.defence) + def(skills.hitpoints));
   const melee  = 0.65  * def(skills.warrior);
-  const ranged = 0.325 * Math.floor(Math.max(def(skills.ranged), def(skills.gunner)) * 1.5);
-  const mage   = 0.325 * Math.floor(def(skills.magic) * 1.5);
-  return Math.floor(base + Math.max(melee, ranged, mage));
+  const ranged = 0.325 * Math.floor(def(skills.gunner) * 1.5);
+  return Math.floor(base + Math.max(melee, ranged));
 }
 
 export type { SkillId, SkillState, SkillsState };
