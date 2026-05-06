@@ -1,8 +1,59 @@
 import {
   Scene, Mesh, MeshBuilder, StandardMaterial,
-  Color3, Vector3,
+  Color3, Vector3, SceneLoader, type AbstractMesh,
 } from '@babylonjs/core';
+import '@babylonjs/loaders/glTF';
 import type { PlayerState, Direction, EquipSlot, ItemStack, ShirtColor, SkinColor } from '../shared/types';
+
+// ---- GLTF weapon config -------------------------------------------------
+// Adjust position / rotation / scale here to dial in how each weapon sits
+// in the player's right hand (all coords in player-root space).
+//
+//   position: where the model's origin lands in player space
+//   rotation: Euler XYZ in radians applied after loading
+//   scale:    uniform scale (1.0 = as exported)
+//
+// Right arm center ≈ (0.27, 0.50, 0.00) for reference.
+
+interface GltfWeaponCfg {
+  file:     string;
+  position: [number, number, number];
+  rotation: [number, number, number];
+  scale:    number;
+}
+
+const GLTF_WEAPONS: Record<string, GltfWeaponCfg> = {
+  iron_axe: {
+    file:     'M_Woodcutting_BasicAxe.gltf',
+    position: [0.42, 0.30, 0.06],
+    rotation: [90, 0, 0],
+    scale:    1.0,
+  },
+  axe: {
+    file:     'M_Woodcutting_BasicAxe.gltf',
+    position: [0.42, 0.30, 0.06],
+    rotation: [90, 0, 0],
+    scale:    1.0,
+  },
+};
+
+// Module-level load cache so multiple PlayerEntity instances share results
+const _gltfPromises = new Map<string, Promise<AbstractMesh>>();
+
+function loadGltfWeapon(cfg: GltfWeaponCfg, scene: Scene): Promise<AbstractMesh> {
+  const key = cfg.file;
+  if (!_gltfPromises.has(key)) {
+    const p = SceneLoader.ImportMeshAsync('', '/models/', cfg.file, scene).then(result => {
+      const root = result.meshes[0];
+      root.isPickable = false;
+      // Stash the source out of view; we'll clone per-player
+      root.setEnabled(false);
+      return root;
+    });
+    _gltfPromises.set(key, p);
+  }
+  return _gltfPromises.get(key)!;
+}
 
 // ---- Appearance colour tables ----
 
@@ -41,6 +92,7 @@ export class PlayerEntity {
   private scene: Scene;
   private heldItemRoot: Mesh | null = null;
   private lastRightHandId: string | null = null;
+  private pendingHeldItemId: string | null = null;
   private lungeStartMs: number = -1;
   private lastShirtColor: ShirtColor | null = null;
   private lastSkinColor:  SkinColor  | null = null;
@@ -124,13 +176,43 @@ export class PlayerEntity {
     if (rightHandId === this.lastRightHandId) return;
     this.lastRightHandId = rightHandId;
 
+    // Tear down whatever is currently held
+    this.pendingHeldItemId = null;
     if (this.heldItemRoot) {
       this.heldItemRoot.getChildMeshes().forEach(m => { m.material?.dispose(); m.dispose(); });
       this.heldItemRoot.dispose();
       this.heldItemRoot = null;
     }
 
-    if (rightHandId) {
+    if (!rightHandId) return;
+
+    const gltfCfg = GLTF_WEAPONS[rightHandId];
+    if (gltfCfg) {
+      // Async GLTF path — load (or reuse cached) source and clone into hand
+      this.pendingHeldItemId = rightHandId;
+      loadGltfWeapon(gltfCfg, this.scene).then(sourceRoot => {
+        // Guard: item may have been unequipped while we were loading
+        if (this.pendingHeldItemId !== rightHandId) return;
+
+        const clone = sourceRoot.clone(`held-gltf-${rightHandId}-${this.root.name}`, this.root, false)!;
+        clone.setEnabled(true);
+        clone.isPickable = false;
+        clone.getChildMeshes().forEach(m => { m.isPickable = false; });
+
+        const [px, py, pz] = gltfCfg.position;
+        const [rx, ry, rz] = gltfCfg.rotation;
+        clone.position = new Vector3(px, py, pz);
+        clone.rotation = new Vector3(rx, ry, rz);
+        clone.scaling  = new Vector3(gltfCfg.scale, gltfCfg.scale, gltfCfg.scale);
+
+        this.heldItemRoot = clone as unknown as Mesh;
+        this.pendingHeldItemId = null;
+      }).catch(err => {
+        console.warn(`Failed to load GLTF weapon ${rightHandId}:`, err);
+        this.pendingHeldItemId = null;
+      });
+    } else {
+      // Synchronous procedural path (pickaxe, swords, etc.)
       this.heldItemRoot = this.buildHeldMesh(rightHandId, this.scene);
       if (this.heldItemRoot) this.heldItemRoot.parent = this.root;
     }
@@ -139,8 +221,6 @@ export class PlayerEntity {
   private buildHeldMesh(itemId: string, scene: Scene): Mesh | null {
     switch (itemId) {
       case 'pickaxe':          return this.buildHeldPickaxe(scene);
-      case 'axe':
-      case 'iron_axe':         return this.buildHeldAxe(itemId, scene);
       case 'bronze_sword':
       case 'iron_sword':       return this.buildHeldSword(itemId, scene, false);
       case 'bronze_longsword': return this.buildHeldSword(itemId, scene, true);

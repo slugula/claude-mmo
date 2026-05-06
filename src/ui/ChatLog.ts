@@ -15,6 +15,10 @@ export class ChatLog {
     ChatLog.instance?.updateInputLine();
   }
 
+  static getPlayerName(): string {
+    return ChatLog.playerNameValue;
+  }
+
   static log(message: string): void {
     if (!ChatLog.instance) ChatLog.instance = new ChatLog();
     ChatLog.instance.push(message, '#ffe066');

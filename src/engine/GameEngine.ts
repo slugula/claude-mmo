@@ -150,6 +150,9 @@ export class GameEngine {
     this.hoverHighlight.innerGlow = false;
     this.hoverHighlight.blurHorizontalSize = 0.4;
     this.hoverHighlight.blurVerticalSize   = 0.4;
+    // Composite the glow after renderingGroup 0 (world) but before group 1 (player),
+    // so the player always renders on top of the highlight glow.
+    this.hoverHighlight.renderingGroupId = 0;
 
     this.contextInfo = new ContextInfo();
 
@@ -171,6 +174,11 @@ export class GameEngine {
       if (action.type === 'SET_APPEARANCE') {
         ChatLog.setPlayerName(action.playerName);
         this.player.updateAppearance(action.shirtColor, action.skinColor);
+      }
+      // Show own chat message immediately — don't wait for the server roundtrip.
+      // The messages[localId] path for chat: is unreliable; this is the safe path.
+      if (action.type === 'SEND_CHAT' && action.message.trim().length > 0) {
+        ChatLog.chat(`${ChatLog.getPlayerName()}: ${action.message}`);
       }
       this.network.sendActions([action]);
     };
@@ -229,11 +237,12 @@ export class GameEngine {
         const localId = this.localPlayerId;
         if (!localId) return;
 
-        // Own system / chat messages echoed back by the server
+        // System messages (combat, loot, skill-ups, etc.) from the server queue.
+        // chat: lines are intentionally skipped here — own chat is shown immediately
+        // in dispatch, and remote chat is picked up via chatMessageTick below.
         const msgs = msg.messages[localId] ?? [];
         for (const m of msgs) {
-          if (m.startsWith('chat:')) ChatLog.chat(m.slice(5));
-          else ChatLog.log(m);
+          if (!m.startsWith('chat:')) ChatLog.log(m);
         }
 
         // Snap camera to player's saved position on the very first tick they appear
