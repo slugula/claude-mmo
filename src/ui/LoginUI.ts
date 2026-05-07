@@ -45,7 +45,7 @@ export class LoginUI {
     this.toggleEl.innerHTML = mode === 'login'
       ? 'New player? <span style="color:#ff981f;cursor:pointer" id="toggle-link">Create account</span>'
       : 'Have an account? <span style="color:#ff981f;cursor:pointer" id="toggle-link">Login</span>';
-    this.overlay.querySelector('#toggle-link')?.addEventListener('click', () =>
+    this.toggleEl.querySelector('#toggle-link')?.addEventListener('click', () =>
       this.setMode(mode === 'login' ? 'register' : 'login'),
     );
     this.clearError();
