@@ -4,6 +4,7 @@ import { createWorldState, findWalkableTileNear } from '../src/world/WorldState'
 import { spawnNPC } from '../src/systems/NPCSystem';
 import { createDefaultSkills } from '../src/systems/SkillSystem';
 import { createEmptyInventory } from '../src/systems/InventorySystem';
+import { createEmptyBank } from '../src/systems/BankSystem';
 import { processTick } from '../src/engine/TickSystem';
 import type { GameAction } from '../src/shared/types';
 
@@ -74,6 +75,7 @@ export class GameLoop {
       player = {
         ...savedState,
         skills,
+        bank: savedState.bank ?? createEmptyBank(),
         hp: Math.min(savedState.hp, restoredMaxHp),
         maxHp: restoredMaxHp,
         path: [],
@@ -163,6 +165,7 @@ function createInitialPlayer(tileX: number, tileY: number, name: string): Player
     destinationY: tileY,
     skills,
     inventory,
+    bank: createEmptyBank(),
     equipped: {},
     hp: startHp,
     maxHp: startHp,

@@ -26,7 +26,9 @@ import { PlayerJoinModal } from '../ui/PlayerJoinModal';
 import { LoginUI } from '../ui/LoginUI';
 import { showWorldTooltip, hideWorldTooltip } from '../ui/Tooltip';
 import { getPrimaryAction } from '../world/Interactables';
-import { PLAYER_START_X, PLAYER_START_Y, TICK_DURATION_MS } from '../shared/constants';
+import { PLAYER_START_X, PLAYER_START_Y, TICK_DURATION_MS, BANK_CHEST_X, BANK_CHEST_Y } from '../shared/constants';
+import { BankUI } from '../ui/BankUI';
+import type { PlayerState } from '../shared/types';
 
 const AUTH_URL = (import.meta.env.VITE_AUTH_URL as string | undefined) ?? 'http://localhost:8080/auth';
 const WS_URL   = (import.meta.env.VITE_WS_URL  as string | undefined) ?? 'ws://localhost:8080';
@@ -64,6 +66,8 @@ export class GameEngine {
   private stumpMeshes: Map<string, Mesh> = new Map();
   private joinModal!: PlayerJoinModal;
   private loginUI!: LoginUI;
+  private bankUI!: BankUI;
+  private pendingBankOpen = false;
 
   // Proxy meshes for HighlightLayer on instanced world geometry (InstancedMesh is incompatible
   // with HighlightLayer, so we overlay invisible regular Mesh copies at the hovered position)
@@ -160,7 +164,10 @@ export class GameEngine {
       this.input.dispatchEntry(entry);
       this.clickFeedback.spawn(x, y, 'yellow');
     });
-    this.input.onCanvasPointerDown = () => this.ui.dismissInventoryMenu();
+    this.input.onCanvasPointerDown = () => {
+      this.ui.dismissInventoryMenu();
+      if (this.bankUI.isOpen) this.bankUI.close();
+    };
     this.input.onRightClick = (entries, x, y) => this.contextMenu.show(entries, x, y);
     this.input.onLeftClick  = (x, y, kind) => {
       this.contextMenu.hide();
@@ -180,13 +187,35 @@ export class GameEngine {
       if (action.type === 'SEND_CHAT' && action.message.trim().length > 0) {
         ChatLog.chat(`${ChatLog.getPlayerName()}: ${action.message}`);
       }
+      // OPEN_BANK is client-only — intercept and never forward to server
+      if (action.type === 'OPEN_BANK') {
+        const player = this.localPlayerId ? this.currentState.players[this.localPlayerId] : undefined;
+        const adjacent = player &&
+          Math.max(Math.abs(player.tileX - BANK_CHEST_X), Math.abs(player.tileY - BANK_CHEST_Y)) <= 1;
+        if (adjacent) {
+          this.openBank(player!);
+        } else {
+          this.pendingBankOpen = true;
+          // Walk to the tile directly south of the chest (guaranteed walkable — inside clear radius)
+          this.network.sendActions([{ type: 'MOVE_TO', targetX: BANK_CHEST_X, targetY: BANK_CHEST_Y + 1 }]);
+        }
+        return;
+      }
       this.network.sendActions([action]);
     };
 
     this.input.setDispatch(dispatch);
 
+    this.bankUI = new BankUI(dispatch);
+
     this.ui = new GameUI(dispatch);
     this.ui.setContextInfo(this.contextInfo);
+
+    this.bankUI.onClose(() => {
+      this.ui.lockTabs(false);
+      // Restore normal inventory click behaviour
+      this.ui.getInventoryUI().setBankMode(false);
+    });
 
     this.network = new NetworkClient();
 
@@ -439,6 +468,23 @@ export class GameEngine {
         }
       }
 
+      // Auto-open bank after walking to the chest
+      if (this.pendingBankOpen && currPlayer && currPlayer.path.length === 0) {
+        const adj = Math.max(
+          Math.abs(currPlayer.tileX - BANK_CHEST_X),
+          Math.abs(currPlayer.tileY - BANK_CHEST_Y),
+        ) <= 1;
+        if (adj) {
+          this.pendingBankOpen = false;
+          this.openBank(currPlayer);
+        }
+      }
+
+      // Keep bank UI in sync with server state
+      if (this.bankUI.isOpen && currPlayer) {
+        this.bankUI.update(currPlayer.bank ?? []);
+      }
+
       this.contextInfo.update(hover, this.currentState.npcs);
 
       // World hover tooltip — shown below the cursor for interactable targets
@@ -537,12 +583,17 @@ export class GameEngine {
         if (root) { tryAdd(root); root.getChildMeshes().forEach(tryAdd); }
         break;
       }
+      case 'chest': {
+        const chestMesh = this.scene.getMeshByName(`chest-${hover.tileX}-${hover.tileY}`);
+        if (chestMesh instanceof Mesh) tryAdd(chestMesh);
+        break;
+      }
     }
   }
 
   private cursorFor(kind: string): string {
     switch (kind) {
-      case 'tree': case 'rock': case 'npc': case 'item': case 'player': return 'pointer';
+      case 'tree': case 'rock': case 'npc': case 'item': case 'player': case 'chest': return 'pointer';
       default: return 'default';
     }
   }
@@ -621,6 +672,17 @@ export class GameEngine {
   private setupResize(canvas: HTMLCanvasElement): void {
     new ResizeObserver(() => this.engine.resize()).observe(canvas);
     window.addEventListener('resize', () => this.engine.resize());
+  }
+
+  private openBank(player: PlayerState): void {
+    this.bankUI.open(player.bank ?? []);
+    this.ui.lockTabs(true);
+    this.ui.showTab('inventory');
+    this.ui.getInventoryUI().setBankMode(true, (ops) => {
+      this.network.sendActions(
+        ops.map(op => ({ type: 'DEPOSIT_ITEM' as const, slotIndex: op.slotIndex, quantity: op.quantity })),
+      );
+    });
   }
 
   dispose(): void {

@@ -3,6 +3,7 @@ import {
   GRID_WIDTH, GRID_HEIGHT,
   PLAYER_START_X, PLAYER_START_Y,
   OBSTACLE_CLEAR_RADIUS, OBSTACLE_DENSITY,
+  BANK_CHEST_X, BANK_CHEST_Y,
 } from '../shared/constants';
 
 export function seededRandom(seed: number): () => number {
@@ -40,6 +41,12 @@ export function createWorldState(seed = 42): WorldState {
       }
     }
   }
+
+  // Hardcode bank chest — overrides any rng result on that tile
+  tiles[BANK_CHEST_Y][BANK_CHEST_X] = {
+    x: BANK_CHEST_X, y: BANK_CHEST_Y,
+    walkable: false, type: 'grass', obstacle: 'chest', blocksRanged: true,
+  };
 
   return { width: GRID_WIDTH, height: GRID_HEIGHT, tiles };
 }

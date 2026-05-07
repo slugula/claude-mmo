@@ -5,6 +5,9 @@ export const GRID_HEIGHT = 64;
 export const TILE_SIZE = 1;
 
 export const INVENTORY_SLOTS = 28;
+export const BANK_SLOTS     = 100;
+export const BANK_CHEST_X   = 28;   // PLAYER_START_X - 4 — inside clear radius, no random obstacle
+export const BANK_CHEST_Y   = 28;   // PLAYER_START_Y - 4
 
 export const CAMERA_MIN_RADIUS = 5;
 export const CAMERA_MAX_RADIUS = 28;

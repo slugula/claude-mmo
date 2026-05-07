@@ -3,7 +3,7 @@ import {
   Mesh, Vector3, DynamicTexture,
 } from '@babylonjs/core';
 import type { WorldState } from '../shared/types';
-import { TILE_SIZE } from '../shared/constants';
+import { TILE_SIZE, BANK_CHEST_X, BANK_CHEST_Y } from '../shared/constants';
 import { seededRandom } from './WorldState';
 
 export { createWorldState, findWalkableTileNear } from './WorldState';
@@ -241,6 +241,18 @@ export function buildWorldMeshes(world: WorldState, scene: Scene): Mesh {
       }
     }
   }
+
+  // ---- Bank chest (single, non-instanced) ------------------------------------
+  const chestMat = new StandardMaterial('chest-mat', scene);
+  chestMat.diffuseColor = new Color3(0.95, 0.45, 0.05);  // orange
+
+  const chest = MeshBuilder.CreateBox(`chest-${BANK_CHEST_X}-${BANK_CHEST_Y}`, {
+    width: 0.55, height: 0.55, depth: 0.4,
+  }, scene);
+  chest.position   = new Vector3(BANK_CHEST_X, 0.28, BANK_CHEST_Y);
+  chest.material   = chestMat;
+  chest.isPickable = true;
+  chest.parent     = root;
 
   return root;
 }

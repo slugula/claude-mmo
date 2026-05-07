@@ -72,7 +72,7 @@ export interface ItemStack {
 
 export type TileType = 'grass' | 'dirt' | 'stone' | 'water';
 
-export type ObstacleType = 'tree' | 'rock' | 'none';
+export type ObstacleType = 'tree' | 'rock' | 'chest' | 'none';
 
 export interface TileData {
   x: number;
@@ -118,6 +118,7 @@ export interface PlayerState {
   destinationY: number;
   skills: SkillsState;
   inventory: (ItemStack | null)[];
+  bank: (ItemStack | null)[];
   equipped: Partial<Record<EquipSlot, ItemStack>>;
   hp: number;
   maxHp: number;
@@ -189,7 +190,7 @@ export interface DroppedItemState {
 
 // ---------- Hover / Clickbox ----------
 
-export type ClickboxKind = 'walkable' | 'tree' | 'rock' | 'npc' | 'item' | 'equipped' | 'player' | 'none';
+export type ClickboxKind = 'walkable' | 'tree' | 'rock' | 'chest' | 'npc' | 'item' | 'equipped' | 'player' | 'none';
 
 export interface HoverTarget {
   kind: ClickboxKind;
@@ -218,10 +219,16 @@ export interface EquipItemAction   { type: 'EQUIP_ITEM';  slotIndex: number; }
 export interface UnequipItemAction { type: 'UNEQUIP_ITEM'; slot: EquipSlot; }
 export interface SendChatAction       { type: 'SEND_CHAT';      message: string; }
 export interface SetAppearanceAction  { type: 'SET_APPEARANCE'; playerName: string; shirtColor: ShirtColor; skinColor: SkinColor; }
+export interface OpenBankAction       { type: 'OPEN_BANK'; }
+export interface DepositItemAction    { type: 'DEPOSIT_ITEM';  slotIndex: number; quantity: number; }
+export interface DepositAllAction     { type: 'DEPOSIT_ALL'; }
+export interface DepositWornAction    { type: 'DEPOSIT_WORN'; }
+export interface WithdrawItemAction   { type: 'WITHDRAW_ITEM'; bankSlot: number; quantity: number; }
 
 export type GameAction =
   | MoveToAction | ChopTreeAction | MineRockAction
   | AttackNPCAction | TalkToAction | TakeItemAction
   | DropItemAction | MoveSlotAction
   | EquipItemAction | UnequipItemAction | SendChatAction
-  | SetAppearanceAction;
+  | SetAppearanceAction
+  | OpenBankAction | DepositItemAction | DepositAllAction | DepositWornAction | WithdrawItemAction;

@@ -42,6 +42,8 @@ export class GameUI {
     this.equipmentUI.setContextInfo(ci);
   }
 
+  getInventoryUI(): InventoryUI { return this.inventoryUI; }
+
   dismissInventoryMenu(): void {
     this.inventoryUI.dismissSlotMenu();
   }
@@ -90,10 +92,17 @@ export class GameUI {
     this.panelContent.innerHTML = '';
   }
 
-  private showTab(id: TabId): void {
-    this.activeTab = id;
+  lockTabs(locked: boolean): void {
+    this.tabBar.querySelectorAll<HTMLElement>('.tab-button').forEach(btn => {
+      btn.style.pointerEvents = locked ? 'none' : '';
+      btn.style.opacity       = locked ? '0.4'  : '';
+    });
+  }
+
+  showTab(id: TabId | string): void {
+    this.activeTab = id as TabId;
     this.panelContent.innerHTML = '';
-    const el = this.tabElements.get(id);
+    const el = this.tabElements.get(id as TabId);
     if (el) this.panelContent.appendChild(el);
 
     this.tabBar.querySelectorAll('.tab-button').forEach((btn) => {

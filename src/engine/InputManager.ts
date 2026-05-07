@@ -32,6 +32,11 @@ function meshNameToHoverTarget(
     }
   }
 
+  if (meshName.startsWith('chest-')) {
+    const p = meshName.split('-');
+    return { kind: 'chest', tileX: parseInt(p[1]), tileY: parseInt(p[2]) };
+  }
+
   if (meshName.startsWith('tree-')) {
     const p = meshName.split('-');
     return { kind: 'tree', tileX: parseInt(p[2]), tileY: parseInt(p[3]) };
