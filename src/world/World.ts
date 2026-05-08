@@ -1,125 +1,128 @@
 import {
   Scene, MeshBuilder, StandardMaterial, Color3,
-  Mesh, Vector3, DynamicTexture, Texture, VertexData,
+  Mesh, Vector3, DynamicTexture, Texture, VertexData, VertexBuffer,
 } from '@babylonjs/core';
-import type { WorldState } from '../shared/types';
+import type { TileData, WorldState } from '../shared/types';
 import { TILE_SIZE } from '../shared/constants';
-import { buildTerrainGeometry, buildBankGeometry } from './MarchingSquares';
 
 export { createWorldFromTiles, findWalkableTileNear } from './WorldState';
 
-// ---- Pixel type codes (must match export-map.mjs) ---------------------------
-const TYPE_GRASS = 0;
-const TYPE_WATER = 1;
-const TYPE_CLIFF = 2;
+// ---- Constants ---------------------------------------------------------------
+const WATER_Y         = -0.25;
+const MAX_TERRAIN_H   =  4;     // 1.0 height value → 4 world units tall
 
-// ---- Terrain layer Y offsets ------------------------------------------------
-const CLIFF_Y  = 0.005;
-const WATER_Y  = -0.25;  // water surface sits below ground level
-const BANK_TOP = 0;  // bank wall top is flush with the land mesh surface
-
-// ---- Ground texture ---------------------------------------------------------
+// ---- Ground texture (bilinear smooth color blending) -------------------------
 //
-// Source is 192×192 pixels (3 px/tile).  We upscale each source pixel to
-// TEX_SCALE×TEX_SCALE canvas pixels so nearest-neighbour sampling stays crisp
-// at camera distance.  The final canvas is 576×576 (9 px/tile).
+// Each tile fills a 3×3 pixel block with its groundColor.  Babylon bilinear
+// sampling blends between adjacent tile colors → soft gradients, no jagged edges.
 //
-// Babylon DynamicTexture has invertY=true: canvas Y=0 → UV V=1 (world Z-max).
-// Our pixel array has py=0 = game-south, so we flip: canvasY = (pH-1-py)*scale.
+// DynamicTexture has invertY=true: canvas y=0 → UV v=0 → world Z=max.
+// Tile y=0 is world Z=0 (near camera), so we flip: canvasY = (H-1-ty)*3.
 
-const TEX_SCALE = 3;
-
-function buildGroundTexture(
-  pixels: number[],
-  pWidth: number,
-  pHeight: number,
-  scene: Scene,
-): DynamicTexture {
-  const cW = pWidth  * TEX_SCALE;
-  const cH = pHeight * TEX_SCALE;
+function buildGroundTexture(tiles: TileData[][], width: number, height: number, scene: Scene): DynamicTexture {
+  const cW = width  * 3;
+  const cH = height * 3;
   const tex = new DynamicTexture('grid-tex', { width: cW, height: cH }, scene, false);
   const ctx = tex.getContext();
 
-  for (let py = 0; py < pHeight; py++) {
-    const canvasY = (pHeight - 1 - py) * TEX_SCALE;
-    for (let px = 0; px < pWidth; px++) {
-      const v        = pixels[py * pWidth + px];
-      const typeCode = (v >>> 24) & 0xf;
-
-      if (typeCode !== TYPE_GRASS) {
-        // Water/cliff/wall/door — paint grass; land mesh won't cover water pixels anyway.
-        ctx.fillStyle = '#7ec850';
-        ctx.fillRect(px * TEX_SCALE, canvasY, TEX_SCALE, TEX_SCALE);
-        continue;
-      }
-
-      const r = (v >>> 16) & 0xff;
-      const g = (v >>>  8) & 0xff;
-      const b =  v         & 0xff;
-      ctx.fillStyle = `rgb(${r},${g},${b})`;
-      ctx.fillRect(px * TEX_SCALE, canvasY, TEX_SCALE, TEX_SCALE);
+  for (let ty = 0; ty < height; ty++) {
+    const cy = (height - 1 - ty) * 3;
+    for (let tx = 0; tx < width; tx++) {
+      const cx   = tx * 3;
+      const tile = tiles[ty]?.[tx];
+      ctx.fillStyle = tile?.groundColor ?? '#7ec850';
+      ctx.fillRect(cx, cy, 3, 3);
     }
   }
 
   tex.update();
   tex.uScale = 1;
   tex.vScale = 1;
-  tex.updateSamplingMode(Texture.NEAREST_SAMPLINGMODE);
+  tex.updateSamplingMode(Texture.BILINEAR_SAMPLINGMODE);
   return tex;
 }
 
-// ---- Terrain layer helpers --------------------------------------------------
+// ---- Terrain height deformation ----------------------------------------------
+//
+// CreateGround(W, H, subdivisions=W) produces (W+1)×(H+1) vertices.
+// Vertex layout: row 0 → z_local=+H/2 (world Z max), row H → z_local=-H/2 (world Z min).
+// With mesh center at (W/2-0.5, 0, H/2-0.5):
+//   world_X = col - 0.5  →  tile_x ≈ col
+//   world_Z = 255.5 - row →  tile_y ≈ H - row  (clamped to [0,H-1])
 
-function applyTerrainGeo(
-  name: string,
-  typeCode: number,
-  worldY: number,
-  mat: StandardMaterial,
-  pixels: number[],
-  pWidth: number,
-  pHeight: number,
-  scene: Scene,
-  root: Mesh,
-  invertMatch = false,
-): void {
-  const geo = buildTerrainGeometry(pixels, pWidth, pHeight, typeCode, worldY, invertMatch);
-  if (geo.indices.length === 0) return;
-  const vd = new VertexData();
-  vd.positions = geo.positions;
-  vd.indices   = geo.indices;
-  vd.normals   = geo.normals;
-  vd.uvs       = geo.uvs;
-  const mesh = new Mesh(name, scene);
-  vd.applyToMesh(mesh);
-  mesh.material                 = mat;
-  mesh.isPickable               = false;
-  mesh.alwaysSelectAsActiveMesh = true;
-  mesh.parent                   = root;
+function applyHeightDeformation(mesh: Mesh, tiles: TileData[][], W: number, H: number): void {
+  const positions = mesh.getVerticesData(VertexBuffer.PositionKind);
+  if (!positions) return;
+
+  const vertsPerRow = W + 1;
+
+  for (let row = 0; row <= H; row++) {
+    for (let col = 0; col <= W; col++) {
+      const idx  = (row * vertsPerRow + col) * 3;
+      const tx   = Math.max(0, Math.min(W - 1, col));
+      const ty   = Math.max(0, Math.min(H - 1, H - row));
+      const tile = tiles[ty]?.[tx];
+
+      let y: number;
+      if (tile?.type === 'water') {
+        y = -0.5; // sunken below water plane so it stays hidden
+      } else {
+        y = (tile?.height ?? 0) * MAX_TERRAIN_H;
+      }
+      positions[idx + 1] = y;
+    }
+  }
+
+  mesh.updateVerticesData(VertexBuffer.PositionKind, positions);
+  mesh.createNormals(false);
 }
 
-function buildCliffLayer(
-  pixels: number[], pWidth: number, pHeight: number,
-  scene: Scene, root: Mesh,
-): void {
-  const mat = new StandardMaterial('cliff-mat', scene);
-  mat.diffuseColor  = new Color3(0.27, 0.157, 0.235); // #45283c — cliff marker colour
-  mat.specularColor = new Color3(0.05, 0.05, 0.05);
-  mat.backFaceCulling = false;
-  applyTerrainGeo('cliff-surface', TYPE_CLIFF, CLIFF_Y, mat, pixels, pWidth, pHeight, scene, root);
-}
+// ---- Water plane (tile-by-tile quad mesh) ------------------------------------
 
-function buildWaterLayer(
-  pixels: number[], pWidth: number, pHeight: number,
-  scene: Scene, root: Mesh,
-): void {
+function buildWaterPlane(world: WorldState, scene: Scene, root: Mesh): void {
+  const positions: number[] = [];
+  const indices:   number[] = [];
+
+  for (let ty = 0; ty < world.height; ty++) {
+    for (let tx = 0; tx < world.width; tx++) {
+      if (world.tiles[ty][tx].type !== 'water') continue;
+
+      const base = positions.length / 3;
+      const x0 = tx - 0.5, x1 = tx + 0.5;
+      const z0 = ty - 0.5, z1 = ty + 0.5;
+
+      positions.push(x0, WATER_Y, z0);
+      positions.push(x1, WATER_Y, z0);
+      positions.push(x1, WATER_Y, z1);
+      positions.push(x0, WATER_Y, z1);
+
+      indices.push(base, base + 2, base + 1, base, base + 3, base + 2);
+    }
+  }
+
+  if (indices.length === 0) return;
+
+  const normals = new Float32Array(positions.length);
+  VertexData.ComputeNormals(new Float32Array(positions), new Int32Array(indices), normals);
+
+  const vd      = new VertexData();
+  vd.positions  = new Float32Array(positions);
+  vd.indices    = new Int32Array(indices);
+  vd.normals    = normals;
+
   const mat = new StandardMaterial('water-mat', scene);
   mat.diffuseColor    = new Color3(0.18, 0.48, 0.90);
   mat.emissiveColor   = new Color3(0.03, 0.10, 0.28);
   mat.specularColor   = new Color3(0.30, 0.45, 0.75);
   mat.backFaceCulling = false;
-  applyTerrainGeo('water-surface', TYPE_WATER, WATER_Y, mat, pixels, pWidth, pHeight, scene, root);
 
-  // Shimmer via emissive only — alpha stays at 1 so no grass bleeds through
+  const waterMesh = new Mesh('water-surface', scene);
+  vd.applyToMesh(waterMesh);
+  waterMesh.material                 = mat;
+  waterMesh.isPickable               = false;
+  waterMesh.alwaysSelectAsActiveMesh = true;
+  waterMesh.parent                   = root;
+
   scene.registerBeforeRender(() => {
     const t       = Date.now() / 1000;
     const shimmer = Math.sin(t * 1.7) * 0.038 + Math.sin(t * 2.9 + 1.1) * 0.024;
@@ -131,67 +134,48 @@ function buildWaterLayer(
   });
 }
 
-function buildBankLayer(
-  pixels: number[], pWidth: number, pHeight: number,
-  scene: Scene, root: Mesh,
-): void {
-  const geo = buildBankGeometry(pixels, pWidth, pHeight, TYPE_WATER, BANK_TOP, WATER_Y);
-  if (geo.indices.length === 0) return;
-
-  // Compute horizontal normals from the geometry
-  const normals = new Float32Array(geo.positions.length);
-  VertexData.ComputeNormals(geo.positions, geo.indices, normals);
-
-  const vd = new VertexData();
-  vd.positions = geo.positions;
-  vd.indices   = geo.indices;
-  vd.normals   = normals;
-
-  const mat = new StandardMaterial('bank-mat', scene);
-  mat.diffuseColor    = new Color3(0.42, 0.30, 0.18); // dark earthy brown
-  mat.specularColor   = new Color3(0.02, 0.02, 0.02);
-  mat.backFaceCulling = false;
-
-  const mesh = new Mesh('water-bank', scene);
-  vd.applyToMesh(mesh);
-  mesh.material                 = mat;
-  mesh.isPickable               = false;
-  mesh.alwaysSelectAsActiveMesh = true;
-  mesh.parent                   = root;
-}
-
 // ---- Main -------------------------------------------------------------------
 
-export function buildWorldMeshes(
-  world: WorldState,
-  pixels: number[],
-  pWidth: number,
-  pHeight: number,
-  scene: Scene,
-): Mesh {
+export function buildWorldMeshes(world: WorldState, scene: Scene): Mesh {
   const root = new Mesh('world-root', scene);
+  const W    = world.width;
+  const H    = world.height;
 
-  // ---- Ground plane (marching squares land mesh) ------------------------------
-  // Covers every non-water pixel so its boundary aligns exactly with the bank walls.
-  const gridTex   = buildGroundTexture(pixels, pWidth, pHeight, scene);
-  const groundMat = new StandardMaterial('ground-mat', scene);
+  // ---- Ground terrain (height-deformed subdivided mesh) ----------------------
+  const gridTex    = buildGroundTexture(world.tiles, W, H, scene);
+  const groundMat  = new StandardMaterial('ground-mat', scene);
   groundMat.diffuseTexture = gridTex;
   groundMat.specularColor  = new Color3(0, 0, 0);
-  applyTerrainGeo('ground-land', TYPE_WATER, 0, groundMat, pixels, pWidth, pHeight, scene, root, true);
 
-  // Invisible flat pick-target (named 'ground' — GameEngine checks this name for click-to-walk).
+  const terrainMesh = MeshBuilder.CreateGround('ground-terrain', {
+    width:        W * TILE_SIZE,
+    height:       H * TILE_SIZE,
+    subdivisions: W,
+    updatable:    true,
+  }, scene);
+  terrainMesh.position.x   = W / 2 - 0.5;
+  terrainMesh.position.z   = H / 2 - 0.5;
+  terrainMesh.material     = groundMat;
+  terrainMesh.isPickable   = false;
+  terrainMesh.parent       = root;
+  applyHeightDeformation(terrainMesh, world.tiles, W, H);
+
+  // Invisible flat pick-target (name 'ground' — GameEngine uses this for click-to-walk)
   const groundPick = MeshBuilder.CreateGround('ground', {
-    width:  world.width  * TILE_SIZE,
-    height: world.height * TILE_SIZE,
+    width:  W * TILE_SIZE,
+    height: H * TILE_SIZE,
     subdivisions: 1,
   }, scene);
-  groundPick.position.x   = world.width  / 2 - 0.5;
-  groundPick.position.z   = world.height / 2 - 0.5;
-  groundPick.isPickable   = true;
-  groundPick.visibility   = 0;
-  groundPick.parent       = root;
+  groundPick.position.x = W / 2 - 0.5;
+  groundPick.position.z = H / 2 - 0.5;
+  groundPick.isPickable = true;
+  groundPick.visibility = 0;
+  groundPick.parent     = root;
 
-  // ---- Materials --------------------------------------------------------------
+  // ---- Water plane -----------------------------------------------------------
+  buildWaterPlane(world, scene, root);
+
+  // ---- Materials -------------------------------------------------------------
   const treeTrunkMat = new StandardMaterial('tree-trunk-mat', scene);
   treeTrunkMat.diffuseColor = new Color3(0.29, 0.18, 0.08);
 
@@ -251,21 +235,22 @@ export function buildWorldMeshes(
   for (let y = 0; y < world.height; y++) {
     for (let x = 0; x < world.width; x++) {
       const tile = world.tiles[y][x];
+      const tileBaseY = (tile.type !== 'water' ? (tile.height ?? 0) * MAX_TERRAIN_H : WATER_Y);
 
       if (tile.obstacle === 'tree') {
         const trunk = sourceTrunk.createInstance(`tree-trunk-${x}-${y}`);
-        trunk.position   = new Vector3(x, 0.3, y);
+        trunk.position   = new Vector3(x, tileBaseY + 0.3, y);
         trunk.isPickable = true;
         trunk.parent     = root;
 
         const canopy = sourceCanopy.createInstance(`tree-canopy-${x}-${y}`);
-        canopy.position   = new Vector3(x, 0.9, y);
+        canopy.position   = new Vector3(x, tileBaseY + 0.9, y);
         canopy.isPickable = true;
         canopy.parent     = root;
 
       } else if (tile.obstacle === 'rock') {
         const rock = sourceRock.createInstance(`rock-${x}-${y}`);
-        rock.position   = new Vector3(x, 0.16, y);
+        rock.position   = new Vector3(x, tileBaseY + 0.16, y);
         rock.rotation.y = ((x * 1234 + y * 5678) % 628) / 100;
         rock.isPickable = true;
         rock.parent     = root;
@@ -274,7 +259,7 @@ export function buildWorldMeshes(
         const chest = MeshBuilder.CreateBox(`chest-${x}-${y}`, {
           width: 0.55, height: 0.55, depth: 0.4,
         }, scene);
-        chest.position   = new Vector3(x, 0.28, y);
+        chest.position   = new Vector3(x, tileBaseY + 0.28, y);
         chest.material   = chestMat;
         chest.isPickable = true;
         chest.parent     = root;
@@ -282,25 +267,25 @@ export function buildWorldMeshes(
       } else if (tile.type === 'wall') {
         if (!blocksPanel(x, y - 1)) {
           const p = MeshBuilder.CreateBox(`wp-n-${x}-${y}`, { width: 1, height: WALL_H, depth: WALL_T }, scene);
-          p.position = new Vector3(x, WALL_Y, y - 0.5);
+          p.position = new Vector3(x, tileBaseY + WALL_Y, y - 0.5);
           p.isPickable = false;
           wallPanels.push(p);
         }
         if (!blocksPanel(x, y + 1)) {
           const p = MeshBuilder.CreateBox(`wp-s-${x}-${y}`, { width: 1, height: WALL_H, depth: WALL_T }, scene);
-          p.position = new Vector3(x, WALL_Y, y + 0.5);
+          p.position = new Vector3(x, tileBaseY + WALL_Y, y + 0.5);
           p.isPickable = false;
           wallPanels.push(p);
         }
         if (!blocksPanel(x - 1, y)) {
           const p = MeshBuilder.CreateBox(`wp-w-${x}-${y}`, { width: WALL_T, height: WALL_H, depth: 1 }, scene);
-          p.position = new Vector3(x - 0.5, WALL_Y, y);
+          p.position = new Vector3(x - 0.5, tileBaseY + WALL_Y, y);
           p.isPickable = false;
           wallPanels.push(p);
         }
         if (!blocksPanel(x + 1, y)) {
           const p = MeshBuilder.CreateBox(`wp-e-${x}-${y}`, { width: WALL_T, height: WALL_H, depth: 1 }, scene);
-          p.position = new Vector3(x + 0.5, WALL_Y, y);
+          p.position = new Vector3(x + 0.5, tileBaseY + WALL_Y, y);
           p.isPickable = false;
           wallPanels.push(p);
         }
@@ -317,11 +302,6 @@ export function buildWorldMeshes(
       wallMesh.parent     = root;
     }
   }
-
-  // ---- Terrain layers (marching squares, stacked lowest → highest) -----------
-  buildCliffLayer(pixels, pWidth, pHeight, scene, root);
-  buildBankLayer(pixels, pWidth, pHeight, scene, root);
-  buildWaterLayer(pixels, pWidth, pHeight, scene, root);
 
   return root;
 }

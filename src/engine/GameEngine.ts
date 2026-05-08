@@ -253,7 +253,7 @@ export class GameEngine {
         const worldState = createWorldFromTiles(msg.tiles);
         this.currentState = { ...this.currentState, world: worldState };
         this.prevState    = this.currentState;
-        buildWorldMeshes(worldState, msg.pixels, msg.pixelWidth, msg.pixelHeight, this.scene);
+        buildWorldMeshes(worldState, this.scene);
         this.input.setWorld(worldState);
 
         // Cache the bank chest position so OPEN_BANK and the render loop can find it

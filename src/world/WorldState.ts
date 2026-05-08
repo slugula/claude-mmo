@@ -10,7 +10,11 @@ export function createWorldFromTiles(tiles: TileData[][]): WorldState {
   if (tiles.length === 0) {
     return { width: GRID_WIDTH, height: GRID_HEIGHT, tiles: [] };
   }
-  return { width: tiles[0].length, height: tiles.length, tiles };
+  // Normalize: ensure height field exists for tiles loaded from old map files
+  const normalized = tiles.map(row =>
+    row.map(tile => ({ ...tile, height: (tile as TileData & { height?: number }).height ?? 0 })),
+  );
+  return { width: normalized[0].length, height: normalized.length, tiles: normalized };
 }
 
 export function seededRandom(seed: number): () => number {
@@ -29,7 +33,7 @@ export function createWorldState(seed = 42): WorldState {
   for (let y = 0; y < GRID_HEIGHT; y++) {
     tiles[y] = [];
     for (let x = 0; x < GRID_WIDTH; x++) {
-      tiles[y][x] = { x, y, walkable: true, type: 'grass', obstacle: 'none', blocksRanged: false, groundColor: '#7ec850' };
+      tiles[y][x] = { x, y, walkable: true, type: 'grass', obstacle: 'none', blocksRanged: false, groundColor: '#7ec850', height: 0 };
     }
   }
 
@@ -62,7 +66,7 @@ export function createWorldState(seed = 42): WorldState {
       const nx = (x - POOL_CX) / POOL_RX;
       const ny = (y - POOL_CY) / POOL_RY;
       if (nx * nx + ny * ny <= 1) {
-        tiles[y][x] = { x, y, walkable: false, type: 'water', obstacle: 'none', blocksRanged: false, groundColor: '#cbdbfc' };
+        tiles[y][x] = { x, y, walkable: false, type: 'water', obstacle: 'none', blocksRanged: false, groundColor: '#1878e5', height: 0 };
       } else if (nx * nx + ny * ny <= 1.6) {
         // Shore ring — keep walkable, clear any rng obstacles
         tiles[y][x].obstacle = 'none';
@@ -74,7 +78,7 @@ export function createWorldState(seed = 42): WorldState {
   // Hardcode bank chest — overrides any rng result on that tile
   tiles[BANK_CHEST_Y][BANK_CHEST_X] = {
     x: BANK_CHEST_X, y: BANK_CHEST_Y,
-    walkable: false, type: 'grass', obstacle: 'chest', blocksRanged: true, groundColor: '#7ec850',
+    walkable: false, type: 'grass', obstacle: 'chest', blocksRanged: true, groundColor: '#7ec850', height: 0,
   };
 
   return { width: GRID_WIDTH, height: GRID_HEIGHT, tiles };

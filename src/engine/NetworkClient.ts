@@ -4,9 +4,6 @@ export interface InitMessage {
   type:        'init';
   playerId:    string;
   tiles:       TileData[][];
-  pixels:      number[];
-  pixelWidth:  number;
-  pixelHeight: number;
   isNewPlayer: boolean;
 }
 

@@ -1,4 +1,5 @@
 import type { GridPosition, WorldState } from '../shared/types';
+import { HEIGHT_IMPASSABLE_DELTA } from '../shared/constants';
 
 interface Node {
   x: number;
@@ -56,6 +57,7 @@ export function findPath(
 
       if (closed.has(nk)) continue;
       if (!isWalkable(world, nx, ny)) continue;
+      if (!isHeightPassable(world, current.x, current.y, nx, ny)) continue;
 
       const g = current.g + 1;
       const existing = openMap.get(nk);
@@ -87,6 +89,12 @@ export function findPath(
 function isWalkable(world: WorldState, x: number, y: number): boolean {
   if (x < 0 || y < 0 || x >= world.width || y >= world.height) return false;
   return world.tiles[y][x].walkable;
+}
+
+function isHeightPassable(world: WorldState, ax: number, ay: number, bx: number, by: number): boolean {
+  const ha = world.tiles[ay]?.[ax]?.height ?? 0;
+  const hb = world.tiles[by]?.[bx]?.height ?? 0;
+  return Math.abs(ha - hb) <= HEIGHT_IMPASSABLE_DELTA;
 }
 
 function buildPath(node: Node): GridPosition[] {

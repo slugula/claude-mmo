@@ -81,7 +81,32 @@ export interface TileData {
   type: TileType;
   obstacle: ObstacleType;
   blocksRanged: boolean;
-  groundColor: string;  // hex color from Land layer, e.g. '#7ec850'
+  groundColor: string;  // hex color for terrain texture, e.g. '#7ec850'
+  height: number;       // 0–1 float; drives mesh deformation + walkability slope check
+}
+
+// ---------- Map file format (editor output) ----------
+
+export interface NPCSpawn {
+  kind: string;
+  x: number;
+  y: number;
+}
+
+export interface PermanentItemSpawn {
+  itemId: string;
+  quantity: number;
+  x: number;
+  y: number;
+}
+
+export interface WorldMapFile {
+  version: 2;
+  width: number;
+  height: number;
+  tiles: TileData[][];
+  npcSpawns: NPCSpawn[];
+  permanentItems: PermanentItemSpawn[];
 }
 
 // ---------- NPCs ----------

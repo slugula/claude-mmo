@@ -1,4 +1,5 @@
 import { defineConfig } from 'vite';
+import { resolve } from 'path';
 
 export default defineConfig({
   server: {
@@ -6,5 +7,13 @@ export default defineConfig({
   },
   optimizeDeps: {
     include: ['@babylonjs/core', '@babylonjs/materials'],
+  },
+  build: {
+    rollupOptions: {
+      input: {
+        main:   resolve(__dirname, 'index.html'),
+        editor: resolve(__dirname, 'editor.html'),
+      },
+    },
   },
 });
