@@ -111,17 +111,17 @@ export class NPCEntity {
     return mesh;
   }
 
-  render(prev: NPCState, current: NPCState, alpha: number, tick: number): void {
+  render(prev: NPCState, current: NPCState, alpha: number, tick: number, groundY = 0): void {
     this.root.position.x = lerp(prev.tileX, current.tileX, alpha);
     this.root.position.z = lerp(prev.tileY, current.tileY, alpha);
-    this.root.position.y = 0;
+    this.root.position.y = groundY;
     this.root.rotation.y = FACING_ROTATION[current.facing];
 
     if (current.dying) {
       const elapsed = (tick - current.dyingTick) + alpha;
       const progress = Math.min(elapsed / DEATH_TICKS, 1);
       this.root.rotation.z = progress * (Math.PI / 2);
-      this.root.position.y = -progress * 0.1;
+      this.root.position.y = groundY - progress * 0.1;
     } else {
       this.root.rotation.z = 0;
 

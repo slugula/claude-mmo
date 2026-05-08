@@ -324,12 +324,12 @@ export class PlayerEntity {
 
   // ---- Render ----
 
-  render(prev: PlayerState, current: PlayerState, alpha: number, tick: number): void {
+  render(prev: PlayerState, current: PlayerState, alpha: number, tick: number, groundY = 0): void {
     const px = lerp(prev.tileX, current.tileX, alpha);
     const py = lerp(prev.tileY, current.tileY, alpha);
     this.root.position.x = px;
     this.root.position.z = py;
-    this.root.position.y = 0;
+    this.root.position.y = groundY;
 
     this.root.rotation.y = FACING_ROTATION[current.facing];
 

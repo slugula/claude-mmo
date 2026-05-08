@@ -1,7 +1,7 @@
 import {
   Engine, Scene, HemisphericLight, DirectionalLight,
   Vector3, Color3, Color4, MeshBuilder, StandardMaterial,
-  Mesh, HighlightLayer, LinesMesh,
+  Mesh, HighlightLayer, LinesMesh, VertexBuffer,
 } from '@babylonjs/core';
 import type { GameState, NPCState, DroppedItemState, GameAction, HoverTarget } from '../shared/types';
 import { createWorldFromTiles, buildWorldMeshes, MAX_TERRAIN_H, computeVertexHeight } from '../world/World';
@@ -137,11 +137,16 @@ export class GameEngine {
     this.overheadChat     = new OverheadChat(this.scene);
     this.soundEngine      = new SoundEngine();
 
-    // Hover outline — points are updated to world-space tile corners each frame
-    const zeroPt = new Vector3(0, 0, 0);
+    // Hover outline — initialized with a unit square; positions updated via VertexBuffer each frame
     const hoverColors = [0, 1, 2, 3, 4].map(() => new Color4(1, 1, 1, 0.18));
     this.hoverIndicator = MeshBuilder.CreateLines('hover-indicator', {
-      points: [zeroPt, zeroPt, zeroPt, zeroPt, zeroPt],
+      points: [
+        new Vector3(-0.5, 0, -0.5),
+        new Vector3( 0.5, 0, -0.5),
+        new Vector3( 0.5, 0,  0.5),
+        new Vector3(-0.5, 0,  0.5),
+        new Vector3(-0.5, 0, -0.5),
+      ],
       colors: hoverColors,
       updatable: true,
     }, this.scene);
@@ -366,7 +371,9 @@ export class GameEngine {
       const prevPlayer = localId ? (this.prevState.players[localId] ?? currPlayer) : undefined;
 
       if (currPlayer && prevPlayer) {
-        this.player.render(prevPlayer, currPlayer, alpha, this.currentState.tick);
+        const playerGroundY = this.getTileWorldY(prevPlayer.tileX, prevPlayer.tileY)
+          + (this.getTileWorldY(currPlayer.tileX, currPlayer.tileY) - this.getTileWorldY(prevPlayer.tileX, prevPlayer.tileY)) * alpha;
+        this.player.render(prevPlayer, currPlayer, alpha, this.currentState.tick, playerGroundY);
         this.player.updateEquipped(currPlayer.equipped);
         this.player.updateAppearance(currPlayer.shirtColor ?? 'blue', currPlayer.skinColor ?? 'fair');
         this.camera.update(dt, this.input.heldKeys, this.player.worldPosition);
@@ -443,7 +450,9 @@ export class GameEngine {
         const curr = this.currentState.players[id];
         const prev = this.prevState.players[id] ?? curr;
         if (curr) {
-          entity.render(prev, curr, alpha, this.currentState.tick);
+          const remoteGroundY = this.getTileWorldY(prev.tileX, prev.tileY)
+            + (this.getTileWorldY(curr.tileX, curr.tileY) - this.getTileWorldY(prev.tileX, prev.tileY)) * alpha;
+          entity.render(prev, curr, alpha, this.currentState.tick, remoteGroundY);
           entity.updateEquipped(curr.equipped);
           entity.updateAppearance(curr.shirtColor ?? 'blue', curr.skinColor ?? 'fair');
           this.remoteOverheadChats.get(id)?.update(
@@ -457,8 +466,10 @@ export class GameEngine {
       // NPCs
       this.syncNPCEntities(this.currentState.npcs);
       for (const npc of this.currentState.npcs) {
-        const prevNPC = this.prevState.npcs.find(n => n.id === npc.id);
-        this.npcEntities.get(npc.id)?.render(prevNPC ?? npc, npc, alpha, this.currentState.tick);
+        const prevNPC = this.prevState.npcs.find(n => n.id === npc.id) ?? npc;
+        const npcGroundY = this.getTileWorldY(prevNPC.tileX, prevNPC.tileY)
+          + (this.getTileWorldY(npc.tileX, npc.tileY) - this.getTileWorldY(prevNPC.tileX, prevNPC.tileY)) * alpha;
+        this.npcEntities.get(npc.id)?.render(prevNPC, npc, alpha, this.currentState.tick, npcGroundY);
       }
       this.input.setNPCs(this.currentState.npcs);
 
@@ -470,21 +481,18 @@ export class GameEngine {
         const { tiles, width: W, height: H } = this.currentState.world;
         const tx = hover.tileX, ty = hover.tileY;
         const eps = 0.015;
-        // 4 corners: vertex (col, row) for tile (tx, ty)
-        const yBL = computeVertexHeight(tiles, W, H, tx,     H - ty)      + eps;
-        const yBR = computeVertexHeight(tiles, W, H, tx + 1, H - ty)      + eps;
-        const yTR = computeVertexHeight(tiles, W, H, tx + 1, H - ty - 1)  + eps;
-        const yTL = computeVertexHeight(tiles, W, H, tx,     H - ty - 1)  + eps;
-        MeshBuilder.CreateLines('hover-indicator', {
-          points: [
-            new Vector3(tx - 0.5, yBL, ty - 0.5),
-            new Vector3(tx + 0.5, yBR, ty - 0.5),
-            new Vector3(tx + 0.5, yTR, ty + 0.5),
-            new Vector3(tx - 0.5, yTL, ty + 0.5),
-            new Vector3(tx - 0.5, yBL, ty - 0.5),
-          ],
-          instance: this.hoverIndicator,
-        }, this.scene);
+        const yBL = computeVertexHeight(tiles, W, H, tx,     H - ty)     + eps;
+        const yBR = computeVertexHeight(tiles, W, H, tx + 1, H - ty)     + eps;
+        const yTR = computeVertexHeight(tiles, W, H, tx + 1, H - ty - 1) + eps;
+        const yTL = computeVertexHeight(tiles, W, H, tx,     H - ty - 1) + eps;
+        // Directly update the GPU position buffer — avoids degenerate CreateLines({instance}) pitfalls
+        this.hoverIndicator.updateVerticesData(VertexBuffer.PositionKind, new Float32Array([
+          tx - 0.5, yBL, ty - 0.5,
+          tx + 0.5, yBR, ty - 0.5,
+          tx + 0.5, yTR, ty + 0.5,
+          tx - 0.5, yTL, ty + 0.5,
+          tx - 0.5, yBL, ty - 0.5,
+        ]));
         this.hoverIndicator.setEnabled(true);
       } else {
         this.hoverIndicator.setEnabled(false);
