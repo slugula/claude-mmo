@@ -8,8 +8,8 @@ import { TILE_SIZE } from '../shared/constants';
 export { createWorldFromTiles, findWalkableTileNear } from './WorldState';
 
 // ---- Constants ---------------------------------------------------------------
-const WATER_Y         = -0.25;
-const MAX_TERRAIN_H   =  4;     // 1.0 height value → 4 world units tall
+const WATER_Y              = -0.25;
+export const MAX_TERRAIN_H =  4;     // 1.0 height value → 4 world units tall
 
 // ---- Ground texture (bilinear smooth color blending) -------------------------
 //

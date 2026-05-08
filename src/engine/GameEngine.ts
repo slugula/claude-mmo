@@ -4,7 +4,7 @@ import {
   Mesh, HighlightLayer,
 } from '@babylonjs/core';
 import type { GameState, NPCState, DroppedItemState, GameAction, HoverTarget } from '../shared/types';
-import { createWorldFromTiles, buildWorldMeshes } from '../world/World';
+import { createWorldFromTiles, buildWorldMeshes, MAX_TERRAIN_H } from '../world/World';
 import { NPCEntity } from '../entities/NPCEntity';
 import { DroppedItemEntity } from '../entities/DroppedItemEntity';
 import { PlayerEntity } from '../entities/Player';
@@ -471,6 +471,7 @@ export class GameEngine {
       if (hover.kind === 'walkable') {
         this.hoverIndicator.setEnabled(true);
         this.hoverIndicator.position.x = hover.tileX;
+        this.hoverIndicator.position.y = this.getTileWorldY(hover.tileX, hover.tileY) + 0.01;
         this.hoverIndicator.position.z = hover.tileY;
       } else {
         this.hoverIndicator.setEnabled(false);
@@ -483,6 +484,7 @@ export class GameEngine {
         if (hasPath) {
           this.destIndicator.setEnabled(true);
           this.destIndicator.position.x = currPlayer.destinationX;
+          this.destIndicator.position.y = this.getTileWorldY(currPlayer.destinationX, currPlayer.destinationY) + 0.01;
           this.destIndicator.position.z = currPlayer.destinationY;
 
           this.destPulseScale += this.destPulseDir * dt * 2;
@@ -582,9 +584,9 @@ export class GameEngine {
       case 'player': return;
       case 'tree':
         // Position proxy Meshes over the hovered InstancedMesh so HighlightLayer can glow them
-        this.hlTrunkProxy.position.set(hover.tileX, 0.3, hover.tileY);
+        this.hlTrunkProxy.position.set(hover.tileX, this.getTileWorldY(hover.tileX, hover.tileY) + 0.3, hover.tileY);
         this.hlTrunkProxy.setEnabled(true);
-        this.hlCanopyProxy.position.set(hover.tileX, 0.9, hover.tileY);
+        this.hlCanopyProxy.position.set(hover.tileX, this.getTileWorldY(hover.tileX, hover.tileY) + 0.9, hover.tileY);
         this.hlCanopyProxy.setEnabled(true);
         tryAdd(this.hlTrunkProxy);
         tryAdd(this.hlCanopyProxy);
@@ -592,7 +594,7 @@ export class GameEngine {
       case 'rock': {
         // Match the rotation of the instanced rock so the glow outline aligns
         const rockInstance = this.scene.getMeshByName(`rock-${hover.tileX}-${hover.tileY}`);
-        this.hlRockProxy.position.set(hover.tileX, 0.16, hover.tileY);
+        this.hlRockProxy.position.set(hover.tileX, this.getTileWorldY(hover.tileX, hover.tileY) + 0.16, hover.tileY);
         this.hlRockProxy.rotation.y = rockInstance?.rotation.y ?? 0;
         this.hlRockProxy.setEnabled(true);
         tryAdd(this.hlRockProxy);
@@ -616,6 +618,13 @@ export class GameEngine {
         break;
       }
     }
+  }
+
+  private getTileWorldY(tx: number, ty: number): number {
+    const tile = this.currentState.world.tiles[ty]?.[tx];
+    if (!tile) return 0;
+    if (tile.type === 'water') return -0.25;
+    return (tile.height ?? 0) * MAX_TERRAIN_H;
   }
 
   private cursorFor(kind: string): string {
