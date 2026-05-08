@@ -1,10 +1,10 @@
 import {
   Engine, Scene, HemisphericLight, DirectionalLight,
   Vector3, Color3, Color4, MeshBuilder, StandardMaterial,
-  Mesh, HighlightLayer,
+  Mesh, HighlightLayer, LinesMesh,
 } from '@babylonjs/core';
 import type { GameState, NPCState, DroppedItemState, GameAction, HoverTarget } from '../shared/types';
-import { createWorldFromTiles, buildWorldMeshes, MAX_TERRAIN_H } from '../world/World';
+import { createWorldFromTiles, buildWorldMeshes, MAX_TERRAIN_H, computeVertexHeight } from '../world/World';
 import { NPCEntity } from '../entities/NPCEntity';
 import { DroppedItemEntity } from '../entities/DroppedItemEntity';
 import { PlayerEntity } from '../entities/Player';
@@ -77,7 +77,7 @@ export class GameEngine {
   private hlCanopyProxy!: Mesh;
   private hlRockProxy!: Mesh;
 
-  private hoverIndicator: Mesh;
+  private hoverIndicator: LinesMesh;
   private destIndicator: Mesh;
   private destPulseDir = 1;
   private destPulseScale = 1;
@@ -137,18 +137,16 @@ export class GameEngine {
     this.overheadChat     = new OverheadChat(this.scene);
     this.soundEngine      = new SoundEngine();
 
-    const hoverPts = [
-      new Vector3(-0.5, 0.008, -0.5),
-      new Vector3( 0.5, 0.008, -0.5),
-      new Vector3( 0.5, 0.008,  0.5),
-      new Vector3(-0.5, 0.008,  0.5),
-      new Vector3(-0.5, 0.008, -0.5),
-    ];
-    const hoverColors = hoverPts.map(() => new Color4(1, 1, 1, 0.18));
-    const hoverLines = MeshBuilder.CreateLines('hover-indicator', { points: hoverPts, colors: hoverColors }, this.scene);
-    hoverLines.isPickable = false;
-    hoverLines.setEnabled(false);
-    this.hoverIndicator = hoverLines as unknown as Mesh;
+    // Hover outline — points are updated to world-space tile corners each frame
+    const zeroPt = new Vector3(0, 0, 0);
+    const hoverColors = [0, 1, 2, 3, 4].map(() => new Color4(1, 1, 1, 0.18));
+    this.hoverIndicator = MeshBuilder.CreateLines('hover-indicator', {
+      points: [zeroPt, zeroPt, zeroPt, zeroPt, zeroPt],
+      colors: hoverColors,
+      updatable: true,
+    }, this.scene);
+    this.hoverIndicator.isPickable = false;
+    this.hoverIndicator.setEnabled(false);
 
     this.destIndicator = this.buildIndicator('dest', new Color3(1, 0.6, 0), 0.01);
 
@@ -469,10 +467,25 @@ export class GameEngine {
 
       const hover = this.input.currentHover;
       if (hover.kind === 'walkable') {
+        const { tiles, width: W, height: H } = this.currentState.world;
+        const tx = hover.tileX, ty = hover.tileY;
+        const eps = 0.015;
+        // 4 corners: vertex (col, row) for tile (tx, ty)
+        const yBL = computeVertexHeight(tiles, W, H, tx,     H - ty)      + eps;
+        const yBR = computeVertexHeight(tiles, W, H, tx + 1, H - ty)      + eps;
+        const yTR = computeVertexHeight(tiles, W, H, tx + 1, H - ty - 1)  + eps;
+        const yTL = computeVertexHeight(tiles, W, H, tx,     H - ty - 1)  + eps;
+        MeshBuilder.CreateLines('hover-indicator', {
+          points: [
+            new Vector3(tx - 0.5, yBL, ty - 0.5),
+            new Vector3(tx + 0.5, yBR, ty - 0.5),
+            new Vector3(tx + 0.5, yTR, ty + 0.5),
+            new Vector3(tx - 0.5, yTL, ty + 0.5),
+            new Vector3(tx - 0.5, yBL, ty - 0.5),
+          ],
+          instance: this.hoverIndicator,
+        }, this.scene);
         this.hoverIndicator.setEnabled(true);
-        this.hoverIndicator.position.x = hover.tileX;
-        this.hoverIndicator.position.y = this.getTileWorldY(hover.tileX, hover.tileY) + 0.01;
-        this.hoverIndicator.position.z = hover.tileY;
       } else {
         this.hoverIndicator.setEnabled(false);
       }
@@ -624,7 +637,14 @@ export class GameEngine {
     const tile = this.currentState.world.tiles[ty]?.[tx];
     if (!tile) return 0;
     if (tile.type === 'water') return -0.25;
-    return (tile.height ?? 0) * MAX_TERRAIN_H;
+    const { tiles, width: W, height: H } = this.currentState.world;
+    const corners = [
+      computeVertexHeight(tiles, W, H, tx,     H - ty),
+      computeVertexHeight(tiles, W, H, tx + 1, H - ty),
+      computeVertexHeight(tiles, W, H, tx + 1, H - ty - 1),
+      computeVertexHeight(tiles, W, H, tx,     H - ty - 1),
+    ];
+    return (corners[0] + corners[1] + corners[2] + corners[3]) / 4;
   }
 
   private cursorFor(kind: string): string {

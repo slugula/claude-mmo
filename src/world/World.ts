@@ -45,31 +45,36 @@ function buildGroundTexture(tiles: TileData[][], width: number, height: number, 
 // ---- Terrain height deformation ----------------------------------------------
 //
 // CreateGround(W, H, subdivisions=W) produces (W+1)×(H+1) vertices.
-// Vertex layout: row 0 → z_local=+H/2 (world Z max), row H → z_local=-H/2 (world Z min).
-// With mesh center at (W/2-0.5, 0, H/2-0.5):
-//   world_X = col - 0.5  →  tile_x ≈ col
-//   world_Z = 255.5 - row →  tile_y ≈ H - row  (clamped to [0,H-1])
+// Vertex (col, row) sits at the corner shared by up to 4 tiles:
+//   tx ∈ {col-1, col},  ty ∈ {H-row-1, H-row}  (clamped to tile bounds)
+// Each vertex Y = average of its neighbor tiles' heights — shared vertices
+// ensure adjacent tiles connect smoothly rather than forming flat plateaus.
+
+export function computeVertexHeight(tiles: TileData[][], W: number, H: number, col: number, row: number): number {
+  let sum = 0, count = 0, allWater = true;
+  for (const tx of [col - 1, col]) {
+    for (const ty of [H - row - 1, H - row]) {
+      if (tx < 0 || tx >= W || ty < 0 || ty >= H) continue;
+      const tile = tiles[ty]?.[tx];
+      if (!tile) continue;
+      if (tile.type !== 'water') allWater = false;
+      sum += (tile.height ?? 0);
+      count++;
+    }
+  }
+  if (count === 0) return 0;
+  if (allWater) return -0.5; // sink below the water plane
+  return (sum / count) * MAX_TERRAIN_H;
+}
 
 function applyHeightDeformation(mesh: Mesh, tiles: TileData[][], W: number, H: number): void {
   const positions = mesh.getVerticesData(VertexBuffer.PositionKind);
   if (!positions) return;
 
   const vertsPerRow = W + 1;
-
   for (let row = 0; row <= H; row++) {
     for (let col = 0; col <= W; col++) {
-      const idx  = (row * vertsPerRow + col) * 3;
-      const tx   = Math.max(0, Math.min(W - 1, col));
-      const ty   = Math.max(0, Math.min(H - 1, H - row));
-      const tile = tiles[ty]?.[tx];
-
-      let y: number;
-      if (tile?.type === 'water') {
-        y = -0.5; // sunken below water plane so it stays hidden
-      } else {
-        y = (tile?.height ?? 0) * MAX_TERRAIN_H;
-      }
-      positions[idx + 1] = y;
+      positions[(row * vertsPerRow + col) * 3 + 1] = computeVertexHeight(tiles, W, H, col, row);
     }
   }
 
