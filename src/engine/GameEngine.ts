@@ -4,7 +4,7 @@ import {
   Mesh, HighlightLayer,
 } from '@babylonjs/core';
 import type { GameState, NPCState, DroppedItemState, GameAction, HoverTarget } from '../shared/types';
-import { createWorldState, buildWorldMeshes } from '../world/World';
+import { createWorldFromTiles, buildWorldMeshes } from '../world/World';
 import { NPCEntity } from '../entities/NPCEntity';
 import { DroppedItemEntity } from '../entities/DroppedItemEntity';
 import { PlayerEntity } from '../entities/Player';
@@ -26,7 +26,7 @@ import { PlayerJoinModal } from '../ui/PlayerJoinModal';
 import { LoginUI } from '../ui/LoginUI';
 import { showWorldTooltip, hideWorldTooltip } from '../ui/Tooltip';
 import { getPrimaryAction } from '../world/Interactables';
-import { PLAYER_START_X, PLAYER_START_Y, TICK_DURATION_MS, BANK_CHEST_X, BANK_CHEST_Y } from '../shared/constants';
+import { PLAYER_START_X, PLAYER_START_Y, TICK_DURATION_MS } from '../shared/constants';
 import { BankUI } from '../ui/BankUI';
 import type { PlayerState } from '../shared/types';
 
@@ -68,6 +68,8 @@ export class GameEngine {
   private loginUI!: LoginUI;
   private bankUI!: BankUI;
   private pendingBankOpen = false;
+  private bankChestX = -1;
+  private bankChestY = -1;
 
   // Proxy meshes for HighlightLayer on instanced world geometry (InstancedMesh is incompatible
   // with HighlightLayer, so we overlay invisible regular Mesh copies at the hovered position)
@@ -90,11 +92,12 @@ export class GameEngine {
 
     document.addEventListener('contextmenu', (e) => e.preventDefault());
 
-    const worldState = createWorldState();
-
+    // World is built from server-sent tiles inside onInit.
+    // Initialise with an empty placeholder so currentState.world is always valid.
+    const emptyWorld = createWorldFromTiles([]);
     this.currentState = {
       tick: 0,
-      world: worldState,
+      world: emptyWorld,
       players: {},
       npcs: [],
       droppedItems: [],
@@ -106,7 +109,6 @@ export class GameEngine {
     this.prevState = this.currentState;
 
     this.setupLights();
-    buildWorldMeshes(worldState, this.scene);
 
     // Invisible proxy meshes used to drive HighlightLayer on instanced trees/rocks
     this.hlTrunkProxy  = MeshBuilder.CreateCylinder('hl-trunk',  { height: 0.6,  diameter: 0.18, tessellation: 6 }, this.scene);
@@ -124,7 +126,7 @@ export class GameEngine {
     this.camera = new GameCamera(this.scene, canvas, initialTarget);
 
     this.input = new InputManager(this.scene);
-    this.input.setWorld(worldState);
+    this.input.setWorld(emptyWorld);
     this.input.setNPCs([]);
     this.input.setDroppedItems([]);
 
@@ -191,13 +193,13 @@ export class GameEngine {
       if (action.type === 'OPEN_BANK') {
         const player = this.localPlayerId ? this.currentState.players[this.localPlayerId] : undefined;
         const adjacent = player &&
-          Math.max(Math.abs(player.tileX - BANK_CHEST_X), Math.abs(player.tileY - BANK_CHEST_Y)) <= 1;
+          Math.max(Math.abs(player.tileX - this.bankChestX), Math.abs(player.tileY - this.bankChestY)) <= 1;
         if (adjacent) {
           this.openBank(player!);
         } else {
           this.pendingBankOpen = true;
           // Walk to the tile directly south of the chest (guaranteed walkable — inside clear radius)
-          this.network.sendActions([{ type: 'MOVE_TO', targetX: BANK_CHEST_X, targetY: BANK_CHEST_Y + 1 }]);
+          this.network.sendActions([{ type: 'MOVE_TO', targetX: this.bankChestX, targetY: this.bankChestY + 1 }]);
         }
         return;
       }
@@ -221,17 +223,24 @@ export class GameEngine {
 
     // ---- Login UI — shown before the WS connects ----
     this.loginUI = new LoginUI(AUTH_URL);
+    this.ui.setVisible(false);
+    ChatLog.setVisible(false);
     this.loginUI.show();
     this.loginUI.onAuth(({ token, username }) => {
+      this.ui.setVisible(true);
+      ChatLog.setVisible(true);
       // Connect to game server with JWT; world renders once init fires
       this.network.connect(`${WS_URL}?token=${encodeURIComponent(token)}`);
 
       this.network.onClose((code, reason) => {
         this.localPlayerId = null;
         if (code === 4002) {
+          this.ui.setVisible(false);
+          ChatLog.setVisible(false);
           this.loginUI.showWithError('This account is already logged in from another session.');
         } else if (code !== 1000 && code !== 1001) {
-          // Unexpected disconnect — show login again with a generic message
+          this.ui.setVisible(false);
+          ChatLog.setVisible(false);
           this.loginUI.showWithError(`Disconnected from server (${code}). Please log in again.`);
         }
       });
@@ -239,6 +248,24 @@ export class GameEngine {
       this.network.onInit((msg) => {
         this.localPlayerId = msg.playerId;
         this.input.setLocalPlayerId(msg.playerId);
+
+        // Build world from server-sent tiles and render meshes
+        const worldState = createWorldFromTiles(msg.tiles);
+        this.currentState = { ...this.currentState, world: worldState };
+        this.prevState    = this.currentState;
+        buildWorldMeshes(worldState, msg.pixels, msg.pixelWidth, msg.pixelHeight, this.scene);
+        this.input.setWorld(worldState);
+
+        // Cache the bank chest position so OPEN_BANK and the render loop can find it
+        outer: for (let ty = 0; ty < worldState.height; ty++) {
+          for (let tx = 0; tx < worldState.width; tx++) {
+            if (worldState.tiles[ty]?.[tx]?.obstacle === 'chest') {
+              this.bankChestX = tx;
+              this.bankChestY = ty;
+              break outer;
+            }
+          }
+        }
 
         if (msg.isNewPlayer) {
           // New player — show appearance/name selection modal
@@ -258,7 +285,7 @@ export class GameEngine {
 
       this.network.onState((msg) => {
         this.prevState = this.currentState;
-        this.currentState = { ...msg, world: worldState };
+        this.currentState = { ...msg, world: this.currentState.world };
         this.lastServerTickTime = performance.now();
 
         this.syncDepletedTrees(msg.depletedTrees ?? {});
@@ -471,8 +498,8 @@ export class GameEngine {
       // Auto-open bank after walking to the chest
       if (this.pendingBankOpen && currPlayer && currPlayer.path.length === 0) {
         const adj = Math.max(
-          Math.abs(currPlayer.tileX - BANK_CHEST_X),
-          Math.abs(currPlayer.tileY - BANK_CHEST_Y),
+          Math.abs(currPlayer.tileX - this.bankChestX),
+          Math.abs(currPlayer.tileY - this.bankChestY),
         ) <= 1;
         if (adj) {
           this.pendingBankOpen = false;

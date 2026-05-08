@@ -89,13 +89,13 @@ export class BankUI {
 
     // Left: items / capacity fraction (orange)
     const usage = document.createElement('span');
-    usage.style.cssText = 'color: #ff981f; font-size: 10px;';
+    usage.style.cssText = 'color: #ff981f; font-size: 13px;';
     usage.textContent = `0 / ${BANK_SLOTS}`;
     this.usageLabel = usage;
 
     // Centre: "Bank Chest" label
     const title = document.createElement('span');
-    title.style.cssText = 'color: #ffcc44; font-weight: 700; font-size: 12px; text-align: center;';
+    title.style.cssText = 'color: #ffcc44; font-weight: 700; font-size: 15px; text-align: center;';
     title.textContent = 'Bank Chest';
 
     // Right: close button (white ✕)
@@ -104,7 +104,7 @@ export class BankUI {
     const closeBtn = document.createElement('button');
     closeBtn.style.cssText = `
       background: none; border: 1px solid #8b6c3e; color: #ffffff;
-      border-radius: 2px; cursor: pointer; font-size: 11px; padding: 1px 5px; line-height: 1;
+      border-radius: 2px; cursor: pointer; font-size: 13px; padding: 2px 7px; line-height: 1;
     `;
     closeBtn.textContent = '✕';
     closeBtn.addEventListener('click', () => this.close());
@@ -116,6 +116,8 @@ export class BankUI {
     panel.appendChild(titleBar);
 
     // ---- Slot grid — fixed 460×464 viewport, scrollable ----
+    // padding-right leaves a gap between the scrollbar and the panel's right border;
+    // the scrollbar itself sits flush inside that padding zone.
     const gridWrap = document.createElement('div');
     gridWrap.style.cssText = `
       width: 460px; height: 464px;
@@ -123,7 +125,7 @@ export class BankUI {
       flex-shrink: 0;
       box-sizing: border-box;
       display: flex; justify-content: center;
-      padding: 6px 0;
+      padding: 6px 8px 6px 0;
     `;
 
     const grid = document.createElement('div');
@@ -156,8 +158,8 @@ export class BankUI {
       const b = document.createElement('button');
       b.style.cssText = `
         flex: 1; background: #2d1b0e; border: 1px solid #8b6c3e;
-        color: #ffcc44; font-size: 10px; font-weight: 700;
-        padding: 4px 2px; border-radius: 3px; cursor: pointer;
+        color: #ffcc44; font-size: 13px; font-weight: 700;
+        padding: 6px 2px; border-radius: 3px; cursor: pointer;
       `;
       b.textContent = label;
       b.addEventListener('mouseenter', () => { b.style.background = '#3d2010'; });
@@ -257,7 +259,7 @@ export class BankUI {
       const qty = document.createElement('span');
       qty.style.cssText = `
         position: absolute; bottom: 1px; right: 2px;
-        color: #ffdd44; font-size: 8px; font-weight: 700;
+        color: #ffdd44; font-size: 10px; font-weight: 700;
         text-shadow: 1px 1px 0 #000;
       `;
       qty.textContent = stack.quantity >= 1_000_000
@@ -282,14 +284,14 @@ export class BankUI {
       position: fixed; z-index: 2100;
       background: #1a0d00; border: 1px solid #8b6c3e;
       border-radius: 3px; padding: 2px;
-      min-width: 140px;
+      min-width: 160px;
       box-shadow: 2px 2px 12px rgba(0,0,0,0.85);
-      font-size: 12px; user-select: none;
+      font-size: 14px; user-select: none;
     `;
 
     const header = document.createElement('div');
     header.style.cssText = `
-      color: white; font-weight: 700; font-size: 11px;
+      color: white; font-weight: 700; font-size: 13px;
       padding: 5px 10px 4px; border-bottom: 1px solid #3d2010; margin-bottom: 2px;
     `;
     header.textContent = 'Choose Option';

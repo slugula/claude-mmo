@@ -17,18 +17,29 @@ export function addItem(
   const inv = [...inventory];
 
   if (def.stackable) {
+    // Merge into an existing stack if one exists, otherwise open a new slot.
     const slotIdx = inv.findIndex(s => s?.itemId === itemId);
     if (slotIdx !== -1) {
       inv[slotIdx] = { itemId, quantity: inv[slotIdx]!.quantity + quantity };
       return { inventory: inv, added: true };
     }
+    const emptySlot = inv.findIndex(s => s === null);
+    if (emptySlot === -1) return { inventory, added: false };
+    inv[emptySlot] = { itemId, quantity };
+    return { inventory: inv, added: true };
   }
 
-  const emptySlot = inv.findIndex(s => s === null);
-  if (emptySlot === -1) return { inventory, added: false };
-
-  inv[emptySlot] = { itemId, quantity };
-  return { inventory: inv, added: true };
+  // Non-stackable: one unit per inventory slot.
+  // Iterate to fill as many free slots as needed up to `quantity`.
+  let placed = 0;
+  for (let i = 0; i < inv.length && placed < quantity; i++) {
+    if (inv[i] === null) {
+      inv[i] = { itemId, quantity: 1 };
+      placed++;
+    }
+  }
+  if (placed === 0) return { inventory, added: false };
+  return { inventory: inv, added: placed === quantity };
 }
 
 export function removeItem(

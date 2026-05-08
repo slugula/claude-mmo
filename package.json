@@ -6,7 +6,8 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "server": "tsx watch server/index.ts"
+    "server": "tsx watch server/index.ts",
+    "export-map": "node scripts/export-map.mjs"
   },
   "dependencies": {
     "@babylonjs/core": "^7.0.0",
@@ -15,7 +16,8 @@
     "bcryptjs": "^3.0.3",
     "express": "^5.2.1",
     "jsonwebtoken": "^9.0.3",
-    "pg": "^8.20.0"
+    "pg": "^8.20.0",
+    "pngjs": "^7.0.0"
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",

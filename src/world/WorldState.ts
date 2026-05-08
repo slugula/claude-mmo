@@ -1,10 +1,17 @@
-import type { WorldState, ObstacleType } from '../shared/types';
+import type { WorldState, TileData, ObstacleType } from '../shared/types';
 import {
   GRID_WIDTH, GRID_HEIGHT,
   PLAYER_START_X, PLAYER_START_Y,
   OBSTACLE_CLEAR_RADIUS, OBSTACLE_DENSITY,
   BANK_CHEST_X, BANK_CHEST_Y,
 } from '../shared/constants';
+
+export function createWorldFromTiles(tiles: TileData[][]): WorldState {
+  if (tiles.length === 0) {
+    return { width: GRID_WIDTH, height: GRID_HEIGHT, tiles: [] };
+  }
+  return { width: tiles[0].length, height: tiles.length, tiles };
+}
 
 export function seededRandom(seed: number): () => number {
   let s = seed;
@@ -22,7 +29,7 @@ export function createWorldState(seed = 42): WorldState {
   for (let y = 0; y < GRID_HEIGHT; y++) {
     tiles[y] = [];
     for (let x = 0; x < GRID_WIDTH; x++) {
-      tiles[y][x] = { x, y, walkable: true, type: 'grass', obstacle: 'none', blocksRanged: false };
+      tiles[y][x] = { x, y, walkable: true, type: 'grass', obstacle: 'none', blocksRanged: false, groundColor: '#7ec850' };
     }
   }
 
@@ -42,10 +49,32 @@ export function createWorldState(seed = 42): WorldState {
     }
   }
 
+  // ---- Fishing pool (NE of spawn) --------------------------------------------
+  // Elliptical water area; tiles just outside its edge are kept obstacle-free
+  // so the player can walk to the shore.
+  const POOL_CX = PLAYER_START_X + 10;
+  const POOL_CY = PLAYER_START_Y - 8;
+  const POOL_RX = 5;   // horizontal radius
+  const POOL_RY = 4;   // vertical radius
+
+  for (let y = 0; y < GRID_HEIGHT; y++) {
+    for (let x = 0; x < GRID_WIDTH; x++) {
+      const nx = (x - POOL_CX) / POOL_RX;
+      const ny = (y - POOL_CY) / POOL_RY;
+      if (nx * nx + ny * ny <= 1) {
+        tiles[y][x] = { x, y, walkable: false, type: 'water', obstacle: 'none', blocksRanged: false, groundColor: '#cbdbfc' };
+      } else if (nx * nx + ny * ny <= 1.6) {
+        // Shore ring — keep walkable, clear any rng obstacles
+        tiles[y][x].obstacle = 'none';
+        tiles[y][x].walkable = true;
+      }
+    }
+  }
+
   // Hardcode bank chest — overrides any rng result on that tile
   tiles[BANK_CHEST_Y][BANK_CHEST_X] = {
     x: BANK_CHEST_X, y: BANK_CHEST_Y,
-    walkable: false, type: 'grass', obstacle: 'chest', blocksRanged: true,
+    walkable: false, type: 'grass', obstacle: 'chest', blocksRanged: true, groundColor: '#7ec850',
   };
 
   return { width: GRID_WIDTH, height: GRID_HEIGHT, tiles };

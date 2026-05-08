@@ -1,9 +1,12 @@
-import type { GameAction, ServerStatePatch } from '../shared/types';
+import type { GameAction, ServerStatePatch, TileData } from '../shared/types';
 
 export interface InitMessage {
-  type: 'init';
-  playerId: string;
-  worldSeed: number;
+  type:        'init';
+  playerId:    string;
+  tiles:       TileData[][];
+  pixels:      number[];
+  pixelWidth:  number;
+  pixelHeight: number;
   isNewPlayer: boolean;
 }
 

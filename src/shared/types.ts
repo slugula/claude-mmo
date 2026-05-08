@@ -70,9 +70,9 @@ export interface ItemStack {
 
 // ---------- Tiles ----------
 
-export type TileType = 'grass' | 'dirt' | 'stone' | 'water';
+export type TileType = 'grass' | 'dirt' | 'stone' | 'water' | 'cliff' | 'wall' | 'door';
 
-export type ObstacleType = 'tree' | 'rock' | 'chest' | 'none';
+export type ObstacleType = 'tree' | 'rock' | 'chest' | 'fishing_spot' | 'none';
 
 export interface TileData {
   x: number;
@@ -80,7 +80,8 @@ export interface TileData {
   walkable: boolean;
   type: TileType;
   obstacle: ObstacleType;
-  blocksRanged: boolean;  // true for solid obstacles (trees, walls); rocks are false (safespot)
+  blocksRanged: boolean;
+  groundColor: string;  // hex color from Land layer, e.g. '#7ec850'
 }
 
 // ---------- NPCs ----------

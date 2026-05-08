@@ -19,6 +19,10 @@ export class ChatLog {
     return ChatLog.playerNameValue;
   }
 
+  static setVisible(visible: boolean): void {
+    if (ChatLog.instance) ChatLog.instance.container.style.display = visible ? 'flex' : 'none';
+  }
+
   static log(message: string): void {
     if (!ChatLog.instance) ChatLog.instance = new ChatLog();
     ChatLog.instance.push(message, '#ffe066');

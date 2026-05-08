@@ -213,20 +213,16 @@ export function processItems(
       if (!bankStack) continue;
       const qty = Math.min(action.quantity, bankStack.quantity);
       const def = getItem(bankStack.itemId);
-      // Stackable items always go into one slot; non-stackable need one slot each
-      const slotsNeeded = def?.stackable
-        ? (nextPlayer.inventory.some(s => s?.itemId === bankStack.itemId) ? 0 : 1)
-        : qty;
-      const available = freeSlots(nextPlayer.inventory)
-        + (def?.stackable && nextPlayer.inventory.some(s => s?.itemId === bankStack.itemId) ? 1 : 0);
+      // Stackable: always fits in one slot (merge or new slot).
+      // Non-stackable: needs one inventory slot per unit.
       const canFit = def?.stackable
-        ? (nextPlayer.inventory.some(s => s?.itemId === bankStack.itemId) ? qty : (freeSlots(nextPlayer.inventory) > 0 ? qty : 0))
+        ? (nextPlayer.inventory.some(s => s?.itemId === bankStack.itemId) || freeSlots(nextPlayer.inventory) > 0 ? qty : 0)
         : Math.min(qty, freeSlots(nextPlayer.inventory));
-      void slotsNeeded; void available; // silence unused warnings
+      if (canFit === 0) { messages.push("You don't have enough inventory space."); continue; }
       if (canFit < qty) messages.push("You don't have enough inventory space to withdraw that many.");
-      if (canFit === 0) continue;
+      // addItem places non-stackable items one-per-slot; partial result is intentional
       const invResult = addItem(nextPlayer.inventory, bankStack.itemId, canFit);
-      if (!invResult.added) { messages.push("You don't have enough inventory space to withdraw that many."); continue; }
+      if (!invResult.added) { messages.push("You don't have enough inventory space."); continue; }
       const newBank = bankRemoveItem(bank, action.bankSlot, canFit);
       nextPlayer = { ...nextPlayer, inventory: invResult.inventory, bank: newBank };
     }

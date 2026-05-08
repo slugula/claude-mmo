@@ -76,11 +76,11 @@ pm2 restart game-server
 
 ## Useful Server Commands
 
-| Command | What it does |
-|---|---|
-| `pm2 status` | Check if game server is running |
-| `pm2 logs game-server` | View live server logs |
-| `pm2 restart game-server` | Restart the game server |
-| `sudo systemctl reload nginx` | Reload Nginx (no downtime) |
-| `sudo systemctl restart nginx` | Full Nginx restart |
-| `sudo nginx -t` | Test Nginx config for errors |
+| Command                        | What it does                    |
+| ------------------------------ | ------------------------------- |
+| `pm2 status`                   | Check if game server is running |
+| `pm2 logs game-server`         | View live server logs           |
+| `pm2 restart game-server`      | Restart the game server         |
+| `sudo systemctl reload nginx`  | Reload Nginx (no downtime)      |
+| `sudo systemctl restart nginx` | Full Nginx restart              |
+| `sudo nginx -t`                | Test Nginx config for errors    |

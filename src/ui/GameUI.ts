@@ -110,6 +110,12 @@ export class GameUI {
     });
   }
 
+  setVisible(visible: boolean): void {
+    const display = visible ? '' : 'none';
+    (document.getElementById('game-ui')  as HTMLElement).style.display = display;
+    (document.getElementById('debug-panel') as HTMLElement).style.display = display;
+  }
+
   update(state: GameState, localPlayerId: string): void {
     const player = state.players[localPlayerId];
     if (!player) return;

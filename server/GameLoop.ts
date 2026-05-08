@@ -1,6 +1,12 @@
-import type { GameState, PlayerState, ServerStatePatch } from '../src/shared/types';
-import { TICK_DURATION_MS, PLAYER_START_X, PLAYER_START_Y } from '../src/shared/constants';
-import { createWorldState, findWalkableTileNear } from '../src/world/WorldState';
+import { readFileSync } from 'fs';
+import { fileURLToPath } from 'url';
+import { dirname, join } from 'path';
+import type { GameState, PlayerState, ServerStatePatch, TileData } from '../src/shared/types';
+import {
+  TICK_DURATION_MS,
+  PLAYER_START_X, PLAYER_START_Y,
+} from '../src/shared/constants';
+import { createWorldFromTiles, findWalkableTileNear } from '../src/world/WorldState';
 import { spawnNPC } from '../src/systems/NPCSystem';
 import { createDefaultSkills } from '../src/systems/SkillSystem';
 import { createEmptyInventory } from '../src/systems/InventorySystem';
@@ -8,28 +14,76 @@ import { createEmptyBank } from '../src/systems/BankSystem';
 import { processTick } from '../src/engine/TickSystem';
 import type { GameAction } from '../src/shared/types';
 
-export const WORLD_SEED = 42;
+const __dirname = dirname(fileURLToPath(import.meta.url));
+
+interface WorldMapJSON {
+  width:       number;
+  height:      number;
+  tiles:       TileData[][];
+  pixelWidth:  number;
+  pixelHeight: number;
+  pixels:      number[];
+}
+
+function loadWorldMap(): WorldMapJSON {
+  const mapPath = join(__dirname, '../public/maps/worldMap.json');
+  try {
+    const raw = readFileSync(mapPath, 'utf-8');
+    return JSON.parse(raw) as WorldMapJSON;
+  } catch {
+    console.error('[GameLoop] Failed to load worldMap.json — run `npm run export-map` first. Using fallback.');
+    const PW = 64 * 3, PH = 64 * 3;
+    const tiles: TileData[][] = [];
+    for (let y = 0; y < 64; y++) {
+      tiles[y] = [];
+      for (let x = 0; x < 64; x++) {
+        tiles[y][x] = { x, y, walkable: true, type: 'grass', obstacle: 'none', blocksRanged: false, groundColor: '#7ec850' };
+      }
+    }
+    return { width: 64, height: 64, tiles, pixelWidth: PW, pixelHeight: PH, pixels: new Array(PW * PH).fill(0x007ec850) };
+  }
+}
 
 type BroadcastFn = (patch: ServerStatePatch) => void;
 
 export class GameLoop {
-  private state: GameState;
+  private state:       GameState;
   private pendingActions = new Map<string, GameAction[]>();
-  private timer: ReturnType<typeof setInterval> | null = null;
-  private broadcast: BroadcastFn;
+  private timer:       ReturnType<typeof setInterval> | null = null;
+  private broadcast:   BroadcastFn;
+  private worldTiles:  TileData[][];
+  private worldPixels: number[];
+  private worldPixelW: number;
+  private worldPixelH: number;
 
   constructor(broadcast: BroadcastFn) {
     this.broadcast = broadcast;
 
-    const world = createWorldState(WORLD_SEED);
+    const mapData = loadWorldMap();
+    this.worldTiles  = mapData.tiles;
+    this.worldPixels = mapData.pixels;
+    this.worldPixelW = mapData.pixelWidth;
+    this.worldPixelH = mapData.pixelHeight;
+
+    const world = createWorldFromTiles(mapData.tiles);
+
+    const NPC_CHICKEN_X = 31, NPC_CHICKEN_Y = 38;
     const chickenOffsets = [
-      { dx:  8, dy:  4 }, { dx: 10, dy:  6 }, { dx:  6, dy:  7 },
-      { dx:  9, dy:  2 }, { dx:  7, dy:  9 },
+      { dx: -1, dy: 0 }, { dx:  1, dy: 2 }, { dx: -2, dy: 3 },
+      { dx:  2, dy: 1 }, { dx:  0, dy: 4 },
     ];
     const chickenSpawns = chickenOffsets.map(o =>
-      findWalkableTileNear(world, PLAYER_START_X + o.dx, PLAYER_START_Y + o.dy),
+      findWalkableTileNear(world, NPC_CHICKEN_X + o.dx, NPC_CHICKEN_Y + o.dy),
     );
-    const shopkeeperSpawn = findWalkableTileNear(world, PLAYER_START_X - 6, PLAYER_START_Y - 8);
+    const shopkeeperSpawn = findWalkableTileNear(world, 33, 30);
+
+    // Find chest tile position from map data
+    let chestX = PLAYER_START_X - 2, chestY = PLAYER_START_Y - 2;
+    outer: for (let ty = 0; ty < world.height; ty++) {
+      for (let tx = 0; tx < world.width; tx++) {
+        if (world.tiles[ty]?.[tx]?.obstacle === 'chest') { chestX = tx; chestY = ty; break outer; }
+      }
+    }
 
     this.state = {
       tick: 0,
@@ -39,12 +93,11 @@ export class GameLoop {
         ...chickenSpawns.map((s, i) => spawnNPC(`chicken-${i + 1}`, 'chicken', s.x, s.y)),
         spawnNPC('shopkeeper-1', 'shopkeeper', shopkeeperSpawn.x, shopkeeperSpawn.y),
       ],
-      // Permanent test rack — items north of spawn, always available, never despawn
       droppedItems: [
-        { id: 'rack-pickaxe',         itemId: 'pickaxe',         quantity: 1,   tileX: PLAYER_START_X - 2, tileY: PLAYER_START_Y - 2, droppedAtTick: 0, permanent: true },
-        { id: 'rack-iron-axe',        itemId: 'iron_axe',        quantity: 1,   tileX: PLAYER_START_X - 1, tileY: PLAYER_START_Y - 2, droppedAtTick: 0, permanent: true },
-        { id: 'rack-basic-chaingun',  itemId: 'basic_chaingun',  quantity: 1,   tileX: PLAYER_START_X,     tileY: PLAYER_START_Y - 2, droppedAtTick: 0, permanent: true },
-        { id: 'rack-kinetic-charges', itemId: 'kinetic_charges', quantity: 500, tileX: PLAYER_START_X + 1, tileY: PLAYER_START_Y - 2, droppedAtTick: 0, permanent: true },
+        { id: 'rack-pickaxe',         itemId: 'pickaxe',         quantity: 1,   tileX: chestX - 2, tileY: chestY + 2, droppedAtTick: 0, permanent: true },
+        { id: 'rack-iron-axe',        itemId: 'iron_axe',        quantity: 1,   tileX: chestX - 1, tileY: chestY + 2, droppedAtTick: 0, permanent: true },
+        { id: 'rack-basic-chaingun',  itemId: 'basic_chaingun',  quantity: 1,   tileX: chestX,     tileY: chestY + 2, droppedAtTick: 0, permanent: true },
+        { id: 'rack-kinetic-charges', itemId: 'kinetic_charges', quantity: 500, tileX: chestX + 1, tileY: chestY + 2, droppedAtTick: 0, permanent: true },
       ],
       pendingRespawns: [],
       messages: {},
@@ -119,9 +172,10 @@ export class GameLoop {
     if (existing) existing.push(...actions);
   }
 
-  getWorldSeed(): number {
-    return WORLD_SEED;
-  }
+  getWorldTiles():   TileData[][] { return this.worldTiles; }
+  getWorldPixels():  number[]    { return this.worldPixels; }
+  getPixelWidth():   number      { return this.worldPixelW; }
+  getPixelHeight():  number      { return this.worldPixelH; }
 
   /** Returns a snapshot of all currently-connected players for checkpoint saves. */
   getPlayerStates(): Map<string, PlayerState> {

@@ -64,6 +64,29 @@ function meshNameToHoverTarget(
   }
 
   if (meshName === 'ground') {
+    // Check the hit tile and its immediate neighbors for obstacles.
+    // The isometric ray sometimes hits the ground just outside an obstacle's
+    // tile when grazing its side face, so we promote nearby obstacles first.
+    let bestKind: string | null = null;
+    let bestTX = 0, bestTY = 0, bestDist = Infinity;
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        const tx = Math.round(hitX) + dx;
+        const ty = Math.round(hitZ) + dy;
+        if (tx < 0 || ty < 0 || tx >= world.width || ty >= world.height) continue;
+        const tile = world.tiles[ty][tx];
+        let kind: string | null = null;
+        if      (tile.obstacle === 'chest') kind = 'chest';
+        else if (tile.obstacle === 'tree')  kind = 'tree';
+        else if (tile.obstacle === 'rock')  kind = 'rock';
+        if (kind) {
+          const dist = Math.hypot(hitX - tx, hitZ - ty);
+          if (dist < 0.55 && dist < bestDist) { bestKind = kind; bestTX = tx; bestTY = ty; bestDist = dist; }
+        }
+      }
+    }
+    if (bestKind) return { kind: bestKind as HoverTarget['kind'], tileX: bestTX, tileY: bestTY };
+
     const tx = Math.round(hitX);
     const ty = Math.round(hitZ);
     if (tx >= 0 && ty >= 0 && tx < world.width && ty < world.height && world.tiles[ty][tx].walkable) {
