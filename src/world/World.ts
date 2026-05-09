@@ -165,17 +165,20 @@ export function buildWorldMeshes(world: WorldState, scene: Scene): Mesh {
   terrainMesh.parent       = root;
   applyHeightDeformation(terrainMesh, world.tiles, W, H);
 
-  // Invisible flat pick-target (name 'ground' — GameEngine uses this for click-to-walk)
+  // Invisible pick-target — must match the visual terrain exactly so mouse rays
+  // hit the right tile even on elevated terrain.
   const groundPick = MeshBuilder.CreateGround('ground', {
-    width:  W * TILE_SIZE,
-    height: H * TILE_SIZE,
-    subdivisions: 1,
+    width:        W * TILE_SIZE,
+    height:       H * TILE_SIZE,
+    subdivisions: W,
+    updatable:    true,
   }, scene);
   groundPick.position.x = W / 2 - 0.5;
   groundPick.position.z = H / 2 - 0.5;
   groundPick.isPickable = true;
   groundPick.visibility = 0;
   groundPick.parent     = root;
+  applyHeightDeformation(groundPick, world.tiles, W, H);
 
   // ---- Water plane -----------------------------------------------------------
   buildWaterPlane(world, scene, root);
@@ -240,7 +243,15 @@ export function buildWorldMeshes(world: WorldState, scene: Scene): Mesh {
   for (let y = 0; y < world.height; y++) {
     for (let x = 0; x < world.width; x++) {
       const tile = world.tiles[y][x];
-      const tileBaseY = (tile.type !== 'water' ? (tile.height ?? 0) * MAX_TERRAIN_H : WATER_Y);
+      // Average the 4 corner vertex heights — this matches what the renderer draws
+      // at the tile centre (vertex averaging means tile.height * MAX_TERRAIN_H is wrong
+      // at transition edges; the corners blend with neighbours).
+      const tileBaseY = tile.type === 'water' ? WATER_Y : (
+        computeVertexHeight(world.tiles, W, H, x,     H - y)     +
+        computeVertexHeight(world.tiles, W, H, x + 1, H - y)     +
+        computeVertexHeight(world.tiles, W, H, x + 1, H - y - 1) +
+        computeVertexHeight(world.tiles, W, H, x,     H - y - 1)
+      ) / 4;
 
       if (tile.obstacle === 'tree') {
         const trunk = sourceTrunk.createInstance(`tree-trunk-${x}-${y}`);
