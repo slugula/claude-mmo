@@ -11,10 +11,17 @@ export interface TileChange {
   after: TileData;
 }
 
+interface VertexChange {
+  idx: number;
+  before: number;
+  after: number;
+}
+
 interface EditCommand {
-  tileChanges:   TileChange[];
-  npcsBefore?:   NPCSpawn[];
-  npcsAfter?:    NPCSpawn[];
+  tileChanges:    TileChange[];
+  vertexChanges?: VertexChange[];
+  npcsBefore?:    NPCSpawn[];
+  npcsAfter?:     NPCSpawn[];
 }
 
 function blankTile(x: number, y: number): TileData {
@@ -27,39 +34,65 @@ function createBlankTiles(w: number, h: number): TileData[][] {
   );
 }
 
+// Derive per-vertex heights from legacy per-tile heights (backward compat migration).
+function migrateVertexHeights(tiles: TileData[][], W: number, H: number): Float32Array {
+  const vh = new Float32Array((W + 1) * (H + 1));
+  for (let row = 0; row <= H; row++) {
+    for (let col = 0; col <= W; col++) {
+      let sum = 0, count = 0;
+      for (const tx of [col - 1, col]) {
+        for (const ty of [H - row - 1, H - row]) {
+          if (tx < 0 || tx >= W || ty < 0 || ty >= H) continue;
+          const tile = tiles[ty]?.[tx];
+          if (!tile || tile.type === 'water') continue;
+          sum += (tile.height ?? 0);
+          count++;
+        }
+      }
+      vh[row * (W + 1) + col] = count > 0 ? sum / count : 0;
+    }
+  }
+  return vh;
+}
+
 const OBSTACLE_TYPES = new Set(['tree', 'rock', 'chest', 'fishing_spot', 'water', 'wall']);
 
 export class EditorState {
   width  = GRID_WIDTH;
   height = GRID_HEIGHT;
   tiles: TileData[][];
+  // Per-vertex heights — (width+1)*(height+1) flat Float32Array, row-major.
+  vertexHeights: Float32Array;
   npcSpawns: NPCSpawn[] = [];
   permanentItems: PermanentItemSpawn[] = [];
 
   activeLayer:    LayerType = 'terrain';
   selectedColor   = '#7ec850';
-  selectedHeight  = 0.5;      // 0–1
+  selectedHeight  = 0.5;
   selectedObject: string | null = null;
   brushType: BrushType = '1';
 
   private undoStack: EditCommand[] = [];
   private redoStack: EditCommand[] = [];
-  private strokeTiles  = new Map<string, TileChange>();
+  private strokeTiles    = new Map<string, TileChange>();
+  private strokeVertices = new Map<number, VertexChange>();
   private strokeNPCsBefore: NPCSpawn[] | null = null;
   private inStroke = false;
 
   onChange: (() => void) | null = null;
 
   constructor() {
-    this.tiles = createBlankTiles(this.width, this.height);
+    this.tiles         = createBlankTiles(this.width, this.height);
+    this.vertexHeights = new Float32Array((this.width + 1) * (this.height + 1));
   }
 
   // ---- Map lifecycle --------------------------------------------------------
 
   createBlank(w = GRID_WIDTH, h = GRID_HEIGHT): void {
-    this.width  = w;
-    this.height = h;
-    this.tiles  = createBlankTiles(w, h);
+    this.width         = w;
+    this.height        = h;
+    this.tiles         = createBlankTiles(w, h);
+    this.vertexHeights = new Float32Array((w + 1) * (h + 1));
     this.npcSpawns      = [];
     this.permanentItems = [];
     this.undoStack = [];
@@ -73,19 +106,35 @@ export class EditorState {
     this.tiles  = data.tiles.map(row => row.map(t => ({ ...t, height: (t as TileData & { height?: number }).height ?? 0 })));
     this.npcSpawns      = data.npcSpawns      ?? [];
     this.permanentItems = data.permanentItems  ?? [];
+    this.vertexHeights  = data.vertexHeights
+      ? Float32Array.from(data.vertexHeights)
+      : migrateVertexHeights(this.tiles, this.width, this.height);
     this.undoStack = [];
     this.redoStack = [];
     this.onChange?.();
   }
 
   toMapFile(): WorldMapFile {
+    // Back-fill TileData.height with averaged vertex corners for backward compat.
+    const W = this.width, H = this.height;
+    const tiles = this.tiles.map(row => row.map(t => {
+      const tx = t.x, ty = t.y;
+      const avgH = (
+        (this.vertexHeights[ty       * (W + 1) + tx]     ?? 0) +
+        (this.vertexHeights[ty       * (W + 1) + tx + 1] ?? 0) +
+        (this.vertexHeights[(ty + 1) * (W + 1) + tx]     ?? 0) +
+        (this.vertexHeights[(ty + 1) * (W + 1) + tx + 1] ?? 0)
+      ) / 4;
+      return { ...t, height: avgH };
+    }));
     return {
       version: 2,
       width:   this.width,
       height:  this.height,
-      tiles:   this.tiles,
+      tiles,
       npcSpawns:      this.npcSpawns,
       permanentItems: this.permanentItems,
+      vertexHeights:  Array.from(this.vertexHeights),
     };
   }
 
@@ -94,6 +143,7 @@ export class EditorState {
   beginStroke(): void {
     this.inStroke = true;
     this.strokeTiles.clear();
+    this.strokeVertices.clear();
     this.strokeNPCsBefore = this.activeLayer === 'objects'
       ? [...this.npcSpawns]
       : null;
@@ -103,12 +153,14 @@ export class EditorState {
     if (!this.inStroke) return;
     this.inStroke = false;
 
-    const tileChanges = [...this.strokeTiles.values()];
-    const npcsChanged = this.strokeNPCsBefore !== null &&
+    const tileChanges   = [...this.strokeTiles.values()];
+    const vertexChanges = [...this.strokeVertices.values()];
+    const npcsChanged   = this.strokeNPCsBefore !== null &&
       JSON.stringify(this.strokeNPCsBefore) !== JSON.stringify(this.npcSpawns);
 
-    if (tileChanges.length > 0 || npcsChanged) {
+    if (tileChanges.length > 0 || vertexChanges.length > 0 || npcsChanged) {
       const cmd: EditCommand = { tileChanges };
+      if (vertexChanges.length > 0) cmd.vertexChanges = vertexChanges;
       if (npcsChanged) {
         cmd.npcsBefore = this.strokeNPCsBefore!;
         cmd.npcsAfter  = [...this.npcSpawns];
@@ -119,6 +171,7 @@ export class EditorState {
     }
 
     this.strokeTiles.clear();
+    this.strokeVertices.clear();
     this.strokeNPCsBefore = null;
   }
 
@@ -142,7 +195,7 @@ export class EditorState {
     this.onChange?.();
   }
 
-  private record(x: number, y: number, before: TileData): void {
+  private recordTile(x: number, y: number, before: TileData): void {
     const key = `${x},${y}`;
     if (!this.strokeTiles.has(key)) {
       this.strokeTiles.set(key, { x, y, before, after: { ...this.tiles[y][x] } });
@@ -151,20 +204,45 @@ export class EditorState {
     }
   }
 
+  private recordVertex(idx: number, before: number): void {
+    if (!this.strokeVertices.has(idx)) {
+      this.strokeVertices.set(idx, { idx, before, after: this.vertexHeights[idx] });
+    } else {
+      this.strokeVertices.get(idx)!.after = this.vertexHeights[idx];
+    }
+  }
+
   private applyPaint(x: number, y: number): void {
     const before = { ...this.tiles[y][x] };
 
     if (this.activeLayer === 'terrain') {
       this.tiles[y][x] = { ...this.tiles[y][x], groundColor: this.selectedColor };
+      this.recordTile(x, y, before);
 
     } else if (this.activeLayer === 'height') {
-      this.tiles[y][x] = { ...this.tiles[y][x], height: this.selectedHeight };
+      this.paintVertexHeight(x, y, this.selectedHeight);
 
     } else if (this.activeLayer === 'objects' && this.selectedObject) {
       this.applyObject(x, y, this.selectedObject);
+      this.recordTile(x, y, before);
     }
+  }
 
-    this.record(x, y, before);
+  // Set all 4 corner vertices of tile (tx, ty) to the given 0-1 height value.
+  private paintVertexHeight(tx: number, ty: number, h: number): void {
+    const W = this.width;
+    const corners = [
+      ty       * (W + 1) + tx,
+      ty       * (W + 1) + tx + 1,
+      (ty + 1) * (W + 1) + tx,
+      (ty + 1) * (W + 1) + tx + 1,
+    ];
+    for (const idx of corners) {
+      if (idx < 0 || idx >= this.vertexHeights.length) continue;
+      const prev = this.vertexHeights[idx];
+      this.recordVertex(idx, prev);
+      this.vertexHeights[idx] = h;
+    }
   }
 
   private applyErase(x: number, y: number): void {
@@ -172,8 +250,9 @@ export class EditorState {
 
     if (this.activeLayer === 'terrain') {
       this.tiles[y][x] = { ...this.tiles[y][x], groundColor: '#7ec850' };
+      this.recordTile(x, y, before);
     } else if (this.activeLayer === 'height') {
-      this.tiles[y][x] = { ...this.tiles[y][x], height: 0 };
+      this.paintVertexHeight(x, y, 0);
     } else if (this.activeLayer === 'objects') {
       this.tiles[y][x] = {
         ...this.tiles[y][x],
@@ -181,14 +260,12 @@ export class EditorState {
         type: 'grass',
       };
       this.npcSpawns = this.npcSpawns.filter(s => !(s.x === x && s.y === y));
+      this.recordTile(x, y, before);
     }
-
-    this.record(x, y, before);
   }
 
   private applyObject(x: number, y: number, obj: string): void {
     if (!OBSTACLE_TYPES.has(obj)) {
-      // NPC spawn
       if (!this.npcSpawns.some(s => s.x === x && s.y === y)) {
         this.npcSpawns = [...this.npcSpawns, { kind: obj, x, y }];
       }
@@ -218,6 +295,11 @@ export class EditorState {
     for (const { x, y, before } of cmd.tileChanges) {
       this.tiles[y][x] = { ...before };
     }
+    if (cmd.vertexChanges) {
+      for (const { idx, before } of cmd.vertexChanges) {
+        this.vertexHeights[idx] = before;
+      }
+    }
     if (cmd.npcsBefore) this.npcSpawns = [...cmd.npcsBefore];
     this.redoStack.push(cmd);
     this.onChange?.();
@@ -228,6 +310,11 @@ export class EditorState {
     if (!cmd) return;
     for (const { x, y, after } of cmd.tileChanges) {
       this.tiles[y][x] = { ...after };
+    }
+    if (cmd.vertexChanges) {
+      for (const { idx, after } of cmd.vertexChanges) {
+        this.vertexHeights[idx] = after;
+      }
     }
     if (cmd.npcsAfter) this.npcSpawns = [...cmd.npcsAfter];
     this.undoStack.push(cmd);

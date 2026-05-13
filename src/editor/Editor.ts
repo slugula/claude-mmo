@@ -119,7 +119,7 @@ export class Editor {
   private onStateChange(): void {
     this.tilemap.markDirty();
     this.minimap.render();
-    this.preview.scheduleRefresh(this.state);
+    this.preview.scheduleRefresh();
     this.updateUndoButtons();
   }
 

@@ -82,7 +82,7 @@ export interface TileData {
   obstacle: ObstacleType;
   blocksRanged: boolean;
   groundColor: string;  // hex color for terrain texture, e.g. '#7ec850'
-  height: number;       // 0–1 float; drives mesh deformation + walkability slope check
+  height: number;       // legacy: per-tile average height kept for backward-compat migration
 }
 
 // ---------- Map file format (editor output) ----------
@@ -107,6 +107,9 @@ export interface WorldMapFile {
   tiles: TileData[][];
   npcSpawns: NPCSpawn[];
   permanentItems: PermanentItemSpawn[];
+  // Per-vertex heights — flat row-major array, length (width+1)*(height+1).
+  // Optional: absent in old v2 maps, which are migrated from TileData.height on load.
+  vertexHeights?: number[];
 }
 
 // ---------- NPCs ----------
@@ -173,6 +176,9 @@ export interface WorldState {
   width: number;
   height: number;
   tiles: TileData[][];
+  // Per-vertex heights — flat row-major Float32Array, length (width+1)*(height+1).
+  // Index formula: row * (width+1) + col  where row ∈ [0,height], col ∈ [0,width].
+  vertexHeights: Float32Array;
 }
 
 // ---------- Respawns ----------
