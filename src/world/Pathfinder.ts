@@ -1,4 +1,5 @@
 import type { GridPosition, WorldState } from '../shared/types';
+import { HEIGHT_IMPASSABLE_DELTA } from '../shared/constants';
 
 interface Node {
   x: number;
@@ -56,6 +57,8 @@ export function findPath(
 
       if (closed.has(nk)) continue;
       if (!isWalkable(world, nx, ny)) continue;
+      // Block movement between tiles whose average vertex height differs too much
+      if (Math.abs(tileAvgHeight(world, current.x, current.y) - tileAvgHeight(world, nx, ny)) > HEIGHT_IMPASSABLE_DELTA) continue;
 
       const g = current.g + 1;
       const existing = openMap.get(nk);
@@ -87,6 +90,17 @@ export function findPath(
 function isWalkable(world: WorldState, x: number, y: number): boolean {
   if (x < 0 || y < 0 || x >= world.width || y >= world.height) return false;
   return world.tiles[y][x].walkable;
+}
+
+function tileAvgHeight(world: WorldState, tx: number, ty: number): number {
+  const W = world.width;
+  const vh = world.vertexHeights;
+  return (
+    (vh[ty       * (W + 1) + tx]     ?? 0) +
+    (vh[ty       * (W + 1) + tx + 1] ?? 0) +
+    (vh[(ty + 1) * (W + 1) + tx]     ?? 0) +
+    (vh[(ty + 1) * (W + 1) + tx + 1] ?? 0)
+  ) / 4;
 }
 
 function buildPath(node: Node): GridPosition[] {

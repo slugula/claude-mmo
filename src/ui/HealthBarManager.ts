@@ -30,7 +30,7 @@ export class HealthBarManager {
     bar.lastHitTime = now;
   }
 
-  update(npcs: NPCState[]): void {
+  update(npcs: NPCState[], getGroundY: (x: number, z: number) => number): void {
     const now = performance.now();
     const byId = new Map(npcs.map(n => [n.id, n] as const));
 
@@ -47,7 +47,8 @@ export class HealthBarManager {
       const ratio = Math.max(0, Math.min(1, npc.hp / def.maxHp));
       bar.greenEl.style.width = `${ratio * 100}%`;
 
-      const screen = this.worldToScreen(npc.tileX, npc.tileY);
+      const groundY = getGroundY(npc.tileX, npc.tileY);
+      const screen = this.worldToScreen(npc.tileX, groundY + 1.5, npc.tileY);
       if (screen.z < 0 || screen.z > 1) {
         bar.wrap.style.display = 'none';
       } else {
@@ -82,14 +83,14 @@ export class HealthBarManager {
     return { wrap, greenEl: green, lastHitTime: performance.now() };
   }
 
-  private worldToScreen(worldX: number, worldZ: number): { x: number; y: number; z: number } {
+  private worldToScreen(worldX: number, worldY: number, worldZ: number): { x: number; y: number; z: number } {
     const engine   = this.scene.getEngine();
     const viewport = this.scene.activeCamera!.viewport.toGlobal(
       engine.getRenderWidth(),
       engine.getRenderHeight(),
     );
     const projected = Vector3.Project(
-      new Vector3(worldX, 1.5, worldZ),
+      new Vector3(worldX, worldY, worldZ),
       Matrix.Identity(),
       this.scene.getTransformMatrix(),
       viewport,

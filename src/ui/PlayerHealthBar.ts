@@ -42,8 +42,8 @@ export class PlayerHealthBar {
     this.lastHitTime = performance.now();
   }
 
-  /** Call every frame with the player's world position and current hp/maxHp. */
-  update(worldX: number, worldZ: number, hp: number, maxHp: number): void {
+  /** Call every frame with the player's world position (including terrain Y) and current hp/maxHp. */
+  update(worldX: number, worldY: number, worldZ: number, hp: number, maxHp: number): void {
     const now = performance.now();
     const expired = now - this.lastHitTime > DURATION_MS;
 
@@ -58,7 +58,7 @@ export class PlayerHealthBar {
     const ratio = maxHp > 0 ? Math.max(0, Math.min(1, hp / maxHp)) : 0;
     this.greenEl.style.width = `${ratio * 100}%`;
 
-    const screen = this.worldToScreen(worldX, worldZ);
+    const screen = this.worldToScreen(worldX, worldY, worldZ);
     if (screen.z < 0 || screen.z > 1) {
       this.wrap.style.display = 'none';
       this.visible = false;
@@ -74,14 +74,14 @@ export class PlayerHealthBar {
     this.wrap.remove();
   }
 
-  private worldToScreen(worldX: number, worldZ: number): { x: number; y: number; z: number } {
+  private worldToScreen(worldX: number, worldY: number, worldZ: number): { x: number; y: number; z: number } {
     const engine   = this.scene.getEngine();
     const viewport = this.scene.activeCamera!.viewport.toGlobal(
       engine.getRenderWidth(),
       engine.getRenderHeight(),
     );
     const projected = Vector3.Project(
-      new Vector3(worldX, 1.5, worldZ),
+      new Vector3(worldX, worldY, worldZ),
       Matrix.Identity(),
       this.scene.getTransformMatrix(),
       viewport,

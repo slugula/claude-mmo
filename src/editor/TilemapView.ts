@@ -1,11 +1,20 @@
 import type { EditorState } from './EditorState';
 
 // Colors for overlay symbols
-const NPC_DOT_COLOR      = '#ff44aa';
 const SPAWN_CROSS_COLOR  = '#ffffff';
 const GRID_LINE_COLOR    = 'rgba(255,255,255,0.08)';
 const GRID_MAJOR_COLOR   = 'rgba(255,255,255,0.20)';
 const CURSOR_COLOR       = 'rgba(255,255,255,0.45)';
+const ERASE_CURSOR_COLOR = 'rgba(255,80,80,0.65)';
+
+// Icon colors for placed objects / NPC spawns
+const ICON_COLORS: Record<string, string> = {
+  tree:         '#22cc33',
+  rock:         '#8b5c2a',
+  chest:        '#ff8800',
+  fishing_spot: '#ffffff',
+  npc:          '#ffff00',  // NPC spawns
+};
 
 export class TilemapView {
   private canvas: HTMLCanvasElement;
@@ -27,6 +36,9 @@ export class TilemapView {
   private panOffsetY  = 0;
   private cursorTileX = -1;
   private cursorTileY = -1;
+
+  // Erase mode: toggled by pressing E; when active left-click erases instead of paints
+  eraseMode = false;
 
   // Off-screen tile cache
   private tileCache:     OffscreenCanvas | null = null;
@@ -90,6 +102,7 @@ export class TilemapView {
     }
 
     this.drawGridLines(W, H);
+    this.drawObjectIcons();
     this.drawOverlays();
     this.drawCursor();
   }
@@ -109,12 +122,16 @@ export class TilemapView {
 
         let color = tile.groundColor;
 
-        // Height overlay: darken dark tones / brighten high tones
+        // Height overlay: shade tile by average of its 4 corner vertex heights
         if (this.state.activeLayer === 'height') {
-          const h = tile.height;
-          // Blend between a dark base (h=0) and white tint (h=1)
-          const blend = h;
-          color = blendColor(tile.groundColor, blend);
+          const W = this.state.width;
+          const h = (
+            (this.state.vertexHeights[ty       * (W + 1) + tx]     ?? 0) +
+            (this.state.vertexHeights[ty       * (W + 1) + tx + 1] ?? 0) +
+            (this.state.vertexHeights[(ty + 1) * (W + 1) + tx]     ?? 0) +
+            (this.state.vertexHeights[(ty + 1) * (W + 1) + tx + 1] ?? 0)
+          ) / 4;
+          color = blendColor(tile.groundColor, h);
         }
 
         ctx.fillStyle = color;
@@ -171,22 +188,58 @@ export class TilemapView {
     }
   }
 
+  private visibleTileRange(): { startTX: number; endTX: number; startTY: number; endTY: number } {
+    const W = this.canvas.clientWidth;
+    const H = this.canvas.clientHeight;
+    const step = this.zoom;
+    return {
+      startTX: Math.max(0, Math.floor(-this.offsetX / step)),
+      endTX:   Math.min(this.state.width  - 1, Math.ceil((W - this.offsetX) / step)),
+      startTY: Math.max(0, Math.floor(-this.offsetY / step)),
+      endTY:   Math.min(this.state.height - 1, Math.ceil((H - this.offsetY) / step)),
+    };
+  }
+
+  private drawObjectIcons(): void {
+    if (this.zoom < 2) return;
+
+    const ctx  = this.ctx;
+    const step = this.zoom;
+    const { startTX, endTX, startTY, endTY } = this.visibleTileRange();
+
+    // Obstacle circles (tree / rock / chest / fishing_spot)
+    for (let ty = startTY; ty <= endTY; ty++) {
+      for (let tx = startTX; tx <= endTX; tx++) {
+        const tile = this.state.tiles[ty]?.[tx];
+        if (!tile || tile.obstacle === 'none') continue;
+        const color = ICON_COLORS[tile.obstacle];
+        if (!color) continue;
+        const sx = this.offsetX + tx * step + step / 2;
+        const sy = this.offsetY + ty * step + step / 2;
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.arc(sx, sy, Math.max(1.5, step / 4), 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    // NPC spawns — yellow circles
+    ctx.fillStyle = ICON_COLORS.npc;
+    for (const spawn of this.state.npcSpawns) {
+      if (spawn.x < startTX || spawn.x > endTX || spawn.y < startTY || spawn.y > endTY) continue;
+      const sx = this.offsetX + spawn.x * step + step / 2;
+      const sy = this.offsetY + spawn.y * step + step / 2;
+      ctx.beginPath();
+      ctx.arc(sx, sy, Math.max(1.5, step / 5), 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
   private drawOverlays(): void {
     if (this.zoom < 3) return;
 
     const ctx  = this.ctx;
     const step = this.zoom;
-
-    // NPC spawns — magenta dot
-    ctx.fillStyle = NPC_DOT_COLOR;
-    for (const spawn of this.state.npcSpawns) {
-      const sx = this.offsetX + spawn.x * step + step / 2;
-      const sy = this.offsetY + spawn.y * step + step / 2;
-      const r  = Math.max(1, step / 5);
-      ctx.beginPath();
-      ctx.arc(sx, sy, r, 0, Math.PI * 2);
-      ctx.fill();
-    }
 
     // Player spawn cross at center
     const spawnX = Math.floor(this.state.width  / 2);
@@ -209,7 +262,7 @@ export class TilemapView {
 
     const step = this.zoom;
     const offsets = this.brushPixelOffsets();
-    this.ctx.strokeStyle = CURSOR_COLOR;
+    this.ctx.strokeStyle = this.eraseMode ? ERASE_CURSOR_COLOR : CURSOR_COLOR;
     this.ctx.lineWidth   = 1;
 
     for (const [dx, dy] of offsets) {
@@ -261,6 +314,15 @@ export class TilemapView {
 
     c.addEventListener('contextmenu', e => e.preventDefault());
 
+    // E key toggles erase mode
+    window.addEventListener('keydown', (e) => {
+      if ((e.target as HTMLElement).tagName === 'INPUT') return;
+      if (e.key === 'e' || e.key === 'E') {
+        this.eraseMode = !this.eraseMode;
+        this.render();
+      }
+    });
+
     c.addEventListener('wheel', (e) => {
       e.preventDefault();
       const rect = c.getBoundingClientRect();
@@ -282,8 +344,8 @@ export class TilemapView {
       const sx = e.clientX - rect.left;
       const sy = e.clientY - rect.top;
 
-      if (e.button === 1 || (e.button === 0 && e.altKey)) {
-        // Middle or alt-left: pan
+      // Right-click or middle-click or alt+left: pan
+      if (e.button === 2 || e.button === 1 || (e.button === 0 && e.altKey)) {
         this.isPanning  = true;
         this.panStartX  = e.clientX;
         this.panStartY  = e.clientY;
@@ -293,16 +355,16 @@ export class TilemapView {
         return;
       }
 
-      const [tx, ty] = this.screenToTile(sx, sy);
       if (e.button === 0) {
-        this.isPainting = true;
+        const [tx, ty] = this.screenToTile(sx, sy);
         this.state.beginStroke();
-        this.state.paintAt(tx, ty);
-        this.render();
-      } else if (e.button === 2) {
-        this.isErasing = true;
-        this.state.beginStroke();
-        this.state.eraseAt(tx, ty);
+        if (this.eraseMode) {
+          this.isErasing = true;
+          this.state.eraseAt(tx, ty);
+        } else {
+          this.isPainting = true;
+          this.state.paintAt(tx, ty);
+        }
         this.render();
       }
     });
@@ -336,7 +398,7 @@ export class TilemapView {
     });
 
     window.addEventListener('mouseup', (e) => {
-      if (e.button === 1 || (e.button === 0 && this.isPanning)) {
+      if (e.button === 2 || e.button === 1 || (e.button === 0 && this.isPanning)) {
         this.isPanning = false;
         return;
       }

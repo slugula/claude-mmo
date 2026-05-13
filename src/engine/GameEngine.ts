@@ -78,9 +78,7 @@ export class GameEngine {
   private hlRockProxy!: Mesh;
 
   private hoverIndicator: LinesMesh;
-  private destIndicator: Mesh;
-  private destPulseDir = 1;
-  private destPulseScale = 1;
+  private destIndicator: LinesMesh;
   private hoverHighlight!: HighlightLayer;
   private soundEngine!: SoundEngine;
 
@@ -151,9 +149,24 @@ export class GameEngine {
       updatable: true,
     }, this.scene);
     this.hoverIndicator.isPickable = false;
+    this.hoverIndicator.alwaysSelectAsActiveMesh = true;
     this.hoverIndicator.setEnabled(false);
 
-    this.destIndicator = this.buildIndicator('dest', new Color3(1, 0.6, 0), 0.01);
+    const destColors = [0, 1, 2, 3, 4].map(() => new Color4(1, 0.75, 0, 1));
+    this.destIndicator = MeshBuilder.CreateLines('dest-indicator', {
+      points: [
+        new Vector3(-0.5, 0, -0.5),
+        new Vector3( 0.5, 0, -0.5),
+        new Vector3( 0.5, 0,  0.5),
+        new Vector3(-0.5, 0,  0.5),
+        new Vector3(-0.5, 0, -0.5),
+      ],
+      colors: destColors,
+      updatable: true,
+    }, this.scene);
+    this.destIndicator.isPickable = false;
+    this.destIndicator.alwaysSelectAsActiveMesh = true;
+    this.destIndicator.setEnabled(false);
 
     this.hoverHighlight = new HighlightLayer('hover-hl', this.scene);
     this.hoverHighlight.innerGlow = false;
@@ -342,19 +355,6 @@ export class GameEngine {
     sun.specular  = new Color3(0.1, 0.1, 0.05);
   }
 
-  private buildIndicator(name: string, color: Color3, yOffset: number): Mesh {
-    const mesh = MeshBuilder.CreateGround(`${name}-indicator`, { width: 0.9, height: 0.9 }, this.scene);
-    mesh.position.y = yOffset;
-    mesh.isPickable = false;
-
-    const mat = new StandardMaterial(`${name}-mat`, this.scene);
-    mat.diffuseColor  = color;
-    mat.emissiveColor = color.scale(0.4);
-    mat.alpha = 0.6;
-    mesh.material = mat;
-    mesh.setEnabled(false);
-    return mesh;
-  }
 
   private startRenderLoop(): void {
     let lastTime = performance.now();
@@ -372,7 +372,8 @@ export class GameEngine {
 
       if (currPlayer && prevPlayer) {
         const playerGroundY = this.getTileWorldY(prevPlayer.tileX, prevPlayer.tileY)
-          + (this.getTileWorldY(currPlayer.tileX, currPlayer.tileY) - this.getTileWorldY(prevPlayer.tileX, prevPlayer.tileY)) * alpha;
+          + (this.getTileWorldY(currPlayer.tileX, currPlayer.tileY)
+          - this.getTileWorldY(prevPlayer.tileX, prevPlayer.tileY)) * alpha;
         this.player.render(prevPlayer, currPlayer, alpha, this.currentState.tick, playerGroundY);
         this.player.updateEquipped(currPlayer.equipped);
         this.player.updateAppearance(currPlayer.shirtColor ?? 'blue', currPlayer.skinColor ?? 'fair');
@@ -388,14 +389,15 @@ export class GameEngine {
         for (const curr of this.currentState.npcs) {
           const prev = this.prevState.npcs.find(n => n.id === curr.id);
           if (prev && curr.lastHitTick > (prev.lastHitTick ?? 0)) {
-            this.hitSplatManager.spawn(curr.lastHitDamage, curr.tileX, curr.tileY, 0.9);
+            this.hitSplatManager.spawn(curr.lastHitDamage, curr.tileX, curr.tileY, this.getTileWorldY(curr.tileX, curr.tileY) + 0.9);
             this.healthBarManager.recordHit(curr.id);
           }
         }
 
         if (currPlayer && prevPlayer) {
           if (currPlayer.lastHitTick > prevPlayer.lastHitTick) {
-            this.hitSplatManager.spawn(currPlayer.lastHitDamage, currPlayer.tileX, currPlayer.tileY, 1.2);
+            const pp = this.player.worldPosition;
+            this.hitSplatManager.spawn(currPlayer.lastHitDamage, pp.x, pp.z, pp.y + 1.2);
             this.playerHealthBar.recordHit();
             this.soundEngine.playHit();
           }
@@ -423,10 +425,10 @@ export class GameEngine {
       }
 
       this.hitSplatManager.update();
-      this.healthBarManager.update(this.currentState.npcs);
+      this.healthBarManager.update(this.currentState.npcs, (x, z) => this.getTileWorldY(x, z));
       if (currPlayer) {
         const pp = this.player.worldPosition;
-        this.playerHealthBar.update(pp.x, pp.z, currPlayer.hp, currPlayer.maxHp);
+        this.playerHealthBar.update(pp.x, pp.y + 1.5, pp.z, currPlayer.hp, currPlayer.maxHp);
       }
       this.clickFeedback.update();
 
@@ -478,13 +480,14 @@ export class GameEngine {
 
       const hover = this.input.currentHover;
       if (hover.kind === 'walkable') {
-        const { tiles, width: W, height: H } = this.currentState.world;
+        const world = this.currentState.world;
+        const { height: H } = world;
         const tx = hover.tileX, ty = hover.tileY;
         const eps = 0.015;
-        const yBL = computeVertexHeight(tiles, W, H, tx,     H - ty)     + eps;
-        const yBR = computeVertexHeight(tiles, W, H, tx + 1, H - ty)     + eps;
-        const yTR = computeVertexHeight(tiles, W, H, tx + 1, H - ty - 1) + eps;
-        const yTL = computeVertexHeight(tiles, W, H, tx,     H - ty - 1) + eps;
+        const yBL = computeVertexHeight(world, tx,     H - ty)     + eps;
+        const yBR = computeVertexHeight(world, tx + 1, H - ty)     + eps;
+        const yTR = computeVertexHeight(world, tx + 1, H - ty - 1) + eps;
+        const yTL = computeVertexHeight(world, tx,     H - ty - 1) + eps;
         // Directly update the GPU position buffer — avoids degenerate CreateLines({instance}) pitfalls
         this.hoverIndicator.updateVerticesData(VertexBuffer.PositionKind, new Float32Array([
           tx - 0.5, yBL, ty - 0.5,
@@ -503,16 +506,23 @@ export class GameEngine {
           || currPlayer.destinationX !== currPlayer.tileX
           || currPlayer.destinationY !== currPlayer.tileY;
         if (hasPath) {
+          const dx = currPlayer.destinationX;
+          const dz = currPlayer.destinationY;
+          const world = this.currentState.world;
+          const { height: H } = world;
+          const eps = 0.015;
+          const yBL = computeVertexHeight(world, dx,     H - dz)     + eps;
+          const yBR = computeVertexHeight(world, dx + 1, H - dz)     + eps;
+          const yTR = computeVertexHeight(world, dx + 1, H - dz - 1) + eps;
+          const yTL = computeVertexHeight(world, dx,     H - dz - 1) + eps;
+          this.destIndicator.updateVerticesData(VertexBuffer.PositionKind, new Float32Array([
+            dx - 0.5, yBL, dz - 0.5,
+            dx + 0.5, yBR, dz - 0.5,
+            dx + 0.5, yTR, dz + 0.5,
+            dx - 0.5, yTL, dz + 0.5,
+            dx - 0.5, yBL, dz - 0.5,
+          ]));
           this.destIndicator.setEnabled(true);
-          this.destIndicator.position.x = currPlayer.destinationX;
-          this.destIndicator.position.y = this.getTileWorldY(currPlayer.destinationX, currPlayer.destinationY) + 0.01;
-          this.destIndicator.position.z = currPlayer.destinationY;
-
-          this.destPulseScale += this.destPulseDir * dt * 2;
-          if (this.destPulseScale > 1.15) { this.destPulseScale = 1.15; this.destPulseDir = -1; }
-          if (this.destPulseScale < 0.85) { this.destPulseScale = 0.85; this.destPulseDir =  1; }
-          this.destIndicator.scaling.x = this.destPulseScale;
-          this.destIndicator.scaling.z = this.destPulseScale;
         } else {
           this.destIndicator.setEnabled(false);
         }
@@ -642,17 +652,17 @@ export class GameEngine {
   }
 
   private getTileWorldY(tx: number, ty: number): number {
-    const tile = this.currentState.world.tiles[ty]?.[tx];
+    const world = this.currentState.world;
+    const tile  = world.tiles[ty]?.[tx];
     if (!tile) return 0;
     if (tile.type === 'water') return -0.25;
-    const { tiles, width: W, height: H } = this.currentState.world;
-    const corners = [
-      computeVertexHeight(tiles, W, H, tx,     H - ty),
-      computeVertexHeight(tiles, W, H, tx + 1, H - ty),
-      computeVertexHeight(tiles, W, H, tx + 1, H - ty - 1),
-      computeVertexHeight(tiles, W, H, tx,     H - ty - 1),
-    ];
-    return (corners[0] + corners[1] + corners[2] + corners[3]) / 4;
+    const H = world.height;
+    return (
+      computeVertexHeight(world, tx,     H - ty)     +
+      computeVertexHeight(world, tx + 1, H - ty)     +
+      computeVertexHeight(world, tx + 1, H - ty - 1) +
+      computeVertexHeight(world, tx,     H - ty - 1)
+    ) / 4;
   }
 
   private cursorFor(kind: string): string {
@@ -704,7 +714,7 @@ export class GameEngine {
           diameter: 0.18, height: 0.12, tessellation: 6,
         }, this.scene);
         stump.position.x = x;
-        stump.position.y = 0.06;
+        stump.position.y = this.getTileWorldY(x, y) + 0.06;
         stump.position.z = y;
         stump.isPickable = false;
         const stumpMat = new StandardMaterial(`stump-mat-${key}`, this.scene);

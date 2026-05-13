@@ -1,7 +1,33 @@
 import {
   Scene, MeshBuilder, StandardMaterial, Color3,
-  Mesh, Vector3, DynamicTexture, Texture, VertexData, VertexBuffer,
+  Mesh, Vector3, VertexData, VertexBuffer,
+  ShaderMaterial, Effect,
 } from '@babylonjs/core';
+
+// ---- Unlit terrain shader (OSRS-style: pure vertex color interpolation, no lighting) ----
+//
+// The GPU bilinearly interpolates between the 4 corner vertex colors of every quad.
+// Each corner is shared between up to 4 tiles, so blended colors produce seamless
+// gradients across tile boundaries with zero texture overhead.
+
+Effect.ShadersStore['terrainVertexShader'] = /* glsl */`
+  attribute vec3 position;
+  attribute vec4 color;
+  uniform mat4 worldViewProjection;
+  varying vec4 vColor;
+  void main() {
+    gl_Position = worldViewProjection * vec4(position, 1.0);
+    vColor = color;
+  }
+`;
+
+Effect.ShadersStore['terrainFragmentShader'] = /* glsl */`
+  precision highp float;
+  varying vec4 vColor;
+  void main() {
+    gl_FragColor = vColor;
+  }
+`;
 import type { TileData, WorldState } from '../shared/types';
 import { TILE_SIZE } from '../shared/constants';
 
@@ -11,70 +37,102 @@ export { createWorldFromTiles, findWalkableTileNear } from './WorldState';
 const WATER_Y              = -0.25;
 export const MAX_TERRAIN_H =  4;     // 1.0 height value → 4 world units tall
 
-// ---- Ground texture (bilinear smooth color blending) -------------------------
+// ---- Ground vertex colors (smooth color blending + obstacle AO) ---------------
 //
-// Each tile fills a 3×3 pixel block with its groundColor.  Babylon bilinear
-// sampling blends between adjacent tile colors → soft gradients, no jagged edges.
+// Each vertex sits at the corner of up to 4 tiles.  Its color is the average of
+// those neighbours' groundColor values — producing the same smooth gradient that
+// the old DynamicTexture + bilinear sampling gave, but now living on the mesh
+// itself so it naturally follows the height-deformed surface.
 //
-// DynamicTexture has invertY=true: canvas y=0 → UV v=0 → world Z=max.
-// Tile y=0 is world Z=0 (near camera), so we flip: canvasY = (H-1-ty)*3.
+// Simple ambient occlusion: vertices adjacent to obstacle tiles (trees, rocks,
+// walls) are darkened proportionally — each obstacle neighbour reduces brightness
+// by ~15%, capped at 50% dark.
 
-function buildGroundTexture(tiles: TileData[][], width: number, height: number, scene: Scene): DynamicTexture {
-  const cW = width  * 3;
-  const cH = height * 3;
-  const tex = new DynamicTexture('grid-tex', { width: cW, height: cH }, scene, false);
-  const ctx = tex.getContext();
+function hexToRgb01(hex: string): [number, number, number] {
+  const h = hex.replace('#', '');
+  return [
+    parseInt(h.slice(0, 2), 16) / 255,
+    parseInt(h.slice(2, 4), 16) / 255,
+    parseInt(h.slice(4, 6), 16) / 255,
+  ];
+}
 
-  for (let ty = 0; ty < height; ty++) {
-    const cy = (height - 1 - ty) * 3;
-    for (let tx = 0; tx < width; tx++) {
-      const cx   = tx * 3;
-      const tile = tiles[ty]?.[tx];
-      ctx.fillStyle = tile?.groundColor ?? '#7ec850';
-      ctx.fillRect(cx, cy, 3, 3);
+function buildGroundVertexColors(tiles: TileData[][], W: number, H: number): Float32Array {
+  const colors = new Float32Array((W + 1) * (H + 1) * 4);
+
+  for (let row = 0; row <= H; row++) {
+    for (let col = 0; col <= W; col++) {
+      const idx = (row * (W + 1) + col) * 4;
+
+      let r = 0, g = 0, b = 0, count = 0, obstacleNeighbors = 0;
+
+      for (const tx of [col - 1, col]) {
+        for (const ty of [H - row - 1, H - row]) {
+          if (tx < 0 || tx >= W || ty < 0 || ty >= H) continue;
+          const tile = tiles[ty]?.[tx];
+          if (!tile) continue;
+
+          // Water has its own mesh — exclude it from terrain color averaging so its
+          // blue groundColor doesn't bleed onto adjacent cliff/grass vertices.
+          if (tile.type === 'water') continue;
+
+          const [tr, tg, tb] = hexToRgb01(tile.groundColor);
+          r += tr; g += tg; b += tb; count++;
+
+          if (tile.obstacle !== 'none' || tile.type === 'wall') obstacleNeighbors++;
+        }
+      }
+
+      if (count > 0) { r /= count; g /= count; b /= count; }
+
+      // Obstacle AO: darken vertices near obstacles (trees/rocks cast ground shadow)
+      const ao = Math.max(0.5, 1.0 - obstacleNeighbors * 0.15);
+      colors[idx]     = r * ao;
+      colors[idx + 1] = g * ao;
+      colors[idx + 2] = b * ao;
+      colors[idx + 3] = 1.0;
     }
   }
 
-  tex.update();
-  tex.uScale = 1;
-  tex.vScale = 1;
-  tex.updateSamplingMode(Texture.BILINEAR_SAMPLINGMODE);
-  return tex;
+  return colors;
 }
 
 // ---- Terrain height deformation ----------------------------------------------
 //
-// CreateGround(W, H, subdivisions=W) produces (W+1)×(H+1) vertices.
-// Vertex (col, row) sits at the corner shared by up to 4 tiles:
-//   tx ∈ {col-1, col},  ty ∈ {H-row-1, H-row}  (clamped to tile bounds)
-// Each vertex Y = average of its neighbor tiles' heights — shared vertices
-// ensure adjacent tiles connect smoothly rather than forming flat plateaus.
+// Height is stored per-vertex in WorldState.vertexHeights (a flat Float32Array,
+// length (W+1)*(H+1), indexed as row*(W+1)+col).  The GPU bilinearly interpolates
+// between neighbouring corner values — tiles naturally slope into each other.
+//
+// Water vertices sink below WATER_Y regardless of stored height so cliffs adjacent
+// to water don't show jagged edges above the water plane.
 
-export function computeVertexHeight(tiles: TileData[][], W: number, H: number, col: number, row: number): number {
-  let sum = 0, count = 0, allWater = true;
+export function computeVertexHeight(world: WorldState, col: number, row: number): number {
+  const W = world.width;
+  const H = world.height;
+  // Check whether all neighbouring tiles are water — if so, sink below water plane
+  let allWater = true;
   for (const tx of [col - 1, col]) {
     for (const ty of [H - row - 1, H - row]) {
       if (tx < 0 || tx >= W || ty < 0 || ty >= H) continue;
-      const tile = tiles[ty]?.[tx];
-      if (!tile) continue;
-      if (tile.type !== 'water') allWater = false;
-      sum += (tile.height ?? 0);
-      count++;
+      const tile = world.tiles[ty]?.[tx];
+      if (tile && tile.type !== 'water') { allWater = false; break; }
     }
+    if (!allWater) break;
   }
-  if (count === 0) return 0;
-  if (allWater) return -0.5; // sink below the water plane
-  return (sum / count) * MAX_TERRAIN_H;
+  if (allWater) return -0.5;
+  return (world.vertexHeights[row * (W + 1) + col] ?? 0) * MAX_TERRAIN_H;
 }
 
-function applyHeightDeformation(mesh: Mesh, tiles: TileData[][], W: number, H: number): void {
+function applyHeightDeformation(mesh: Mesh, world: WorldState): void {
   const positions = mesh.getVerticesData(VertexBuffer.PositionKind);
   if (!positions) return;
 
+  const W = world.width;
+  const H = world.height;
   const vertsPerRow = W + 1;
   for (let row = 0; row <= H; row++) {
     for (let col = 0; col <= W; col++) {
-      positions[(row * vertsPerRow + col) * 3 + 1] = computeVertexHeight(tiles, W, H, col, row);
+      positions[(row * vertsPerRow + col) * 3 + 1] = computeVertexHeight(world, col, row);
     }
   }
 
@@ -147,10 +205,10 @@ export function buildWorldMeshes(world: WorldState, scene: Scene): Mesh {
   const H    = world.height;
 
   // ---- Ground terrain (height-deformed subdivided mesh) ----------------------
-  const gridTex    = buildGroundTexture(world.tiles, W, H, scene);
-  const groundMat  = new StandardMaterial('ground-mat', scene);
-  groundMat.diffuseTexture = gridTex;
-  groundMat.specularColor  = new Color3(0, 0, 0);
+  const groundMat = new ShaderMaterial('ground-mat', scene, { vertex: 'terrain', fragment: 'terrain' }, {
+    attributes: ['position', 'color'],
+    uniforms:   ['worldViewProjection'],
+  });
 
   const terrainMesh = MeshBuilder.CreateGround('ground-terrain', {
     width:        W * TILE_SIZE,
@@ -163,7 +221,8 @@ export function buildWorldMeshes(world: WorldState, scene: Scene): Mesh {
   terrainMesh.material     = groundMat;
   terrainMesh.isPickable   = false;
   terrainMesh.parent       = root;
-  applyHeightDeformation(terrainMesh, world.tiles, W, H);
+  applyHeightDeformation(terrainMesh, world);
+  terrainMesh.setVerticesData(VertexBuffer.ColorKind, buildGroundVertexColors(world.tiles, W, H), true);
 
   // Invisible pick-target — must match the visual terrain exactly so mouse rays
   // hit the right tile even on elevated terrain.
@@ -178,7 +237,7 @@ export function buildWorldMeshes(world: WorldState, scene: Scene): Mesh {
   groundPick.isPickable = true;
   groundPick.visibility = 0;
   groundPick.parent     = root;
-  applyHeightDeformation(groundPick, world.tiles, W, H);
+  applyHeightDeformation(groundPick, world);
 
   // ---- Water plane -----------------------------------------------------------
   buildWaterPlane(world, scene, root);
@@ -247,10 +306,10 @@ export function buildWorldMeshes(world: WorldState, scene: Scene): Mesh {
       // at the tile centre (vertex averaging means tile.height * MAX_TERRAIN_H is wrong
       // at transition edges; the corners blend with neighbours).
       const tileBaseY = tile.type === 'water' ? WATER_Y : (
-        computeVertexHeight(world.tiles, W, H, x,     H - y)     +
-        computeVertexHeight(world.tiles, W, H, x + 1, H - y)     +
-        computeVertexHeight(world.tiles, W, H, x + 1, H - y - 1) +
-        computeVertexHeight(world.tiles, W, H, x,     H - y - 1)
+        computeVertexHeight(world, x,     H - y)     +
+        computeVertexHeight(world, x + 1, H - y)     +
+        computeVertexHeight(world, x + 1, H - y - 1) +
+        computeVertexHeight(world, x,     H - y - 1)
       ) / 4;
 
       if (tile.obstacle === 'tree') {

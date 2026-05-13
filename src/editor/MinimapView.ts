@@ -1,12 +1,13 @@
 import type { EditorState } from './EditorState';
 
-// Fixed override colors
-const WATER_COLOR  = '#1878e5';
-const TREE_COLOR   = '#1a5c1a';
-const ROCK_COLOR   = '#666666';
-const CHEST_COLOR  = '#cc9900';
-const NPC_COLOR    = '#ff44aa';
-const SPAWN_COLOR  = '#ffffff';
+// Fixed override colors for obstacle tiles
+const WATER_COLOR        = '#1878e5';
+const TREE_COLOR         = '#1a5c1a';
+const ROCK_COLOR         = '#666666';
+const CHEST_COLOR        = '#cc9900';
+const FISHING_SPOT_COLOR = '#aaddff';
+const NPC_COLOR          = '#ffff00';  // yellow dots
+const SPAWN_COLOR        = '#ffffff';
 
 const DISPLAY_SIZE = 192; // px on screen (CSS)
 
@@ -51,6 +52,8 @@ export class MinimapView {
           color = ROCK_COLOR;
         } else if (tile.obstacle === 'chest') {
           color = CHEST_COLOR;
+        } else if (tile.obstacle === 'fishing_spot') {
+          color = FISHING_SPOT_COLOR;
         } else {
           color = tile.groundColor;
         }

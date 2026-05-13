@@ -159,7 +159,7 @@ export class InputManager {
       const pick = scene.pick(scene.pointerX, scene.pointerY, (mesh) => mesh.isPickable);
 
       if (!pick?.hit || !pick.pickedMesh || !pick.pickedPoint) {
-        if (info.type === PointerEventTypes.POINTERMOVE) {
+        if (info.type === PointerEventTypes.POINTERMOVE && (info.event as PointerEvent).buttons === 0) {
           this.currentHover = { kind: 'none', tileX: 0, tileY: 0 };
           this.currentHoverMesh = null;
         }
@@ -178,8 +178,12 @@ export class InputManager {
       );
 
       if (info.type === PointerEventTypes.POINTERMOVE) {
-        this.currentHover = target;
-        this.currentHoverMesh = pick.pickedMesh;
+        // Don't update hover while any mouse button is held — camera rotation (middle) or
+        // drag operations cause pick() to miss, which would falsely clear the hover state.
+        if ((info.event as PointerEvent).buttons === 0) {
+          this.currentHover = target;
+          this.currentHoverMesh = pick.pickedMesh;
+        }
         return;
       }
 
