@@ -74,7 +74,7 @@ export class Preview3D {
       this.worldRoot = null;
     }
 
-    const worldState = createWorldFromTiles(state.tiles);
+    const worldState = createWorldFromTiles(state.tiles, Array.from(state.vertexHeights));
     this.worldRoot   = buildWorldMeshes(worldState, this.scene);
   }
 

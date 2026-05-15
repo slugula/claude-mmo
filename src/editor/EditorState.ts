@@ -120,10 +120,10 @@ export class EditorState {
     const tiles = this.tiles.map(row => row.map(t => {
       const tx = t.x, ty = t.y;
       const avgH = (
-        (this.vertexHeights[ty       * (W + 1) + tx]     ?? 0) +
-        (this.vertexHeights[ty       * (W + 1) + tx + 1] ?? 0) +
-        (this.vertexHeights[(ty + 1) * (W + 1) + tx]     ?? 0) +
-        (this.vertexHeights[(ty + 1) * (W + 1) + tx + 1] ?? 0)
+        (this.vertexHeights[(H - ty)     * (W + 1) + tx]     ?? 0) +
+        (this.vertexHeights[(H - ty)     * (W + 1) + tx + 1] ?? 0) +
+        (this.vertexHeights[(H - ty - 1) * (W + 1) + tx]     ?? 0) +
+        (this.vertexHeights[(H - ty - 1) * (W + 1) + tx + 1] ?? 0)
       ) / 4;
       return { ...t, height: avgH };
     }));
@@ -229,13 +229,16 @@ export class EditorState {
   }
 
   // Set all 4 corner vertices of tile (tx, ty) to the given 0-1 height value.
+  // Vertex row for tile ty: Babylon ground mesh row 0 sits at world z = H-0.5 (far end),
+  // so tile ty's lower-z edge = vertex row H-ty, upper-z edge = vertex row H-ty-1.
   private paintVertexHeight(tx: number, ty: number, h: number): void {
     const W = this.width;
+    const H = this.height;
     const corners = [
-      ty       * (W + 1) + tx,
-      ty       * (W + 1) + tx + 1,
-      (ty + 1) * (W + 1) + tx,
-      (ty + 1) * (W + 1) + tx + 1,
+      (H - ty)     * (W + 1) + tx,
+      (H - ty)     * (W + 1) + tx + 1,
+      (H - ty - 1) * (W + 1) + tx,
+      (H - ty - 1) * (W + 1) + tx + 1,
     ];
     for (const idx of corners) {
       if (idx < 0 || idx >= this.vertexHeights.length) continue;

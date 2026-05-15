@@ -24,6 +24,7 @@ interface WorldMapJSON {
   // v2 fields
   npcSpawns?:      NPCSpawn[];
   permanentItems?: PermanentItemSpawn[];
+  vertexHeights?:  number[];
   // legacy v1 fields (ignored by new renderer)
   pixelWidth?:  number;
   pixelHeight?: number;
@@ -81,7 +82,7 @@ export class GameLoop {
     const mapData = loadWorldMap();
     this.worldTiles = mapData.tiles;
 
-    const world = createWorldFromTiles(mapData.tiles);
+    const world = createWorldFromTiles(mapData.tiles, mapData.vertexHeights);
 
     // NPC spawns: use map file's list (v2) or legacy defaults
     const npcSpawnDefs = (mapData.npcSpawns && mapData.npcSpawns.length > 0)
@@ -208,6 +209,7 @@ export class GameLoop {
   }
 
   getWorldTiles(): TileData[][] { return this.worldTiles; }
+  getVertexHeights(): number[] { return Array.from(this.state.world.vertexHeights); }
 
   /** Returns a snapshot of all currently-connected players for checkpoint saves. */
   getPlayerStates(): Map<string, PlayerState> {

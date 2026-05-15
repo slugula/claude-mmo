@@ -1,10 +1,11 @@
 import type { GameAction, ServerStatePatch, TileData } from '../shared/types';
 
 export interface InitMessage {
-  type:        'init';
-  playerId:    string;
-  tiles:       TileData[][];
-  isNewPlayer: boolean;
+  type:          'init';
+  playerId:      string;
+  tiles:         TileData[][];
+  vertexHeights: number[];
+  isNewPlayer:   boolean;
 }
 
 export interface StateMessage {

@@ -156,7 +156,8 @@ wss.on('connection', async (ws: WebSocket, req: IncomingMessage) => {
   ws.send(JSON.stringify({
     type: 'init',
     playerId,
-    tiles:    loop.getWorldTiles(),
+    tiles:         loop.getWorldTiles(),
+    vertexHeights: loop.getVertexHeights(),
     isNewPlayer,
   }));
 

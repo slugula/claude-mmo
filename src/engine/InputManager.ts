@@ -104,6 +104,7 @@ export class InputManager {
 
   currentHover: HoverTarget = { kind: 'none', tileX: 0, tileY: 0 };
   currentHoverMesh: AbstractMesh | null = null;
+  private cameraRotating = false;
 
   onRightClick: ((entries: ContextEntry[], screenX: number, screenY: number) => void) | null = null;
   onLeftClick: ((screenX: number, screenY: number, kind: string) => void) | null = null;
@@ -156,10 +157,22 @@ export class InputManager {
     scene.onPointerObservable.add((info) => {
       if (!this.world) return;
 
+      const evt = info.event as PointerEvent;
+
+      // Track middle-mouse camera rotation explicitly so hover state is frozen
+      // during drags regardless of what the browser reports in evt.buttons.
+      if (info.type === PointerEventTypes.POINTERDOWN && evt.button === 1) {
+        this.cameraRotating = true;
+      } else if (info.type === PointerEventTypes.POINTERUP && evt.button === 1) {
+        this.cameraRotating = false;
+      }
+
       const pick = scene.pick(scene.pointerX, scene.pointerY, (mesh) => mesh.isPickable);
 
       if (!pick?.hit || !pick.pickedMesh || !pick.pickedPoint) {
-        if (info.type === PointerEventTypes.POINTERMOVE && (info.event as PointerEvent).buttons === 0) {
+        // Clear hover on POINTERMOVE when not rotating, or immediately when rotation ends.
+        const isRotationEnd = info.type === PointerEventTypes.POINTERUP && evt.button === 1;
+        if (!this.cameraRotating && (info.type === PointerEventTypes.POINTERMOVE || isRotationEnd)) {
           this.currentHover = { kind: 'none', tileX: 0, tileY: 0 };
           this.currentHoverMesh = null;
         }
@@ -178,18 +191,23 @@ export class InputManager {
       );
 
       if (info.type === PointerEventTypes.POINTERMOVE) {
-        // Don't update hover while any mouse button is held — camera rotation (middle) or
-        // drag operations cause pick() to miss, which would falsely clear the hover state.
-        if ((info.event as PointerEvent).buttons === 0) {
+        // Freeze hover while camera is rotating; update immediately when it stops.
+        if (!this.cameraRotating) {
           this.currentHover = target;
           this.currentHoverMesh = pick.pickedMesh;
         }
         return;
       }
 
+      // Snap hover to current cursor position the moment rotation ends.
+      if (info.type === PointerEventTypes.POINTERUP && evt.button === 1) {
+        this.currentHover = target;
+        this.currentHoverMesh = pick.pickedMesh;
+        return;
+      }
+
       if (info.type === PointerEventTypes.POINTERDOWN) {
         this.onCanvasPointerDown?.();
-        const evt = info.event as PointerEvent;
         const entries = getContextActions(target, this.npcs);
 
         if (evt.button === 0) {

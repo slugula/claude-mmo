@@ -1,7 +1,7 @@
 import {
   Engine, Scene, HemisphericLight, DirectionalLight,
   Vector3, Color3, Color4, MeshBuilder, StandardMaterial,
-  Mesh, HighlightLayer, LinesMesh, VertexBuffer,
+  Mesh, HighlightLayer, LinesMesh, VertexBuffer, VertexData,
 } from '@babylonjs/core';
 import type { GameState, NPCState, DroppedItemState, GameAction, HoverTarget } from '../shared/types';
 import { createWorldFromTiles, buildWorldMeshes, MAX_TERRAIN_H, computeVertexHeight } from '../world/World';
@@ -78,7 +78,7 @@ export class GameEngine {
   private hlRockProxy!: Mesh;
 
   private hoverIndicator: LinesMesh;
-  private destIndicator: LinesMesh;
+  private destIndicator: Mesh;
   private hoverHighlight!: HighlightLayer;
   private soundEngine!: SoundEngine;
 
@@ -152,21 +152,24 @@ export class GameEngine {
     this.hoverIndicator.alwaysSelectAsActiveMesh = true;
     this.hoverIndicator.setEnabled(false);
 
-    const destColors = [0, 1, 2, 3, 4].map(() => new Color4(1, 0.75, 0, 1));
-    this.destIndicator = MeshBuilder.CreateLines('dest-indicator', {
-      points: [
-        new Vector3(-0.5, 0, -0.5),
-        new Vector3( 0.5, 0, -0.5),
-        new Vector3( 0.5, 0,  0.5),
-        new Vector3(-0.5, 0,  0.5),
-        new Vector3(-0.5, 0, -0.5),
-      ],
-      colors: destColors,
-      updatable: true,
-    }, this.scene);
-    this.destIndicator.isPickable = false;
-    this.destIndicator.alwaysSelectAsActiveMesh = true;
-    this.destIndicator.setEnabled(false);
+    // Filled destination tile — quad (2 triangles), yellow semi-transparent.
+    // Vertex order: 0=BL, 1=BR, 2=TR, 3=TL (matches the hoverIndicator corner convention).
+    {
+      const vd = new VertexData();
+      vd.positions = new Float32Array([-0.5, 0, -0.5,  0.5, 0, -0.5,  0.5, 0, 0.5,  -0.5, 0, 0.5]);
+      vd.indices   = new Int32Array([0, 2, 1,  0, 3, 2]);
+      vd.normals   = new Float32Array([0, 1, 0,  0, 1, 0,  0, 1, 0,  0, 1, 0]);
+      this.destIndicator = new Mesh('dest-indicator', this.scene);
+      vd.applyToMesh(this.destIndicator, true);
+      const destMat = new StandardMaterial('dest-mat', this.scene);
+      destMat.diffuseColor    = new Color3(1, 0.75, 0);
+      destMat.alpha           = 0.45;
+      destMat.backFaceCulling = false;
+      this.destIndicator.material = destMat;
+      this.destIndicator.isPickable = false;
+      this.destIndicator.alwaysSelectAsActiveMesh = true;
+      this.destIndicator.setEnabled(false);
+    }
 
     this.hoverHighlight = new HighlightLayer('hover-hl', this.scene);
     this.hoverHighlight.innerGlow = false;
@@ -266,7 +269,7 @@ export class GameEngine {
         this.input.setLocalPlayerId(msg.playerId);
 
         // Build world from server-sent tiles and render meshes
-        const worldState = createWorldFromTiles(msg.tiles);
+        const worldState = createWorldFromTiles(msg.tiles, msg.vertexHeights);
         this.currentState = { ...this.currentState, world: worldState };
         this.prevState    = this.currentState;
         buildWorldMeshes(worldState, this.scene);
@@ -516,11 +519,10 @@ export class GameEngine {
           const yTR = computeVertexHeight(world, dx + 1, H - dz - 1) + eps;
           const yTL = computeVertexHeight(world, dx,     H - dz - 1) + eps;
           this.destIndicator.updateVerticesData(VertexBuffer.PositionKind, new Float32Array([
-            dx - 0.5, yBL, dz - 0.5,
-            dx + 0.5, yBR, dz - 0.5,
-            dx + 0.5, yTR, dz + 0.5,
-            dx - 0.5, yTL, dz + 0.5,
-            dx - 0.5, yBL, dz - 0.5,
+            dx - 0.5, yBL, dz - 0.5,   // 0: BL
+            dx + 0.5, yBR, dz - 0.5,   // 1: BR
+            dx + 0.5, yTR, dz + 0.5,   // 2: TR
+            dx - 0.5, yTL, dz + 0.5,   // 3: TL
           ]));
           this.destIndicator.setEnabled(true);
         } else {

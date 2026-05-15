@@ -122,14 +122,17 @@ export class TilemapView {
 
         let color = tile.groundColor;
 
-        // Height overlay: shade tile by average of its 4 corner vertex heights
+        // Height overlay: shade tile by average of its 4 corner vertex heights.
+        // Vertex row for tile ty: row H-ty (lower-z edge) and H-ty-1 (upper-z edge),
+        // matching computeVertexHeight's convention in the game engine.
         if (this.state.activeLayer === 'height') {
           const W = this.state.width;
+          const H = this.state.height;
           const h = (
-            (this.state.vertexHeights[ty       * (W + 1) + tx]     ?? 0) +
-            (this.state.vertexHeights[ty       * (W + 1) + tx + 1] ?? 0) +
-            (this.state.vertexHeights[(ty + 1) * (W + 1) + tx]     ?? 0) +
-            (this.state.vertexHeights[(ty + 1) * (W + 1) + tx + 1] ?? 0)
+            (this.state.vertexHeights[(H - ty)     * (W + 1) + tx]     ?? 0) +
+            (this.state.vertexHeights[(H - ty)     * (W + 1) + tx + 1] ?? 0) +
+            (this.state.vertexHeights[(H - ty - 1) * (W + 1) + tx]     ?? 0) +
+            (this.state.vertexHeights[(H - ty - 1) * (W + 1) + tx + 1] ?? 0)
           ) / 4;
           color = blendColor(tile.groundColor, h);
         }
