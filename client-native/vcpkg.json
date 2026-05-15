@@ -1,0 +1,19 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "osrs-prototype-client",
+  "version-string": "0.1.0",
+  "description": "Native OpenGL client for the OSRS-inspired MMO prototype",
+  "dependencies": [
+    "glfw3",
+    {
+      "name": "glad",
+      "default-features": false,
+      "features": ["gl-api-46"]
+    },
+    "glm",
+    {
+      "name": "imgui",
+      "features": ["glfw-binding", "opengl3-binding", "docking-experimental"]
+    }
+  ]
+}

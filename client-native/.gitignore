@@ -1,0 +1,14 @@
+build/
+out/
+.vs/
+.vscode/
+CMakeCache.txt
+CMakeFiles/
+CMakeUserPresets.json
+vcpkg_installed/
+*.user
+*.suo
+*.sdf
+*.opensdf
+*.sln
+!*.natvis
