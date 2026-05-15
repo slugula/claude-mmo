@@ -12,13 +12,16 @@ full migration plan.
 1. **Visual Studio 2022** with the "Desktop development with C++" workload
    (or the standalone Build Tools for VS 2022).
 2. **CMake ≥ 3.25** — bundled with VS 2022, or install separately.
-3. **vcpkg** — clone and bootstrap once:
+3. **vcpkg** — one-time setup via the helper script:
+   ```powershell
+   .\scripts\install-vcpkg.ps1
    ```
-   git clone https://github.com/microsoft/vcpkg C:\vcpkg
-   C:\vcpkg\bootstrap-vcpkg.bat
-   setx VCPKG_ROOT C:\vcpkg
-   ```
-   Open a new shell after `setx` so `VCPKG_ROOT` is in the environment.
+   Defaults to `%USERPROFILE%\vcpkg`. Pass `-InstallDir <path>` to override.
+   The script clones vcpkg, bootstraps it, and sets `VCPKG_ROOT` permanently
+   for your user account.
+
+   **After the script finishes, open a new PowerShell window** so `VCPKG_ROOT`
+   is visible to `cmake`.
 
 ## Configure & build
 

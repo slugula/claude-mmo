@@ -11,8 +11,8 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 # vcpkg-supplied dependencies
 find_package(glfw3 CONFIG REQUIRED)
-find_package(glad CONFIG REQUIRED)
-find_package(glm  CONFIG REQUIRED)
+find_package(glad  CONFIG REQUIRED)
+find_package(glm   CONFIG REQUIRED)
 find_package(imgui CONFIG REQUIRED)
 
 # ---- Main executable --------------------------------------------------------
@@ -21,8 +21,13 @@ add_executable(client-native
   src/main.cpp
   src/app/App.cpp
   src/app/Window.cpp
+  src/camera/SimpleCamera.cpp
   src/render/GlDebug.cpp
+  src/render/Mesh.cpp
   src/render/MsaaFramebuffer.cpp
+  src/render/Shader.cpp
+  src/world/MapGenerator.cpp
+  src/world/TerrainBuilder.cpp
 )
 
 target_include_directories(client-native PRIVATE src)
@@ -34,7 +39,6 @@ target_link_libraries(client-native PRIVATE
   imgui::imgui
 )
 
-# Use the Win32 subsystem on Release for no debug console; keep console on Debug
 if (MSVC)
   target_compile_options(client-native PRIVATE
     /W4 /permissive- /Zc:preprocessor
@@ -45,7 +49,10 @@ if (MSVC)
   )
 endif()
 
-# ---- Copy shaders/assets next to the exe -----------------------------------
+# ---- Copy shaders next to the exe -----------------------------------------
+#
+# Map files are NOT copied: the world is generated procedurally in-process
+# (see src/world/MapGenerator.cpp). Map I/O is deferred until after Phase 11.
 
 add_custom_command(TARGET client-native POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:client-native>/shaders
@@ -53,12 +60,4 @@ add_custom_command(TARGET client-native POST_BUILD
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders
     $<TARGET_FILE_DIR:client-native>/shaders
   COMMENT "Copying shaders to build output"
-)
-
-add_custom_command(TARGET client-native POST_BUILD
-  COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:client-native>/assets
-  COMMAND ${CMAKE_COMMAND} -E copy_directory
-    ${CMAKE_CURRENT_SOURCE_DIR}/assets
-    $<TARGET_FILE_DIR:client-native>/assets
-  COMMENT "Copying assets to build output"
 )

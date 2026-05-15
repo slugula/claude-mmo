@@ -3,9 +3,8 @@
   "cmakeMinimumRequired": { "major": 3, "minor": 25, "patch": 0 },
   "configurePresets": [
     {
-      "name": "windows",
-      "displayName": "Windows (Visual Studio 2022, x64)",
-      "generator": "Visual Studio 17 2022",
+      "name": "windows-base",
+      "hidden": true,
       "architecture": "x64",
       "binaryDir": "${sourceDir}/build",
       "cacheVariables": {
@@ -17,6 +16,18 @@
         "lhs": "${hostSystemName}",
         "rhs": "Windows"
       }
+    },
+    {
+      "name": "windows",
+      "displayName": "Windows (Visual Studio 2026, x64)",
+      "inherits": "windows-base",
+      "generator": "Visual Studio 18 2026"
+    },
+    {
+      "name": "windows-vs2022",
+      "displayName": "Windows (Visual Studio 2022, x64)",
+      "inherits": "windows-base",
+      "generator": "Visual Studio 17 2022"
     }
   ],
   "buildPresets": [
@@ -30,6 +41,18 @@
       "name": "windows-release",
       "displayName": "Windows Release",
       "configurePreset": "windows",
+      "configuration": "Release"
+    },
+    {
+      "name": "windows-vs2022-debug",
+      "displayName": "Windows VS 2022 Debug",
+      "configurePreset": "windows-vs2022",
+      "configuration": "Debug"
+    },
+    {
+      "name": "windows-vs2022-release",
+      "displayName": "Windows VS 2022 Release",
+      "configurePreset": "windows-vs2022",
       "configuration": "Release"
     }
   ]
