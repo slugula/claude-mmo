@@ -23,6 +23,10 @@ void drawSkillsPanel    (const shared::PlayerState& p);
 // to the server. Pass nullptr for a strictly read-only render.
 void drawInventoryPanel (const shared::PlayerState& p, net::NetworkClient* net);
 void drawEquipmentPanel (const shared::PlayerState& p, net::NetworkClient* net);
+// Optional bank panel. `open` is owned by the caller — pass &someBool from
+// App; the panel will set it to false on close. Returns nothing.
+void drawBankPanel      (const shared::PlayerState& p, net::NetworkClient* net,
+                         bool* open);
 
 // Rolling chat log. Append system messages via appendSystem(); call
 // observePlayerChat() once per frame with the local player + a map of remote

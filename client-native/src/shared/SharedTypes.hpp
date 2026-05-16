@@ -97,6 +97,7 @@ struct PlayerState {
   bool                                         dying          = false;
   // Phase 8 — fields needed by the UI panels.
   std::vector<std::optional<ItemStack>>        inventory;
+  std::vector<std::optional<ItemStack>>        bank;
   std::unordered_map<std::string, ItemStack>   equipped;
   std::unordered_map<std::string, SkillState>  skills;
   std::string                                  chatMessage;

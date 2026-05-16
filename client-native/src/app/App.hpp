@@ -87,6 +87,7 @@ private:
   ui::ChatLog                              chatLog_;
   ui::WorldOverlays                        overlays_;
   bool                                     loginAnnounced_ = false;
+  bool                                     bankOpen_       = false;
   std::chrono::steady_clock::time_point    lastTickTime_{};
   int                                      currentTick_       = 0;
   char                                     loginUser_[64]     = "test";

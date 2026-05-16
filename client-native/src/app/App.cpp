@@ -414,6 +414,7 @@ void App::renderFrame() {
     ui::drawSkillsPanel   (*currLocalPlayer_);
     ui::drawInventoryPanel(*currLocalPlayer_, &network_);
     ui::drawEquipmentPanel(*currLocalPlayer_, &network_);
+    ui::drawBankPanel     (*currLocalPlayer_, &network_, &bankOpen_);
     chatLog_.draw(&network_);
 
     overlays_.drawWithHeight(
@@ -529,6 +530,10 @@ void App::renderFrame() {
       ImGui::TextWrapped("Error: %s", network_.lastError().c_str());
     }
     if (status == net::Connection::Connected) {
+      if (ImGui::Button(bankOpen_ ? "Close bank" : "Open bank")) {
+        bankOpen_ = !bankOpen_;
+        if (bankOpen_) network_.sendOpenBank();
+      }
       ImGui::Text("Player: %s  (tick %d)", network_.playerName().c_str(), currentTick_);
       if (currLocalPlayer_) {
         ImGui::Text("Tile: (%d, %d)  hp %d/%d",
@@ -614,6 +619,14 @@ void App::drawWorldContextMenu() {
   // ---- Always available --------------------------------------------------
   if (ImGui::Selectable("Walk here")) {
     network_.sendMoveTo(ctxMenuTileX_, ctxMenuTileY_);
+  }
+  // The world doesn't currently render bank chests (no obstacle type for
+  // them yet), so this lives at the bottom of every tile's menu as a
+  // placeholder. Once chests get a proper obstacle/decoration type we'll
+  // gate this on tile.obstacle == bank_chest.
+  if (ImGui::Selectable("Open bank")) {
+    network_.sendOpenBank();
+    bankOpen_ = true;
   }
   ImGui::EndPopup();
 }

@@ -261,6 +261,79 @@ void drawEquipmentPanel(const shared::PlayerState& p, net::NetworkClient* netc) 
   ImGui::End();
 }
 
+// ---- Bank ------------------------------------------------------------------
+//
+// 8 columns x N rows. Right-click a populated slot for Withdraw 1 / Withdraw
+// all. Deposit-side actions live as top-row buttons. The bank's "open"
+// state is purely client-side — there's no server flag, so the App owns
+// the bool and the panel closes by writing through `open`.
+
+void drawBankPanel(const shared::PlayerState& p, net::NetworkClient* netc, bool* open) {
+  if (!open || !*open) return;
+  if (!ImGui::Begin("Bank", open)) { ImGui::End(); return; }
+
+  if (ImGui::Button("Deposit all"))   { if (netc) netc->sendDepositAll();  }
+  ImGui::SameLine();
+  if (ImGui::Button("Deposit worn"))  { if (netc) netc->sendDepositWorn(); }
+  ImGui::SameLine();
+  ImGui::TextDisabled("(%d slots)", static_cast<int>(p.bank.size()));
+  ImGui::Separator();
+
+  constexpr int   kCols = 8;
+  constexpr float kCell = 44.0f;
+  constexpr float kPad  = 3.0f;
+
+  // Inventory mini-strip for one-click deposit. 4 cols x 7 rows on the
+  // right side wouldn't fit alongside the bank grid in a small window, so
+  // we put the bank above and the inventory deposit list below.
+  ImGui::BeginChild("bank_grid", ImVec2(0, kCell * 6 + 12), true);
+  for (int i = 0; i < static_cast<int>(p.bank.size()); ++i) {
+    const auto& slot = p.bank[i];
+    char idBuf[24];
+    std::snprintf(idBuf, sizeof(idBuf), "##bankslot_%d", i);
+    ImGui::PushID(i);
+    drawSlot(idBuf, slot, ImVec2(kCell, kCell));
+    if (slot && netc && ImGui::BeginPopupContextItem("bank_ctx")) {
+      ImGui::TextUnformatted(prettyItemId(slot->itemId).c_str());
+      ImGui::Separator();
+      if (ImGui::Selectable("Withdraw 1"))   netc->sendWithdrawItem(i, 1);
+      if (ImGui::Selectable("Withdraw all")) netc->sendWithdrawItem(i, slot->quantity);
+      ImGui::EndPopup();
+    }
+    if (slot && ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
+      ImGui::BeginTooltip();
+      ImGui::Text("%s  (%d)", prettyItemId(slot->itemId).c_str(), slot->quantity);
+      ImGui::EndTooltip();
+    }
+    ImGui::PopID();
+    if ((i + 1) % kCols != 0) ImGui::SameLine(0.0f, kPad);
+  }
+  ImGui::EndChild();
+
+  ImGui::Separator();
+  ImGui::TextUnformatted("Inventory  (right-click to Deposit)");
+  ImGui::BeginChild("bank_inv", ImVec2(0, kCell * 2 + 12), true);
+  for (int i = 0; i < static_cast<int>(p.inventory.size()); ++i) {
+    const auto& slot = p.inventory[i];
+    char idBuf[24];
+    std::snprintf(idBuf, sizeof(idBuf), "##binv_%d", i);
+    ImGui::PushID(i);
+    drawSlot(idBuf, slot, ImVec2(kCell, kCell));
+    if (slot && netc && ImGui::BeginPopupContextItem("binv_ctx")) {
+      ImGui::TextUnformatted(prettyItemId(slot->itemId).c_str());
+      ImGui::Separator();
+      if (ImGui::Selectable("Deposit 1"))   netc->sendDepositItem(i, 1);
+      if (ImGui::Selectable("Deposit all")) netc->sendDepositItem(i, slot->quantity);
+      ImGui::EndPopup();
+    }
+    ImGui::PopID();
+    if ((i + 1) % kCols != 0) ImGui::SameLine(0.0f, kPad);
+  }
+  ImGui::EndChild();
+
+  ImGui::End();
+}
+
 // ---- Chat log --------------------------------------------------------------
 
 void ChatLog::appendSystem(std::string line) {
