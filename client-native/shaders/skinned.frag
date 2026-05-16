@@ -11,6 +11,9 @@ uniform vec3  u_color;
 uniform vec3  u_lightDir;
 uniform vec3  u_paletteLevels;
 uniform float u_paletteEnabled;
+uniform float u_ambient;
+uniform float u_diffuse;
+uniform float u_lightingEnabled;
 
 vec3 rgb2hsl(vec3 c) {
     float maxC = max(max(c.r, c.g), c.b);
@@ -51,8 +54,8 @@ vec3 hsl2rgb(vec3 hsl) {
 void main() {
     vec3  N      = normalize(v_normal);
     float nDotL  = max(dot(N, -normalize(u_lightDir)), 0.0);
-    float lit    = 0.45 + 0.55 * nDotL;
-    vec3  rgb    = u_color * lit;
+    float lit    = clamp(u_ambient + u_diffuse * nDotL, 0.0, 1.0);
+    vec3  rgb    = mix(u_color, u_color * lit, u_lightingEnabled);
 
     vec3 hsl       = rgb2hsl(rgb);
     vec3 snapped   = floor(hsl * u_paletteLevels) / u_paletteLevels;

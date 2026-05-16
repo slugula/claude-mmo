@@ -24,13 +24,15 @@ public:
   Mesh(Mesh&&) noexcept;
   Mesh& operator=(Mesh&&) noexcept;
 
-  // Upload geometry to GPU. positions: 3 floats per vertex; colors: 4 floats.
+  // Upload geometry to GPU. positions: 3 floats per vertex; colors: 4 floats;
+  // normals (optional): 3 floats per vertex, bound to attribute location 2.
   // triangleIndices: uint32 triangle list (required).
   // lineIndices:     uint32 line list (optional; empty span = no wireframe).
   void upload(std::span<const float>    positions,
               std::span<const float>    colors,
               std::span<const uint32_t> triangleIndices,
-              std::span<const uint32_t> lineIndices = {});
+              std::span<const uint32_t> lineIndices = {},
+              std::span<const float>    normals     = {});
 
   void draw()      const;  // GL_TRIANGLES
   void drawLines() const;  // GL_LINES (no-op if upload had no line indices)
@@ -46,6 +48,7 @@ private:
   // Shared vertex buffers
   GLuint  vboPos_      = 0;
   GLuint  vboColor_    = 0;
+  GLuint  vboNormal_   = 0;
 
   // Triangle path
   GLuint  triVao_      = 0;

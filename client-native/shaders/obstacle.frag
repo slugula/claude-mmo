@@ -8,10 +8,13 @@
 in  vec3 v_normal;
 out vec4 fragColor;
 
-uniform vec3  u_color;          // base RGB color for this obstacle type
-uniform vec3  u_lightDir;       // unit vector from sun -> surface (i.e. light direction)
-uniform vec3  u_paletteLevels;  // shared with terrain shader
-uniform float u_paletteEnabled; // 0 = bypass quantize, 1 = quantize
+uniform vec3  u_color;            // base RGB color for this obstacle type
+uniform vec3  u_lightDir;         // unit vector from sun -> surface (i.e. light direction)
+uniform vec3  u_paletteLevels;    // shared with terrain shader
+uniform float u_paletteEnabled;   // 0 = bypass quantize, 1 = quantize
+uniform float u_ambient;          // 0..1
+uniform float u_diffuse;          // 0..1
+uniform float u_lightingEnabled;  // 0 = flat base color, 1 = lit
 
 // ---- HSL <-> RGB --------------------------------------------------------
 
@@ -56,8 +59,8 @@ vec3 hsl2rgb(vec3 hsl) {
 void main() {
     vec3  N      = normalize(v_normal);
     float nDotL  = max(dot(N, -normalize(u_lightDir)), 0.0);
-    float lit    = 0.45 + 0.55 * nDotL;          // 0.45 ambient + 0.55 directional
-    vec3  rgb    = u_color * lit;
+    float lit    = clamp(u_ambient + u_diffuse * nDotL, 0.0, 1.0);
+    vec3  rgb    = mix(u_color, u_color * lit, u_lightingEnabled);
 
     vec3 hsl       = rgb2hsl(rgb);
     vec3 snapped   = floor(hsl * u_paletteLevels) / u_paletteLevels;

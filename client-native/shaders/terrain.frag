@@ -1,26 +1,28 @@
 #version 460 core
 //
-// OSRS-style HSL palette quantization (Phase 7).
+// OSRS-style HSL palette quantization (Phase 7) + Phase 6 directional
+// lighting.
 //
-// Vertex colors come in (linear RGB, AO baked in), are Gouraud-interpolated
-// across each triangle by the rasterizer, then this fragment shader:
-//   1. converts the interpolated RGB to HSL,
-//   2. snaps each HSL channel to a discrete set of buckets,
-//   3. converts back to RGB.
+// Pipeline per fragment:
+//   1. start from the interpolated base color (neighbor-averaged ground hue)
+//   2. multiply by ambient + Lambert(N . -L) — Phase 6, gated by u_lightingEnabled
+//   3. HSL-quantize the lit color so banding follows the palette discipline
 //
 // The bucket counts are uniforms so you can tune the palette interactively.
-// A typical OSRS-feel default is ~16 hues, 8 saturations, 16 lightnesses,
-// but the slider goes much finer/coarser for experimentation.
-//
 // HSL quantization (rather than RGB) preserves hue identity when banding —
 // a grass patch stays clearly green at every lightness step, instead of
 // drifting through olive/yellow as it would in an RGB posterize.
 
 in  vec4 v_color;
+in  vec3 v_normal;
 out vec4 fragColor;
 
-uniform vec3  u_paletteLevels;   // (hue_levels, sat_levels, lum_levels)
-uniform float u_paletteEnabled;  // 0 = bypass, 1 = quantize
+uniform vec3  u_paletteLevels;     // (hue_levels, sat_levels, lum_levels)
+uniform float u_paletteEnabled;    // 0 = bypass quantize, 1 = quantize
+uniform vec3  u_lightDir;          // sun direction (from sun toward surface)
+uniform float u_ambient;           // 0..1, base brightness with no direct light
+uniform float u_diffuse;           // 0..1, contribution of N . -L
+uniform float u_lightingEnabled;   // 0 = unlit, 1 = lit
 
 // ---- HSL <-> RGB --------------------------------------------------------
 
@@ -65,12 +67,19 @@ vec3 hsl2rgb(vec3 hsl) {
 void main() {
     vec3 rgb = v_color.rgb;
 
+    // Phase 6 — Lambert directional lighting. u_lightDir points from the sun
+    // toward the world, so the surface-incident vector is -u_lightDir.
+    vec3  N     = normalize(v_normal);
+    float nDotL = max(dot(N, -normalize(u_lightDir)), 0.0);
+    float lit   = clamp(u_ambient + u_diffuse * nDotL, 0.0, 1.0);
+    vec3  litRgb = rgb * lit;
+    rgb = mix(rgb, litRgb, u_lightingEnabled);
+
     // Snap-then-restore via HSL gives banded but hue-stable colors.
     vec3 hsl       = rgb2hsl(rgb);
     vec3 snapped   = floor(hsl * u_paletteLevels) / u_paletteLevels;
     vec3 quantized = hsl2rgb(snapped);
 
-    // u_paletteEnabled is a linear mix so the toggle has zero branches in the
-    // shader and disabled state is exactly the raw interpolated color.
+    // u_paletteEnabled is a linear mix so the toggle has zero branches.
     fragColor = vec4(mix(rgb, quantized, u_paletteEnabled), v_color.a);
 }

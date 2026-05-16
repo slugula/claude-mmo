@@ -47,6 +47,7 @@ TerrainMeshData buildTerrainMesh(const shared::WorldMapFile& map) {
   const size_t vcount = static_cast<size_t>((W + 1)) * (H + 1);
   mesh.positions.resize(vcount * 3);
   mesh.colors.resize(vcount * 4);
+  mesh.normals.resize(vcount * 3);
   mesh.triangleIndices.reserve(static_cast<size_t>(W) * H * 6);
   mesh.lineIndices.reserve(
       (static_cast<size_t>(H + 1) * W + static_cast<size_t>(W + 1) * H) * 2);
@@ -82,6 +83,30 @@ TerrainMeshData buildTerrainMesh(const shared::WorldMapFile& map) {
       mesh.colors[v * 4 + 1] = g;
       mesh.colors[v * 4 + 2] = b;
       mesh.colors[v * 4 + 3] = 1.0f;
+
+      // ---- Normal via central difference on the height field ---------------
+      //
+      // World layout:  +X = east  (col increases), +Z = north (row decreases).
+      // Edge corners clamp the neighbor index so the boundary normals don't
+      // shoot off — a one-sided difference works fine at the edge.
+      const int colE = std::min(col + 1, W);
+      const int colW = std::max(col - 1, 0);
+      const int rowS = std::min(row + 1, H);   // larger row = smaller Z
+      const int rowN = std::max(row - 1, 0);
+      const float hE = computeCornerHeight(vh, W, H, colE, row);
+      const float hW = computeCornerHeight(vh, W, H, colW, row);
+      const float hN = computeCornerHeight(vh, W, H, col,  rowN);  // +Z
+      const float hS = computeCornerHeight(vh, W, H, col,  rowS);  // -Z
+      const float dx = (hE - hW) / static_cast<float>(std::max(colE - colW, 1));
+      const float dz = (hN - hS) / static_cast<float>(std::max(rowS - rowN, 1));
+      // n = normalize( cross( (1, dx, 0), (0, dz, 1) ) ) = normalize(-dx, 1, -dz)
+      float nx = -dx;
+      float ny =  1.0f;
+      float nz = -dz;
+      const float invLen = 1.0f / std::sqrt(nx*nx + ny*ny + nz*nz);
+      mesh.normals[v * 3 + 0] = nx * invLen;
+      mesh.normals[v * 3 + 1] = ny * invLen;
+      mesh.normals[v * 3 + 2] = nz * invLen;
     }
   }
 

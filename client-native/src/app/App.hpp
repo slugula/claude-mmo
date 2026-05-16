@@ -106,6 +106,14 @@ private:
   int                                      paletteHues_     = 64;
   int                                      paletteSats_     = 16;
   int                                      paletteLums_     = 48;
+  // Phase 6 — directional lighting. Sun is stored as yaw (0..360°, around
+  // world +Y) and pitch (0..90° below horizontal); converted to a unit
+  // light-travel-direction each frame.
+  bool                                     lightingEnabled_ = true;
+  float                                    sunYawDeg_       = 200.0f;
+  float                                    sunPitchDeg_     = 58.0f;
+  float                                    ambient_         = 0.45f;
+  float                                    diffuse_         = 0.55f;
   bool                                     imguiInited_     = false;
 };
 

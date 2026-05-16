@@ -34,6 +34,9 @@ namespace world {
 struct TerrainMeshData {
   std::vector<float>    positions;       // (W+1)*(H+1) * 3 floats
   std::vector<float>    colors;          // (W+1)*(H+1) * 4 floats (RGBA)
+  // Per-corner unit normal computed via central-difference of the vertex
+  // height field — used by the Phase 6 lit terrain shader. (W+1)*(H+1) * 3.
+  std::vector<float>    normals;
   std::vector<uint32_t> triangleIndices; // W*H*6 indices (2 triangles per tile)
   std::vector<uint32_t> lineIndices;     // ((H+1)*W + (W+1)*H) * 2 indices
   int                   width  = 0;

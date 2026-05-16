@@ -44,11 +44,22 @@ constexpr const char* kSkinnedVertPath   = "shaders/skinned.vert";
 constexpr const char* kSkinnedFragPath   = "shaders/skinned.frag";
 constexpr const char* kPlayerModelPath   = "assets/models/player.glb";
 
-// Hardcoded sun direction for obstacle Lambert until Phase 6 swaps in proper
-// directional lighting + shadow mapping.
-constexpr glm::vec3 kSunDirection{-0.45f, -0.85f, -0.30f};
 constexpr glm::vec3 kPlayerColor  { 0.62f, 0.45f, 0.30f};  // skin tone, modulated by Lambert
 constexpr float     kPlayerScale  = 1.0f;
+
+// Convert sun (yaw, pitch) in degrees to a unit "light travel" vector
+// (sun-toward-ground). yaw is around +Y measured from +Z toward +X; pitch
+// is the downward tilt in degrees (0 = at horizon, 90 = straight down).
+glm::vec3 sunDirectionFromYawPitch(float yawDeg, float pitchDeg) {
+  const float yaw   = glm::radians(yawDeg);
+  const float pitch = glm::radians(pitchDeg);
+  const float c = std::cos(pitch);
+  return {
+    std::sin(yaw) * c,
+    -std::sin(pitch),
+    std::cos(yaw) * c,
+  };
+}
 
 // Avg of 4 corner heights at the integer tile (tx, ty).
 float tileWorldY(const shared::WorldMapFile& map, int tx, int ty) {
@@ -168,7 +179,8 @@ void App::generateAndBuildTerrain() {
   map_ = world::generateMap(kMapWidth, kMapHeight, mapSeed_, noiseFreq_, noiseAmp_);
   const auto data = world::buildTerrainMesh(map_);
   terrainMesh_.upload(data.positions, data.colors,
-                      data.triangleIndices, data.lineIndices);
+                      data.triangleIndices, data.lineIndices,
+                      data.normals);
   terrainTileW_   = data.width;
   terrainTileH_   = data.height;
   terrainIndexCt_ = static_cast<int>(data.triangleIndices.size());
@@ -271,24 +283,33 @@ void App::renderFrame() {
   glClearColor(0.45f, 0.65f, 0.85f, 1.0f);
   glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
+  const glm::vec3 sunDir = sunDirectionFromYawPitch(sunYawDeg_, sunPitchDeg_);
+
   terrainShader_.use();
   terrainShader_.setMat4 ("u_viewProj", viewProj);
   terrainShader_.setVec3 ("u_paletteLevels",
                           glm::vec3(static_cast<float>(paletteHues_),
                                     static_cast<float>(paletteSats_),
                                     static_cast<float>(paletteLums_)));
-  terrainShader_.setFloat("u_paletteEnabled", palette_ ? 1.0f : 0.0f);
+  terrainShader_.setFloat("u_paletteEnabled",  palette_ ? 1.0f : 0.0f);
+  terrainShader_.setVec3 ("u_lightDir",        sunDir);
+  terrainShader_.setFloat("u_ambient",         ambient_);
+  terrainShader_.setFloat("u_diffuse",         diffuse_);
+  terrainShader_.setFloat("u_lightingEnabled", lightingEnabled_ ? 1.0f : 0.0f);
   terrainMesh_.draw();
 
   // ---- Obstacles (instanced) -------------------------------------------------
   obstacleShader_.use();
   obstacleShader_.setMat4 ("u_viewProj",       viewProj);
-  obstacleShader_.setVec3 ("u_lightDir",       kSunDirection);
+  obstacleShader_.setVec3 ("u_lightDir",       sunDir);
   obstacleShader_.setVec3 ("u_paletteLevels",
                            glm::vec3(static_cast<float>(paletteHues_),
                                      static_cast<float>(paletteSats_),
                                      static_cast<float>(paletteLums_)));
-  obstacleShader_.setFloat("u_paletteEnabled", palette_ ? 1.0f : 0.0f);
+  obstacleShader_.setFloat("u_paletteEnabled",  palette_ ? 1.0f : 0.0f);
+  obstacleShader_.setFloat("u_ambient",         ambient_);
+  obstacleShader_.setFloat("u_diffuse",         diffuse_);
+  obstacleShader_.setFloat("u_lightingEnabled", lightingEnabled_ ? 1.0f : 0.0f);
   obstacles_.render(obstacleShader_);
 
   // ---- NPCs + dropped items (Phase 5d) ---------------------------------------
@@ -392,6 +413,22 @@ void App::renderFrame() {
     ImGui::Text("Eye:  %.1f %.1f %.1f  %s", eye.x, eye.y, eye.z,
                 camera_.isDragging() ? "(rotating)" : "");
     ImGui::TextUnformatted("Middle-drag: rotate, wheel: zoom, arrows: rotate");
+
+    ImGui::Separator();
+    ImGui::TextUnformatted("Lighting (Phase 6)");
+    ImGui::Checkbox("Directional lighting", &lightingEnabled_);
+    ImGui::BeginDisabled(!lightingEnabled_);
+    ImGui::SliderFloat("Sun yaw (deg)",   &sunYawDeg_,   0.0f, 360.0f, "%.0f");
+    ImGui::SliderFloat("Sun pitch (deg)", &sunPitchDeg_, 0.0f,  90.0f, "%.0f");
+    ImGui::SliderFloat("Ambient",         &ambient_,     0.0f,   1.0f, "%.2f");
+    ImGui::SliderFloat("Diffuse",         &diffuse_,     0.0f,   1.5f, "%.2f");
+    if (ImGui::SmallButton("Defaults")) {
+      sunYawDeg_   = 200.0f;
+      sunPitchDeg_ = 58.0f;
+      ambient_     = 0.45f;
+      diffuse_     = 0.55f;
+    }
+    ImGui::EndDisabled();
 
     ImGui::Separator();
     ImGui::TextUnformatted("HSL palette (Phase 7)");
@@ -543,15 +580,19 @@ void App::renderPlayer(const glm::mat4& viewProj, float dt) {
   modelMatrix = glm::rotate(modelMatrix, yaw, glm::vec3(0.0f, 1.0f, 0.0f));
   modelMatrix = glm::scale(modelMatrix, glm::vec3(kPlayerScale));
 
+  const glm::vec3 sunDir = sunDirectionFromYawPitch(sunYawDeg_, sunPitchDeg_);
   skinnedShader_.use();
-  skinnedShader_.setMat4 ("u_viewProj",       viewProj);
-  skinnedShader_.setVec3 ("u_lightDir",       kSunDirection);
+  skinnedShader_.setMat4 ("u_viewProj",        viewProj);
+  skinnedShader_.setVec3 ("u_lightDir",        sunDir);
   skinnedShader_.setVec3 ("u_paletteLevels",
                           glm::vec3(static_cast<float>(paletteHues_),
                                     static_cast<float>(paletteSats_),
                                     static_cast<float>(paletteLums_)));
-  skinnedShader_.setFloat("u_paletteEnabled", palette_ ? 1.0f : 0.0f);
-  skinnedShader_.setVec3 ("u_color",          kPlayerColor);
+  skinnedShader_.setFloat("u_paletteEnabled",  palette_ ? 1.0f : 0.0f);
+  skinnedShader_.setFloat("u_ambient",         ambient_);
+  skinnedShader_.setFloat("u_diffuse",         diffuse_);
+  skinnedShader_.setFloat("u_lightingEnabled", lightingEnabled_ ? 1.0f : 0.0f);
+  skinnedShader_.setVec3 ("u_color",           kPlayerColor);
   playerModel_.render(skinnedShader_, modelMatrix);
 }
 
