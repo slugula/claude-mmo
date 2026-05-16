@@ -281,16 +281,19 @@ void App::renderFrame() {
   }
 
   // ---- Hover tile outline (yellow) ------------------------------------------
+  // glLineWidth() with values > 1.0 is not guaranteed in GL 4.6 Core and
+  // NVIDIA reports it as GL_INVALID_VALUE ("operation not valid from a
+  // preview context"). We stick with the default 1.0 line width; if a
+  // thicker outline is needed later we'll expand to a screen-space quad
+  // strip in a geometry shader.
   if (hoveredTile_.hit) {
     wireframeShader_.use();
     wireframeShader_.setMat4("u_viewProj", viewProj);
     wireframeShader_.setVec4("u_color",    glm::vec4(1.0f, 0.85f, 0.10f, 1.0f));
     glDepthMask(GL_FALSE);
-    glLineWidth(2.0f);
     glBindVertexArray(hoverVao_);
     glDrawArrays(GL_LINE_LOOP, 0, 4);
     glBindVertexArray(0);
-    glLineWidth(1.0f);
     glDepthMask(GL_TRUE);
   }
 
