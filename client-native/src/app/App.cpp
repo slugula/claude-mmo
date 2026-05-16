@@ -767,8 +767,17 @@ void App::renderPlayer(const glm::mat4& viewProj, float dt) {
     yWorld = std::lerp(prevY, yWorld, alpha);
   }
 
-  // Animation clip & timing
-  const char* desired = clipForPlayer(&*currLocalPlayer_);
+  // Animation clip & timing. Phase 5e — while a one-shot deadline is in
+  // the future, override the movement-driven clip with the attack/chop
+  // animation. Falls back through clipForPlayer once the deadline lapses.
+  const char* desired = nullptr;
+  const auto  now = std::chrono::steady_clock::now();
+  if (!oneShotClip_.empty() && now < oneShotEndsAt_) {
+    desired = oneShotClip_.c_str();
+  } else {
+    if (!oneShotClip_.empty()) oneShotClip_.clear();
+    desired = clipForPlayer(&*currLocalPlayer_);
+  }
   if (playerModel_.clipName() != desired) {
     playerModel_.setClip(desired);
   }
@@ -865,6 +874,22 @@ void App::processNetworkMessages() {
         prevLocalPlayer_ = currLocalPlayer_;
         currLocalPlayer_ = it->second;
         lastTickTime_    = std::chrono::steady_clock::now();
+        // Phase 5e — per-tick one-shot animation triggers. We only react
+        // when the server-authoritative tick stamp moves forward, so
+        // late state arrivals or rewinds can't double-fire the clip.
+        const auto& cp = *currLocalPlayer_;
+        if (cp.lastAttackTick > seenAttackTick_) {
+          seenAttackTick_ = cp.lastAttackTick;
+          oneShotClip_    = "Sword_Attack";
+          oneShotEndsAt_  = lastTickTime_ + std::chrono::milliseconds(600);
+        }
+        if (cp.lastChopTick > seenChopTick_) {
+          seenChopTick_   = cp.lastChopTick;
+          oneShotClip_    = "Chop";  // SkinnedMesh falls back to current
+                                      // clip when the name isn't found, so
+                                      // missing asset isn't fatal.
+          oneShotEndsAt_  = lastTickTime_ + std::chrono::milliseconds(600);
+        }
         if (firstState) {
           if (!loginAnnounced_) {
             chatLog_.appendSystem("Welcome to Project Reverie.");

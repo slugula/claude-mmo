@@ -97,6 +97,13 @@ private:
   bool                                     loginAnnounced_ = false;
   bool                                     bankOpen_       = false;
   net::Connection                          lastNetStatus_  = net::Connection::Disconnected;
+  // Phase 5e — one-shot player animations. While `oneShotEndsAt_` is in
+  // the future, clipForPlayer returns `oneShotClip_` regardless of the
+  // movement state. Triggered when lastAttackTick / lastChopTick rises.
+  int                                      seenAttackTick_ = -999;
+  int                                      seenChopTick_   = -999;
+  std::chrono::steady_clock::time_point    oneShotEndsAt_{};
+  std::string                              oneShotClip_;
   std::chrono::steady_clock::time_point    lastTickTime_{};
   int                                      currentTick_       = 0;
   char                                     loginUser_[64]     = "test";

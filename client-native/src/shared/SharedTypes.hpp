@@ -104,6 +104,10 @@ struct PlayerState {
   int                                          chatMessageTick = -999;
   int                                          lastHitTick     = -999;
   int                                          lastHitDamage   = 0;
+  // Tick stamps used by the client to detect per-tick action events; the
+  // value rises monotonically when the server validates an attack / chop.
+  int                                          lastAttackTick  = -999;
+  int                                          lastChopTick    = -999;
 };
 
 // Partial NPCState — enough to render at the right place + face.
