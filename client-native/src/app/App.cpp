@@ -67,8 +67,8 @@ std::filesystem::path resolveFromExe(const char* relative) {
   return std::filesystem::path(buf).parent_path() / relative;
 }
 
-// Returns the world position the camera should track. Phase 2 just sits the
-// look-at at the map's center; Phase 4 will swap in the player's position.
+// Returns the world position the camera should track. Falls back to the map
+// center when no player position is known yet.
 glm::vec3 followTargetForMap(int w, int h) {
   return { static_cast<float>(w) * 0.5f, 0.0f, static_cast<float>(h) * 0.5f };
 }
@@ -222,8 +222,18 @@ void App::renderFrame() {
   double cursorX = 0.0, cursorY = 0.0;
   glfwGetCursorPos(window_.handle(), &cursorX, &cursorY);
   camera_.onCursorPos(cursorX, cursorY);
-  camera_.update(dt, window_.handle(),
-                 followTargetForMap(terrainTileW_, terrainTileH_));
+  // Camera follows the local player when we have one, otherwise the map
+  // center. Y is the world elevation at that tile so the look-at doesn't
+  // sink below tall terrain.
+  glm::vec3 followTarget = followTargetForMap(terrainTileW_, terrainTileH_);
+  if (currLocalPlayer_) {
+    followTarget = {
+      static_cast<float>(currLocalPlayer_->tileX),
+      tileWorldY(map_, currLocalPlayer_->tileX, currLocalPlayer_->tileY),
+      static_cast<float>(currLocalPlayer_->tileY)
+    };
+  }
+  camera_.update(dt, window_.handle(), followTarget);
 
   const int   fbW    = window_.framebufferWidth();
   const int   fbH    = window_.framebufferHeight();
@@ -591,9 +601,24 @@ void App::processNetworkMessages() {
       currentTick_ = st.tick;
       auto it = st.players.find(network_.playerId());
       if (it != st.players.end()) {
+        const bool firstState = !currLocalPlayer_.has_value();
         prevLocalPlayer_ = currLocalPlayer_;
         currLocalPlayer_ = it->second;
         lastTickTime_    = std::chrono::steady_clock::now();
+        if (firstState) {
+          // Teleport the camera so the player is immediately visible — the
+          // server may have placed them well outside our 64x64 procedural
+          // map (server constants default PLAYER_START_{X,Y} to 128).
+          const glm::vec3 snapTo{
+            static_cast<float>(currLocalPlayer_->tileX),
+            tileWorldY(map_, currLocalPlayer_->tileX, currLocalPlayer_->tileY),
+            static_cast<float>(currLocalPlayer_->tileY)
+          };
+          camera_.snapTo(snapTo);
+          std::fprintf(stdout, "[App] first state: player at tile (%d, %d)  hp %d/%d\n",
+                       currLocalPlayer_->tileX, currLocalPlayer_->tileY,
+                       currLocalPlayer_->hp, currLocalPlayer_->maxHp);
+        }
       }
     }
   }
