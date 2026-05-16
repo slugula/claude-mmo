@@ -185,6 +185,9 @@ bool App::init() {
   glDisable(GL_CULL_FACE);
 
   initImGui();
+  if (!audio_.init()) {
+    std::fprintf(stderr, "[App] audio init failed — proceeding without sound\n");
+  }
   lastFrameTime_ = std::chrono::steady_clock::now();
   return true;
 }
@@ -514,6 +517,18 @@ void App::renderFrame() {
     ImGui::Text("Eye:  %.1f %.1f %.1f  %s", eye.x, eye.y, eye.z,
                 camera_.isDragging() ? "(rotating)" : "");
     ImGui::TextUnformatted("Middle-drag: rotate, wheel: zoom, arrows: rotate");
+
+    ImGui::Separator();
+    ImGui::TextUnformatted("Audio (Phase 9)");
+    {
+      float vol = audio_.masterVolume();
+      if (ImGui::SliderFloat("Master volume", &vol, 0.0f, 1.0f, "%.2f")) {
+        audio_.setMasterVolume(vol);
+      }
+      ImGui::SameLine();
+      if (ImGui::SmallButton("Test")) audio_.playHit();
+      ImGui::Text("Status: %s", audio_.isReady() ? "ready" : "unavailable");
+    }
 
     ImGui::Separator();
     ImGui::TextUnformatted("Lighting (Phase 6)");
@@ -882,6 +897,7 @@ void App::processNetworkMessages() {
           seenAttackTick_ = cp.lastAttackTick;
           oneShotClip_    = "Sword_Attack";
           oneShotEndsAt_  = lastTickTime_ + std::chrono::milliseconds(600);
+          audio_.playStrike();
         }
         if (cp.lastChopTick > seenChopTick_) {
           seenChopTick_   = cp.lastChopTick;
@@ -889,6 +905,34 @@ void App::processNetworkMessages() {
                                       // clip when the name isn't found, so
                                       // missing asset isn't fatal.
           oneShotEndsAt_  = lastTickTime_ + std::chrono::milliseconds(600);
+        }
+        // Hit splat / damage event: server bumps lastHitTick when something
+        // hits us.
+        if (cp.lastHitTick > seenHitTick_) {
+          seenHitTick_ = cp.lastHitTick;
+          if (cp.lastHitDamage > 0) audio_.playHit();
+        }
+        // Equip / unequip detection: diff the new equipped map against the
+        // last snapshot. New / changed entries -> equip; missing entries
+        // -> unequip. First state primes the snapshot silently.
+        if (!firstState) {
+          for (const auto& [slot, item] : cp.equipped) {
+            auto sit = seenEquipped_.find(slot);
+            if (sit == seenEquipped_.end() || sit->second != item.itemId) {
+              audio_.playEquip();
+              break;  // one sound per tick is plenty
+            }
+          }
+          for (const auto& [slot, _] : seenEquipped_) {
+            if (cp.equipped.find(slot) == cp.equipped.end()) {
+              audio_.playUnequip();
+              break;
+            }
+          }
+        }
+        seenEquipped_.clear();
+        for (const auto& [slot, item] : cp.equipped) {
+          seenEquipped_[slot] = item.itemId;
         }
         if (firstState) {
           if (!loginAnnounced_) {

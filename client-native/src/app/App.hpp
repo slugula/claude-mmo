@@ -1,6 +1,7 @@
 #pragma once
 
 #include "app/Window.hpp"
+#include "audio/AudioEngine.hpp"
 #include "camera/GameCamera.hpp"
 #include "input/Picker.hpp"
 #include "net/NetworkClient.hpp"
@@ -102,8 +103,14 @@ private:
   // movement state. Triggered when lastAttackTick / lastChopTick rises.
   int                                      seenAttackTick_ = -999;
   int                                      seenChopTick_   = -999;
+  int                                      seenHitTick_    = -999;
+  // Per-equip-slot snapshot for detecting equip/unequip events vs the
+  // previous PlayerState. Key = equip slot id, value = itemId; missing
+  // entries are unequipped.
+  std::unordered_map<std::string, std::string> seenEquipped_;
   std::chrono::steady_clock::time_point    oneShotEndsAt_{};
   std::string                              oneShotClip_;
+  audio::AudioEngine                       audio_;
   std::chrono::steady_clock::time_point    lastTickTime_{};
   int                                      currentTick_       = 0;
   char                                     loginUser_[64]     = "test";

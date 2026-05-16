@@ -19,7 +19,9 @@ find_package(imgui       CONFIG REQUIRED)
 
 # cgltf is a single-header library. The vcpkg port installs just the header
 # (no CMake config), so locate it directly and add as an include directory.
-find_path(CGLTF_INCLUDE_DIR cgltf.h REQUIRED)
+find_path(CGLTF_INCLUDE_DIR    cgltf.h     REQUIRED)
+# miniaudio ships the same way — header only.
+find_path(MINIAUDIO_INCLUDE_DIR miniaudio.h REQUIRED)
 
 # ---- Main executable --------------------------------------------------------
 
@@ -27,6 +29,7 @@ add_executable(client-native
   src/main.cpp
   src/app/App.cpp
   src/app/Window.cpp
+  src/audio/AudioEngine.cpp
   src/camera/GameCamera.cpp
   src/input/Picker.cpp
   src/net/NetworkClient.cpp
@@ -45,7 +48,11 @@ add_executable(client-native
   src/world/TerrainBuilder.cpp
 )
 
-target_include_directories(client-native PRIVATE src ${CGLTF_INCLUDE_DIR})
+target_include_directories(client-native PRIVATE
+  src
+  ${CGLTF_INCLUDE_DIR}
+  ${MINIAUDIO_INCLUDE_DIR}
+)
 
 target_link_libraries(client-native PRIVATE
   glfw
