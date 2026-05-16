@@ -52,6 +52,7 @@ private:
   void renderPlayer(const glm::mat4& viewProj, float dt);
   void processNetworkMessages();
   void drawWorldContextMenu();
+  void exportWorldMap();
   // Returns true if cursor world position should be sampled for a click
   // action (i.e. a real terrain tile, not an ImGui-owned area).
   bool drawLoginUi();
