@@ -98,6 +98,13 @@ struct DroppedItemState {
   int         tileY = 0;
 };
 
+// Minimal envelope used to peek the "type" field before re-parsing the body
+// as the matching message struct. Glaze can't auto-reflect function-local
+// types (no external linkage), so this lives at namespace scope.
+struct MessageHeader {
+  std::string type;
+};
+
 // Server -> client: init (sent once on connection)
 struct InitMessage {
   std::string                        type;            // "init"

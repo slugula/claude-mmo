@@ -562,8 +562,9 @@ void App::renderPlayer(const glm::mat4& viewProj) {
 void App::processNetworkMessages() {
   for (const auto& raw : network_.drainMessages()) {
     // Peek the "type" field first, then re-parse as the appropriate struct.
-    struct TypeOnly { std::string type; };
-    TypeOnly hdr;
+    // shared::MessageHeader lives at namespace scope so glaze's auto-reflection
+    // (which requires external linkage) can see it.
+    shared::MessageHeader hdr;
     constexpr glz::opts kPermissive{ .error_on_unknown_keys = false };
     if (glz::read<kPermissive>(hdr, raw)) continue;
 
