@@ -42,6 +42,8 @@ constexpr const char* kObstacleVertPath  = "shaders/obstacle.vert";
 constexpr const char* kObstacleFragPath  = "shaders/obstacle.frag";
 constexpr const char* kSkinnedVertPath   = "shaders/skinned.vert";
 constexpr const char* kSkinnedFragPath   = "shaders/skinned.frag";
+constexpr const char* kOutlineVertPath   = "shaders/outline.vert";
+constexpr const char* kOutlineFragPath   = "shaders/outline.frag";
 constexpr const char* kShadowInstVertPath= "shaders/shadow_instanced.vert";
 constexpr const char* kShadowFragPath    = "shaders/shadow.frag";
 constexpr const char* kPlayerModelPath   = "assets/models/player.glb";
@@ -112,26 +114,47 @@ bool App::init() {
   window_.onMouseButton = [this](int button, int action, int /*mods*/) {
     if (ImGui::GetIO().WantCaptureMouse) return;
     camera_.onMouseButton(button, action);
-    // Left-click dispatches the primary action for the hovered tile:
-    //   obstacle (tree/rock) -> chop/mine
-    //   NPC at tile -> attack (if attackable) or talk-to
-    //   dropped item at tile -> take
-    //   walkable empty tile -> move_to
-    //   non-walkable tile -> nothing (click feedback only)
+    // Left-click dispatches the primary action for the hovered tile.
+    // Priority: NPC > dropped item > obstacle > walk (NPCs and items are
+    // server-authoritative and always work; obstacles depend on map sync).
     if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_PRESS
         && hoveredTile_.hit
         && network_.status() == net::Connection::Connected) {
       const int tx = hoveredTile_.tileX;
       const int ty = hoveredTile_.tileY;
       bool dispatched = false;
-      // Check for obstacle (tree/rock)
+      // 1. Check for NPC at this tile (server-authoritative)
+      if (!dispatched) {
+        for (const auto& n : npcs_) {
+          if (n.tileX != tx || n.tileY != ty || n.dying) continue;
+          if (n.kind == "chicken") {
+            network_.sendAttackNpc(n.id);
+          } else {
+            network_.sendTalkTo(n.id);
+          }
+          dispatched = true;
+          clickFeedbackColor_ = 1;
+          break;
+        }
+      }
+      // 2. Check for dropped item at this tile (server-authoritative)
+      if (!dispatched) {
+        for (const auto& it : droppedItems_) {
+          if (it.tileX != tx || it.tileY != ty) continue;
+          network_.sendTakeItem(it.id);
+          dispatched = true;
+          clickFeedbackColor_ = 1;
+          break;
+        }
+      }
+      // 3. Check for obstacle (tree/rock/chest) on the local map
       if (!dispatched && ty >= 0 && ty < static_cast<int>(map_.tiles.size()) &&
           tx >= 0 && tx < static_cast<int>(map_.tiles[ty].size())) {
         const auto obs = map_.tiles[ty][tx].obstacle;
         if (obs == shared::ObstacleType::tree) {
           network_.sendChopTree(tx, ty);
           dispatched = true;
-          clickFeedbackColor_ = 1;  // red for interactable
+          clickFeedbackColor_ = 1;
         } else if (obs == shared::ObstacleType::rock) {
           network_.sendMineRock(tx, ty);
           dispatched = true;
@@ -143,32 +166,7 @@ bool App::init() {
           clickFeedbackColor_ = 1;
         }
       }
-      // Check for NPC at this tile
-      if (!dispatched) {
-        for (const auto& n : npcs_) {
-          if (n.tileX != tx || n.tileY != ty || n.dying) continue;
-          // Use NPC kind to determine action (chicken=attack, shopkeeper=talk)
-          if (n.kind == "chicken") {
-            network_.sendAttackNpc(n.id);
-          } else {
-            network_.sendTalkTo(n.id);
-          }
-          dispatched = true;
-          clickFeedbackColor_ = 1;
-          break;
-        }
-      }
-      // Check for dropped item at this tile
-      if (!dispatched) {
-        for (const auto& it : droppedItems_) {
-          if (it.tileX != tx || it.tileY != ty) continue;
-          network_.sendTakeItem(it.id);
-          dispatched = true;
-          clickFeedbackColor_ = 1;
-          break;
-        }
-      }
-      // Otherwise, walk to the tile (only if walkable)
+      // 4. Otherwise, walk to the tile (only if walkable)
       if (!dispatched) {
         if (ty >= 0 && ty < static_cast<int>(map_.tiles.size()) &&
             tx >= 0 && tx < static_cast<int>(map_.tiles[ty].size()) &&
@@ -222,6 +220,11 @@ bool App::init() {
   if (!skinnedShader_.fromFiles(resolveFromExe(kSkinnedVertPath),
                                 resolveFromExe(kSkinnedFragPath))) {
     std::fprintf(stderr, "[App] skinned shader load failed\n");
+    return false;
+  }
+  if (!outlineShader_.fromFiles(resolveFromExe(kOutlineVertPath),
+                                resolveFromExe(kOutlineFragPath))) {
+    std::fprintf(stderr, "[App] outline shader load failed\n");
     return false;
   }
   if (!shadowInstancedShader_.fromFiles(resolveFromExe(kShadowInstVertPath),
@@ -506,11 +509,6 @@ void App::renderFrame() {
   }
 
   // ---- Hover tile outline (yellow) ------------------------------------------
-  // glLineWidth() with values > 1.0 is not guaranteed in GL 4.6 Core and
-  // NVIDIA reports it as GL_INVALID_VALUE ("operation not valid from a
-  // preview context"). We stick with the default 1.0 line width; if a
-  // thicker outline is needed later we'll expand to a screen-space quad
-  // strip in a geometry shader.
   if (hoveredTile_.hit) {
     wireframeShader_.use();
     wireframeShader_.setMat4("u_viewProj", viewProj);
@@ -520,6 +518,56 @@ void App::renderFrame() {
     glDrawArrays(GL_LINE_LOOP, 0, 4);
     glBindVertexArray(0);
     glDepthMask(GL_TRUE);
+  }
+
+  // ---- Outline shader for hovered interactables (tree/rock/NPC) ----------
+  if (hoveredTile_.hit && network_.status() == net::Connection::Connected) {
+    const int htx = hoveredTile_.tileX;
+    const int hty = hoveredTile_.tileY;
+    bool isInteractable = false;
+    // Check NPCs at this tile
+    for (const auto& n : npcs_) {
+      if (n.tileX == htx && n.tileY == hty && !n.dying) { isInteractable = true; break; }
+    }
+    // Check dropped items
+    if (!isInteractable) {
+      for (const auto& it : droppedItems_) {
+        if (it.tileX == htx && it.tileY == hty) { isInteractable = true; break; }
+      }
+    }
+    // Check obstacles (tree/rock/chest)
+    bool hasObstacle = false;
+    if (!isInteractable && hty >= 0 && hty < static_cast<int>(map_.tiles.size()) &&
+        htx >= 0 && htx < static_cast<int>(map_.tiles[hty].size())) {
+      const auto obs = map_.tiles[hty][htx].obstacle;
+      if (obs == shared::ObstacleType::tree || obs == shared::ObstacleType::rock ||
+          obs == shared::ObstacleType::chest) {
+        isInteractable = true;
+        hasObstacle = true;
+      }
+    }
+    // Draw obstacle outline shell (cyan glow)
+    if (hasObstacle) {
+      outlineShader_.use();
+      outlineShader_.setMat4 ("u_viewProj",     viewProj);
+      outlineShader_.setFloat("u_outlineWidth", 0.04f);
+      outlineShader_.setVec4 ("u_outlineColor", glm::vec4(0.0f, 0.9f, 0.9f, 0.8f));
+      obstacles_.renderOutlineAt(outlineShader_, map_, htx, hty);
+    }
+    // For NPCs/items we draw a highlight square around the tile instead
+    // (their geometry is instanced from EntityRenderer — separate outline
+    // pass would require per-entity draw which we skip for now; the thicker
+    // cyan tile square is sufficient).
+    if (isInteractable && !hasObstacle) {
+      wireframeShader_.use();
+      wireframeShader_.setMat4("u_viewProj", viewProj);
+      wireframeShader_.setVec4("u_color",    glm::vec4(0.0f, 0.9f, 0.9f, 1.0f));
+      glDepthMask(GL_FALSE);
+      glBindVertexArray(hoverVao_);
+      glDrawArrays(GL_LINE_LOOP, 0, 4);
+      glBindVertexArray(0);
+      glDepthMask(GL_TRUE);
+    }
   }
 
   // ---- Resolve to single-sample + blit to window ----------------------------
@@ -1059,6 +1107,15 @@ void App::processNetworkMessages() {
 
       // Phase 8 — feed chat + hit-splat detectors before we move-from players.
       chatLog_.observePlayers(allPlayers_);
+      // System messages from the server (NPC dialogue, "I can't reach that", etc.)
+      {
+        auto mit = st.messages.find(network_.playerId());
+        if (mit != st.messages.end()) {
+          for (const auto& msg : mit->second) {
+            chatLog_.appendSystem(msg);
+          }
+        }
+      }
       overlays_.update(currentTick_, currLocalPlayer_, npcs_);
 
       auto it = st.players.find(network_.playerId());

@@ -43,6 +43,14 @@ public:
   // lighting uniforms are touched.
   void renderDepth(render::Shader& depthShader);
 
+  // Render an outline around a single obstacle at the given tile. Uses
+  // front-face culling + normal inflation for the "shell" outline effect.
+  // The caller must have bound `outlineShader` and set u_viewProj already.
+  // Returns false if the tile doesn't have a tree or rock.
+  bool renderOutlineAt(render::Shader& outlineShader,
+                       const shared::WorldMapFile& map,
+                       int tileX, int tileY);
+
   std::size_t treeCount() const { return treeCount_; }
   std::size_t rockCount() const { return rockCount_; }
 
@@ -71,6 +79,11 @@ private:
 
   GLuint treeInstanceVbo_ = 0;  // shared between trunk and canopy VAOs
   GLuint rockInstanceVbo_ = 0;
+  // Single-instance VBO for outline rendering of one obstacle at a time.
+  GLuint outlineInstanceVbo_ = 0;
+  Kit    outlineTrunk_;   // VAOs bound to outlineInstanceVbo_
+  Kit    outlineCanopy_;
+  Kit    outlineRock_;
 
   std::size_t treeCount_ = 0;
   std::size_t rockCount_ = 0;

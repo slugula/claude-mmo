@@ -62,6 +62,7 @@ private:
   render::Shader                           wireframeShader_;
   render::Shader                           obstacleShader_;
   render::Shader                           skinnedShader_;
+  render::Shader                           outlineShader_;
   render::Shader                           shadowInstancedShader_;
   render::ShadowMap                        shadowMap_;
   render::Mesh                             terrainMesh_;

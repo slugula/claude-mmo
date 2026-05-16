@@ -170,7 +170,8 @@ ObstacleSystem::~ObstacleSystem() {
 }
 
 void ObstacleSystem::destroy() {
-  for (Kit* k : {&trunk_, &canopy_, &rock_}) {
+  for (Kit* k : {&trunk_, &canopy_, &rock_,
+                 &outlineTrunk_, &outlineCanopy_, &outlineRock_}) {
     if (k->vao)          glDeleteVertexArrays(1, &k->vao);
     if (k->ebo)          glDeleteBuffers(1, &k->ebo);
     if (k->vboNormals)   glDeleteBuffers(1, &k->vboNormals);
@@ -179,7 +180,8 @@ void ObstacleSystem::destroy() {
   }
   if (treeInstanceVbo_) glDeleteBuffers(1, &treeInstanceVbo_);
   if (rockInstanceVbo_) glDeleteBuffers(1, &rockInstanceVbo_);
-  treeInstanceVbo_ = rockInstanceVbo_ = 0;
+  if (outlineInstanceVbo_) glDeleteBuffers(1, &outlineInstanceVbo_);
+  treeInstanceVbo_ = rockInstanceVbo_ = outlineInstanceVbo_ = 0;
   treeCount_ = rockCount_ = 0;
 }
 
@@ -253,6 +255,16 @@ void ObstacleSystem::initGL() {
   const Mesh rockMesh   = makeBox(0.28f, 0.18f, 0.24f);
   uploadKitMesh(rock_, rockMesh.positions, rockMesh.normals, rockMesh.indices, rockInstanceVbo_);
   rock_.color = glm::vec3(0.39f, 0.27f, 0.15f);  // medium brown
+
+  // ---- Outline single-instance resources ----------------------------------
+  // A separate instance VBO holding exactly 1 instance, used to draw outline
+  // shells for the hovered obstacle. Separate VAOs so they bind to this VBO.
+  glCreateBuffers(1, &outlineInstanceVbo_);
+  glNamedBufferStorage(outlineInstanceVbo_, sizeof(Instance), nullptr, GL_DYNAMIC_STORAGE_BIT);
+
+  uploadKitMesh(outlineTrunk_,  trunkMesh.positions,  trunkMesh.normals,  trunkMesh.indices,  outlineInstanceVbo_);
+  uploadKitMesh(outlineCanopy_, canopyMesh.positions, canopyMesh.normals, canopyMesh.indices, outlineInstanceVbo_);
+  uploadKitMesh(outlineRock_,   rockMesh.positions,   rockMesh.normals,   rockMesh.indices,   outlineInstanceVbo_);
 }
 
 void ObstacleSystem::rebuildFromMap(const shared::WorldMapFile& map) {
@@ -338,6 +350,44 @@ void ObstacleSystem::renderDepth(render::Shader& /*depthShader*/) {
                             nullptr, static_cast<GLsizei>(rockCount_));
   }
   glBindVertexArray(0);
+}
+
+bool ObstacleSystem::renderOutlineAt(render::Shader& /*outlineShader*/,
+                                     const shared::WorldMapFile& map,
+                                     int tileX, int tileY) {
+  if (tileY < 0 || tileY >= map.height || tileX < 0 || tileX >= map.width) return false;
+  const auto obs = map.tiles[tileY][tileX].obstacle;
+  if (obs != shared::ObstacleType::tree && obs != shared::ObstacleType::rock) return false;
+
+  const auto& vh = map.vertexHeights;
+  if (static_cast<int>(vh.size()) != (map.width + 1) * (map.height + 1)) return false;
+
+  const float cy = tileCenterY(vh, map.width, map.height, tileX, tileY);
+  Instance inst{ static_cast<float>(tileX), cy, static_cast<float>(tileY),
+                 hashRotation(tileX, tileY) };
+  glNamedBufferSubData(outlineInstanceVbo_, 0, sizeof(Instance), &inst);
+
+  // Front-face culling so only the back-shell (the inflated "rim") is visible.
+  glEnable(GL_CULL_FACE);
+  glCullFace(GL_FRONT);
+
+  if (obs == shared::ObstacleType::tree) {
+    glBindVertexArray(outlineTrunk_.vao);
+    glDrawElementsInstanced(GL_TRIANGLES, outlineTrunk_.indexCount,
+                            GL_UNSIGNED_INT, nullptr, 1);
+    glBindVertexArray(outlineCanopy_.vao);
+    glDrawElementsInstanced(GL_TRIANGLES, outlineCanopy_.indexCount,
+                            GL_UNSIGNED_INT, nullptr, 1);
+  } else {
+    glBindVertexArray(outlineRock_.vao);
+    glDrawElementsInstanced(GL_TRIANGLES, outlineRock_.indexCount,
+                            GL_UNSIGNED_INT, nullptr, 1);
+  }
+
+  glCullFace(GL_BACK);
+  glDisable(GL_CULL_FACE);
+  glBindVertexArray(0);
+  return true;
 }
 
 }  // namespace world

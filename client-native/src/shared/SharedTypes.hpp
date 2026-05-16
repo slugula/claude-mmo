@@ -154,6 +154,9 @@ struct StateMessage {
   std::unordered_map<std::string, PlayerState> players;
   std::vector<NPCState>                        npcs;
   std::vector<DroppedItemState>                droppedItems;
+  // Per-player system messages (keyed by playerId). Contains feedback like
+  // "Shopkeeper: Welcome..." or "I can't reach that." etc.
+  std::unordered_map<std::string, std::vector<std::string>> messages;
 };
 
 // Client -> server: actions queued by the player.
