@@ -21,7 +21,8 @@ add_executable(client-native
   src/main.cpp
   src/app/App.cpp
   src/app/Window.cpp
-  src/camera/SimpleCamera.cpp
+  src/camera/GameCamera.cpp
+  src/input/Picker.cpp
   src/render/GlDebug.cpp
   src/render/Mesh.cpp
   src/render/MsaaFramebuffer.cpp

@@ -37,8 +37,13 @@ public:
   // Set to false to request the loop exit.
   void requestClose();
 
-  // Callback fired when the framebuffer is resized. Invoked from pollEvents().
-  std::function<void(int width, int height)> onFramebufferResize;
+  // Callbacks fired from pollEvents().
+  std::function<void(int width, int height)>                  onFramebufferResize;
+  // Mouse button press / release. button = GLFW_MOUSE_BUTTON_*, action =
+  // GLFW_PRESS or GLFW_RELEASE, mods = GLFW_MOD_* bitfield.
+  std::function<void(int button, int action, int mods)>       onMouseButton;
+  // Scroll wheel — yoffset is the primary axis (positive = scroll up).
+  std::function<void(double xoffset, double yoffset)>         onScroll;
 
 private:
   GLFWwindow* window_   = nullptr;
@@ -47,6 +52,8 @@ private:
 
   static void framebufferSizeCallback(GLFWwindow* w, int width, int height);
   static void keyCallback(GLFWwindow* w, int key, int scancode, int action, int mods);
+  static void mouseButtonCallback(GLFWwindow* w, int button, int action, int mods);
+  static void scrollCallback(GLFWwindow* w, double xoffset, double yoffset);
 };
 
 }  // namespace app

@@ -52,6 +52,8 @@ bool Window::init(int width, int height, const std::string& title) {
   glfwSetWindowUserPointer(window_, this);
   glfwSetFramebufferSizeCallback(window_, &Window::framebufferSizeCallback);
   glfwSetKeyCallback(window_, &Window::keyCallback);
+  glfwSetMouseButtonCallback(window_, &Window::mouseButtonCallback);
+  glfwSetScrollCallback(window_, &Window::scrollCallback);
 
   glfwGetFramebufferSize(window_, &fbWidth_, &fbHeight_);
   glViewport(0, 0, fbWidth_, fbHeight_);
@@ -92,6 +94,16 @@ void Window::keyCallback(GLFWwindow* w, int key, int /*scancode*/, int action, i
   if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS) {
     glfwSetWindowShouldClose(w, GLFW_TRUE);
   }
+}
+
+void Window::mouseButtonCallback(GLFWwindow* w, int button, int action, int mods) {
+  auto* self = static_cast<Window*>(glfwGetWindowUserPointer(w));
+  if (self && self->onMouseButton) self->onMouseButton(button, action, mods);
+}
+
+void Window::scrollCallback(GLFWwindow* w, double xoffset, double yoffset) {
+  auto* self = static_cast<Window*>(glfwGetWindowUserPointer(w));
+  if (self && self->onScroll) self->onScroll(xoffset, yoffset);
 }
 
 }  // namespace app

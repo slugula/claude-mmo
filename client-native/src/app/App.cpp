@@ -33,18 +33,23 @@ constexpr const char* kTerrainFragPath   = "shaders/terrain.frag";
 constexpr const char* kWireframeVertPath = "shaders/wireframe.vert";
 constexpr const char* kWireframeFragPath = "shaders/wireframe.frag";
 
-// Resolve a path relative to the directory containing the .exe so the app
-// can be launched from anywhere, not just the build folder.
 std::filesystem::path resolveFromExe(const char* relative) {
   wchar_t buf[MAX_PATH] = {};
   const DWORD n = GetModuleFileNameW(nullptr, buf, MAX_PATH);
   if (n == 0 || n == MAX_PATH) return std::filesystem::path(relative);
   return std::filesystem::path(buf).parent_path() / relative;
 }
+
+// Returns the world position the camera should track. Phase 2 just sits the
+// look-at at the map's center; Phase 4 will swap in the player's position.
+glm::vec3 followTargetForMap(int w, int h) {
+  return { static_cast<float>(w) * 0.5f, 0.0f, static_cast<float>(h) * 0.5f };
+}
 }  // namespace
 
 App::~App() {
   if (imguiInited_) shutdownImGui();
+  destroyHoverMesh();
 }
 
 bool App::init() {
@@ -56,6 +61,17 @@ bool App::init() {
       window_.framebufferWidth(), window_.framebufferHeight(), kMsaaSamples);
 
   window_.onFramebufferResize = [this](int w, int h) { onResize(w, h); };
+  // ImGui's GLFW backend chains these — its handlers run first, then ours.
+  // We bail when ImGui claims the mouse so clicks on UI don't rotate the
+  // camera and scroll over a slider zooms it instead of the world.
+  window_.onMouseButton = [this](int button, int action, int /*mods*/) {
+    if (ImGui::GetIO().WantCaptureMouse) return;
+    camera_.onMouseButton(button, action);
+  };
+  window_.onScroll = [this](double /*xoffset*/, double yoffset) {
+    if (ImGui::GetIO().WantCaptureMouse) return;
+    camera_.onScroll(yoffset);
+  };
 
   if (!terrainShader_.fromFiles(resolveFromExe(kTerrainVertPath),
                                 resolveFromExe(kTerrainFragPath))) {
@@ -69,17 +85,14 @@ bool App::init() {
   }
 
   generateAndBuildTerrain();
+  initHoverMesh();
 
-  // Frame the camera on the map.
-  const float cx = static_cast<float>(terrainTileW_) * 0.5f;
-  const float cz = static_cast<float>(terrainTileH_) * 0.5f;
-  camera_.lookAt({ cx, 0.0f, cz });
-  camera_.setRadius(static_cast<float>(std::max(terrainTileW_, terrainTileH_)) * 0.9f);
-  camera_.setBeta(0.9f);  // ~51° pitch — close to the Babylon scene's default
+  // Snap the camera to the map center so the first frame isn't mid-lerp.
+  camera_.snapTo(followTargetForMap(terrainTileW_, terrainTileH_));
 
   glEnable(GL_DEPTH_TEST);
   glEnable(GL_MULTISAMPLE);
-  glDisable(GL_CULL_FACE);  // re-enable in a later phase once winding is verified
+  glDisable(GL_CULL_FACE);
 
   initImGui();
   lastFrameTime_ = std::chrono::steady_clock::now();
@@ -103,6 +116,7 @@ void App::generateAndBuildTerrain() {
   terrainTileW_   = data.width;
   terrainTileH_   = data.height;
   terrainIndexCt_ = static_cast<int>(data.triangleIndices.size());
+  hoveredTile_    = {};  // hover stale after regenerate
 
   std::fprintf(stdout, "[App] terrain mesh: %d x %d tiles, %zu verts, %zu tri-idx, %zu line-idx\n",
                data.width, data.height,
@@ -111,23 +125,83 @@ void App::generateAndBuildTerrain() {
                data.lineIndices.size());
 }
 
+void App::initHoverMesh() {
+  destroyHoverMesh();
+  glCreateVertexArrays(1, &hoverVao_);
+  glCreateBuffers(1, &hoverVbo_);
+  // Persistent dynamic storage — we'll rewrite the 4-vertex contents each
+  // frame via glNamedBufferSubData.
+  glNamedBufferStorage(hoverVbo_, sizeof(float) * 3 * 4, nullptr, GL_DYNAMIC_STORAGE_BIT);
+  glVertexArrayVertexBuffer(hoverVao_, 0, hoverVbo_, 0, sizeof(float) * 3);
+  glEnableVertexArrayAttrib(hoverVao_, 0);
+  glVertexArrayAttribFormat(hoverVao_, 0, 3, GL_FLOAT, GL_FALSE, 0);
+  glVertexArrayAttribBinding(hoverVao_, 0, 0);
+}
+
+void App::destroyHoverMesh() {
+  if (hoverVbo_) glDeleteBuffers(1, &hoverVbo_);
+  if (hoverVao_) glDeleteVertexArrays(1, &hoverVao_);
+  hoverVao_ = hoverVbo_ = 0;
+}
+
+void App::updateHoverMesh(int tx, int ty) {
+  // 4 corners of tile (tx, ty) at the current vertex heights.
+  // Babylon-convention layout: vertex (row, col) at world (col-0.5, h, H-row-0.5)
+  const int   W   = terrainTileW_;
+  const int   H   = terrainTileH_;
+  const auto& vh  = map_.vertexHeights;
+  if (W <= 0 || H <= 0 || vh.empty()) return;
+
+  const float hSW = vh[(H - ty)     * (W + 1) + tx]     * shared::kMaxTerrainH;
+  const float hSE = vh[(H - ty)     * (W + 1) + tx + 1] * shared::kMaxTerrainH;
+  const float hNW = vh[(H - ty - 1) * (W + 1) + tx]     * shared::kMaxTerrainH;
+  const float hNE = vh[(H - ty - 1) * (W + 1) + tx + 1] * shared::kMaxTerrainH;
+
+  // GL_LINE_LOOP visits the 4 vertices in order and closes the loop back to
+  // the start. Order SW→SE→NE→NW gives a clean rectangle outline.
+  const float verts[12] = {
+      tx - 0.5f, hSW, ty - 0.5f,
+      tx + 0.5f, hSE, ty - 0.5f,
+      tx + 0.5f, hNE, ty + 0.5f,
+      tx - 0.5f, hNW, ty + 0.5f,
+  };
+  glNamedBufferSubData(hoverVbo_, 0, sizeof(verts), verts);
+}
+
 void App::renderFrame() {
   const auto now = std::chrono::steady_clock::now();
   const float dt = std::chrono::duration<float>(now - lastFrameTime_).count();
   lastFrameTime_ = now;
 
-  camera_.update(dt);
+  // ---- Camera input plumbing ------------------------------------------------
+  // Cursor position is polled (GLFW has no scroll-equivalent state poll, so
+  // onScroll uses callbacks; but cursor pos is cheaper to poll than to wire).
+  double cursorX = 0.0, cursorY = 0.0;
+  glfwGetCursorPos(window_.handle(), &cursorX, &cursorY);
+  camera_.onCursorPos(cursorX, cursorY);
+  camera_.update(dt, window_.handle(),
+                 followTargetForMap(terrainTileW_, terrainTileH_));
 
-  const int fbW = window_.framebufferWidth();
-  const int fbH = window_.framebufferHeight();
+  const int   fbW    = window_.framebufferWidth();
+  const int   fbH    = window_.framebufferHeight();
   const float aspect = (fbH > 0) ? static_cast<float>(fbW) / static_cast<float>(fbH) : 1.0f;
+  const glm::mat4 viewProj = camera_.viewProjection(aspect);
+
+  // ---- Hover pick (skip if ImGui owns the mouse) ----------------------------
+  if (!ImGui::GetIO().WantCaptureMouse && fbW > 0 && fbH > 0) {
+    glm::vec3 rayOrigin, rayDir;
+    input::screenToRay(cursorX, cursorY, fbW, fbH, viewProj, &rayOrigin, &rayDir);
+    hoveredTile_ = input::pickTile(rayOrigin, rayDir, map_.vertexHeights,
+                                   terrainTileW_, terrainTileH_);
+  } else {
+    hoveredTile_.hit = false;
+  }
+  if (hoveredTile_.hit) updateHoverMesh(hoveredTile_.tileX, hoveredTile_.tileY);
 
   // ---- Main pass into MSAA framebuffer --------------------------------------
   msaa_->bind();
-  glClearColor(0.45f, 0.65f, 0.85f, 1.0f);  // sky blue
+  glClearColor(0.45f, 0.65f, 0.85f, 1.0f);
   glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
-  const glm::mat4 viewProj = camera_.viewProjection(aspect);
 
   terrainShader_.use();
   terrainShader_.setMat4 ("u_viewProj", viewProj);
@@ -138,20 +212,27 @@ void App::renderFrame() {
   terrainShader_.setFloat("u_paletteEnabled", palette_ ? 1.0f : 0.0f);
   terrainMesh_.draw();
 
-  // ---- Optional wireframe overlay -------------------------------------------
-  // Renders a dedicated GL_LINES index buffer containing only each tile's
-  // perimeter — no triangle diagonals — so the grid reads as a clean square
-  // grid over the filled terrain. The wireframe vertex shader applies a small
-  // clip-space depth bias so the lines beat the underlying terrain in the
-  // depth test (glPolygonOffset doesn't apply to GL_LINES primitives).
+  // ---- Wireframe grid overlay ------------------------------------------------
   if (wireframe_) {
     wireframeShader_.use();
     wireframeShader_.setMat4("u_viewProj", viewProj);
-    // Don't let wireframe lines write depth — combined with the clip-space
-    // bias in wireframe.vert this makes z-fighting against the terrain
-    // impossible, regardless of MSAA sample placement.
+    wireframeShader_.setVec4("u_color",    glm::vec4(1.0f, 1.0f, 1.0f, 1.0f));
     glDepthMask(GL_FALSE);
     terrainMesh_.drawLines();
+    glDepthMask(GL_TRUE);
+  }
+
+  // ---- Hover tile outline (yellow) ------------------------------------------
+  if (hoveredTile_.hit) {
+    wireframeShader_.use();
+    wireframeShader_.setMat4("u_viewProj", viewProj);
+    wireframeShader_.setVec4("u_color",    glm::vec4(1.0f, 0.85f, 0.10f, 1.0f));
+    glDepthMask(GL_FALSE);
+    glLineWidth(2.0f);
+    glBindVertexArray(hoverVao_);
+    glDrawArrays(GL_LINE_LOOP, 0, 4);
+    glBindVertexArray(0);
+    glLineWidth(1.0f);
     glDepthMask(GL_TRUE);
   }
 
@@ -164,7 +245,7 @@ void App::renderFrame() {
   ImGui_ImplGlfw_NewFrame();
   ImGui::NewFrame();
 
-  if (ImGui::Begin("Phase 1 - Terrain")) {
+  if (ImGui::Begin("Phase 2 - Terrain + Camera")) {
     ImGui::Text("GL %s", glGetString(GL_VERSION));
     ImGui::Text("Framebuffer: %d x %d", fbW, fbH);
     ImGui::Text("MSAA: %dx", msaa_->samples());
@@ -187,14 +268,28 @@ void App::renderFrame() {
     ImGui::Checkbox("Wireframe overlay", &wireframe_);
 
     ImGui::Separator();
+    ImGui::TextUnformatted("Camera");
+    if (hoveredTile_.hit) {
+      ImGui::Text("Hover: tile (%d, %d)  world (%.2f, %.2f, %.2f)",
+                  hoveredTile_.tileX, hoveredTile_.tileY,
+                  hoveredTile_.worldPos.x, hoveredTile_.worldPos.y, hoveredTile_.worldPos.z);
+    } else {
+      ImGui::TextUnformatted("Hover: (cursor off terrain)");
+    }
+    const glm::vec3 eye = camera_.cameraPosition();
+    ImGui::Text("Eye:  %.1f %.1f %.1f  %s", eye.x, eye.y, eye.z,
+                camera_.isDragging() ? "(rotating)" : "");
+    ImGui::TextUnformatted("Middle-drag: rotate, wheel: zoom, arrows: rotate");
+
+    ImGui::Separator();
     ImGui::TextUnformatted("HSL palette (Phase 7)");
     ImGui::Checkbox("Quantize", &palette_);
-    ImGui::BeginDisabled(!palette_);  // sliders are inert when quantize is off
+    ImGui::BeginDisabled(!palette_);
     ImGui::SliderInt("Hue levels",   &paletteHues_, 1, 64);
     ImGui::SliderInt("Sat levels",   &paletteSats_, 1, 32);
     ImGui::SliderInt("Lum levels",   &paletteLums_, 1, 64);
-    if (ImGui::SmallButton("Default (64/16/16)")) {
-      paletteHues_ = 64; paletteSats_ = 16; paletteLums_ = 16;
+    if (ImGui::SmallButton("Default (64/16/48)")) {
+      paletteHues_ = 64; paletteSats_ = 16; paletteLums_ = 48;
     }
     ImGui::SameLine();
     if (ImGui::SmallButton("Crunchy (8/4/6)")) {
@@ -205,15 +300,6 @@ void App::renderFrame() {
       paletteHues_ = 64; paletteSats_ = 16; paletteLums_ = 64;
     }
     ImGui::EndDisabled();
-
-    ImGui::Separator();
-    ImGui::TextWrapped("Greens-and-browns Perlin terrain. Tile colors picked "
-                       "from a 5x4 palette grid via two independent noise "
-                       "samples (moisture * shade variant). Vertex colors "
-                       "are neighbor-averaged, GPU-Gouraud across triangles, "
-                       "then snapped per-fragment to the HSL palette. No "
-                       "water / stone / mountains — Perlin handles height "
-                       "only.");
   }
   ImGui::End();
 
@@ -231,6 +317,8 @@ void App::initImGui() {
   ImGuiIO& io = ImGui::GetIO();
   io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
   ImGui::StyleColorsDark();
+  // install_callbacks=true chains GLFW callbacks: ImGui's handlers run first,
+  // then ours (which were registered in Window::init).
   ImGui_ImplGlfw_InitForOpenGL(window_.handle(), true);
   ImGui_ImplOpenGL3_Init("#version 460 core");
   imguiInited_ = true;
