@@ -84,10 +84,19 @@ private:
   std::unordered_map<std::string, shared::PlayerState> allPlayers_;
   std::vector<shared::NPCState>            npcs_;
   std::vector<shared::DroppedItemState>    droppedItems_;
+  // Per-id previous + current NPC snapshots for Phase 10 interpolation.
+  // Rebuilt every state tick; rendered with a lerp in renderFrame.
+  std::unordered_map<std::string, shared::NPCState> prevNpcs_;
+  std::unordered_map<std::string, shared::NPCState> currNpcs_;
+  // Smoothed player yaw — eases toward the facing-derived target each
+  // frame so 90-degree turns don't pop.
+  float                                    smoothedPlayerYaw_ = 0.0f;
+  bool                                     smoothedYawValid_  = false;
   ui::ChatLog                              chatLog_;
   ui::WorldOverlays                        overlays_;
   bool                                     loginAnnounced_ = false;
   bool                                     bankOpen_       = false;
+  net::Connection                          lastNetStatus_  = net::Connection::Disconnected;
   std::chrono::steady_clock::time_point    lastTickTime_{};
   int                                      currentTick_       = 0;
   char                                     loginUser_[64]     = "test";

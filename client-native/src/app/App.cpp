@@ -360,13 +360,65 @@ void App::renderFrame() {
   obstacleShader_.setFloat("u_lightingEnabled", lightingEnabled_ ? 1.0f : 0.0f);
   obstacles_.render(obstacleShader_);
 
-  // ---- NPCs + dropped items (Phase 5d) ---------------------------------------
-  // Reuses the obstacle shader (same uniforms already bound) and per-instance
-  // attribute layout. EntityRenderer sets u_color per draw kind internally.
+  // ---- Detect connection-status transitions for chat-log + state reset -----
+  {
+    const auto cur = network_.status();
+    if (cur != lastNetStatus_) {
+      if (cur == net::Connection::Disconnected || cur == net::Connection::Failed) {
+        chatLog_.appendSystem("Disconnected from server. Use the Connect panel to reconnect.");
+        currLocalPlayer_.reset();
+        prevLocalPlayer_.reset();
+        prevNpcs_.clear();
+        currNpcs_.clear();
+        npcs_.clear();
+        droppedItems_.clear();
+        entities_.setNpcInstances({});
+        entities_.setItemInstances({});
+        loginAnnounced_   = false;
+        smoothedYawValid_ = false;
+      }
+      lastNetStatus_ = cur;
+    }
+  }
+
+  // ---- Network drain BEFORE entity rendering --------------------------------
+  // We need fresh prev/curr NPC maps to produce smooth interpolation; with
+  // the previous "drain after render" order each tick boundary popped.
+  processNetworkMessages();
+
+  // ---- NPCs + dropped items (Phase 5d + Phase 10 interp) --------------------
+  // Reuses the obstacle shader (same uniforms already bound). Build a
+  // per-frame interpolated instance array from prev/curr state by id.
+  {
+    const auto    dtMs  = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastTickTime_).count();
+    const float   alpha = std::clamp(static_cast<float>(dtMs) /
+                                     static_cast<float>(shared::kTickDurationMs),
+                                     0.0f, 1.0f);
+    std::vector<world::EntityRenderer::Instance> insts;
+    insts.reserve(currNpcs_.size());
+    for (const auto& [id, curr] : currNpcs_) {
+      if (curr.dying) continue;
+      float fx = static_cast<float>(curr.tileX);
+      float fy = static_cast<float>(curr.tileY);
+      float targetYaw = 0.0f;
+      if (curr.facing == "north") targetYaw = 3.14159265f;
+      else if (curr.facing == "east") targetYaw = 1.57079632f;
+      else if (curr.facing == "west") targetYaw = -1.57079632f;
+      auto pit = prevNpcs_.find(id);
+      if (pit != prevNpcs_.end()) {
+        fx = std::lerp(static_cast<float>(pit->second.tileX), fx, alpha);
+        fy = std::lerp(static_cast<float>(pit->second.tileY), fy, alpha);
+      }
+      const float wy = tileWorldY(map_,
+                                  static_cast<int>(std::round(fx)),
+                                  static_cast<int>(std::round(fy)));
+      insts.push_back({ fx, wy, fy, targetYaw });
+    }
+    entities_.setNpcInstances(insts);
+  }
   entities_.render(obstacleShader_);
 
   // ---- Local player (Phase 5: skinned glTF) ----------------------------------
-  processNetworkMessages();
   renderPlayer(viewProj, dt);
 
   // ---- Wireframe grid overlay ------------------------------------------------
@@ -722,10 +774,23 @@ void App::renderPlayer(const glm::mat4& viewProj, float dt) {
   }
   playerModel_.update(dt);
 
-  // Build the entity's world transform: translate -> Y-yaw from facing -> scale.
-  const float yaw = facingToYaw(currLocalPlayer_->facing);
+  // Smooth-rotate toward the target yaw via shortest-arc lerp. Pure snap
+  // looks like a tank turret rotating instantaneously; a fast exponential
+  // ease (half-life ~80ms) reads as "the character pivoted" without
+  // visibly lagging server-authoritative facing.
+  const float targetYaw = facingToYaw(currLocalPlayer_->facing);
+  if (!smoothedYawValid_) {
+    smoothedPlayerYaw_ = targetYaw;
+    smoothedYawValid_  = true;
+  } else {
+    constexpr float kTwoPi = 6.28318531f;
+    float delta = std::fmod(targetYaw - smoothedPlayerYaw_ + kTwoPi + 3.14159265f,
+                            kTwoPi) - 3.14159265f;
+    const float k = 1.0f - std::exp(-dt / 0.08f);   // 80 ms half-life-ish
+    smoothedPlayerYaw_ += delta * k;
+  }
   glm::mat4 modelMatrix = glm::translate(glm::mat4(1.0f), glm::vec3(fx, yWorld, fy));
-  modelMatrix = glm::rotate(modelMatrix, yaw, glm::vec3(0.0f, 1.0f, 0.0f));
+  modelMatrix = glm::rotate(modelMatrix, smoothedPlayerYaw_, glm::vec3(0.0f, 1.0f, 0.0f));
   modelMatrix = glm::scale(modelMatrix, glm::vec3(kPlayerScale));
 
   const glm::vec3 sunDir = sunDirectionFromYawPitch(sunYawDeg_, sunPitchDeg_);
@@ -781,7 +846,13 @@ void App::processNetworkMessages() {
       npcs_         = std::move(st.npcs);
       droppedItems_ = std::move(st.droppedItems);
       allPlayers_   = st.players;
-      entities_.rebuildNpcs (npcs_,         map_);
+      // Snapshot rotation for NPC interpolation: previous becomes current,
+      // current becomes the just-received state.
+      prevNpcs_ = currNpcs_;
+      currNpcs_.clear();
+      currNpcs_.reserve(npcs_.size());
+      for (const auto& n : npcs_) currNpcs_.emplace(n.id, n);
+      // Items don't move per tick — snap them.
       entities_.rebuildItems(droppedItems_, map_);
 
       // Phase 8 — feed chat + hit-splat detectors before we move-from players.
@@ -800,6 +871,10 @@ void App::processNetworkMessages() {
             chatLog_.appendSystem(std::string("Logged in as ") + network_.playerName() + ".");
             loginAnnounced_ = true;
           }
+          // Reset interpolation/smoothing state — the camera and yaw snap
+          // to the new authoritative position instead of easing across
+          // the map.
+          smoothedYawValid_ = false;
           // Teleport the camera so the player is immediately visible — the
           // server may have placed them well outside our 64x64 procedural
           // map (server constants default PLAYER_START_{X,Y} to 128).

@@ -1,5 +1,6 @@
 #include "world/EntityRenderer.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -133,13 +134,8 @@ float facingToYaw(const std::string& facing) {
   return 0.0f;  // "south" or unknown -> rest
 }
 
-struct Instance {
-  float x, y, z;
-  float rotY;
-};
+using Instance = EntityRenderer::Instance;
 static_assert(sizeof(Instance) == 16, "Instance must be tightly packed");
-
-constexpr std::size_t kInstanceCap = 1024;  // generous upper bound for both kinds
 
 }  // namespace
 
@@ -271,6 +267,26 @@ void EntityRenderer::rebuildItems(const std::vector<shared::DroppedItemState>& i
                        static_cast<GLsizeiptr>(insts.size() * sizeof(Instance)),
                        insts.data());
   itemCount_ = insts.size();
+}
+
+void EntityRenderer::setNpcInstances(const std::vector<Instance>& insts) {
+  const std::size_t n = std::min(insts.size(), kInstanceCap);
+  if (n > 0) {
+    glNamedBufferSubData(npcInstanceVbo_, 0,
+                         static_cast<GLsizeiptr>(n * sizeof(Instance)),
+                         insts.data());
+  }
+  npcCount_ = n;
+}
+
+void EntityRenderer::setItemInstances(const std::vector<Instance>& insts) {
+  const std::size_t n = std::min(insts.size(), kInstanceCap);
+  if (n > 0) {
+    glNamedBufferSubData(itemInstanceVbo_, 0,
+                         static_cast<GLsizeiptr>(n * sizeof(Instance)),
+                         insts.data());
+  }
+  itemCount_ = n;
 }
 
 void EntityRenderer::render(render::Shader& shader) {

@@ -18,10 +18,17 @@ namespace world {
 // Per-NPC type differentiation (chicken vs shopkeeper geometry) and
 // per-item appearance can come later — for now they're flat-shaded by color.
 //
-// Movement is snapped per-tick (no interpolation between state snapshots);
-// Phase 10 polish will add smoothing when this becomes visible.
 class EntityRenderer {
 public:
+  // Per-instance attribute payload: world XYZ + Y-axis rotation. Public so
+  // callers (App) can build interpolated arrays directly.
+  struct Instance {
+    float x;
+    float y;
+    float z;
+    float rotY;
+  };
+
   EntityRenderer() = default;
   ~EntityRenderer();
 
@@ -31,13 +38,18 @@ public:
   // Allocates VAOs / VBOs / EBOs. Requires a current GL context.
   void initGL();
 
-  // Replace the per-instance buffer for NPCs from the latest state. Skips
-  // entries whose tile is outside the map bounds. Caller passes the current
-  // procedural map so we can sample tile elevations.
+  // Snap-on-tick variants: take NPC/item snapshots, look up tile heights,
+  // and upload integer-tile positions. Kept for back-compat / when no
+  // interpolation context is available.
   void rebuildNpcs (const std::vector<shared::NPCState>&         npcs,
                     const shared::WorldMapFile&                  map);
   void rebuildItems(const std::vector<shared::DroppedItemState>& items,
                     const shared::WorldMapFile&                  map);
+
+  // Direct upload of pre-built instance arrays — used by App when it has
+  // interpolated tween data between prev/curr state snapshots.
+  void setNpcInstances (const std::vector<Instance>& insts);
+  void setItemInstances(const std::vector<Instance>& insts);
 
   // One instanced draw per kind, in the order NPCs then items.
   // The caller has already set u_viewProj / u_lightDir / palette uniforms;
@@ -48,6 +60,9 @@ public:
   std::size_t itemCount() const { return itemCount_; }
 
 private:
+  // Maximum instances uploadable per kit (matches the cap in the .cpp).
+  static constexpr std::size_t kInstanceCap = 1024;
+
   struct Kit {
     GLuint    vao        = 0;
     GLuint    vboPos     = 0;
