@@ -3,6 +3,7 @@
 #include "app/Window.hpp"
 #include "camera/GameCamera.hpp"
 #include "input/Picker.hpp"
+#include "net/NetworkClient.hpp"
 #include "render/Mesh.hpp"
 #include "render/MsaaFramebuffer.hpp"
 #include "render/Shader.hpp"
@@ -14,6 +15,7 @@
 #include <chrono>
 #include <cstdint>
 #include <memory>
+#include <optional>
 
 namespace app {
 
@@ -41,6 +43,14 @@ private:
   void destroyHoverMesh();
   void updateHoverMesh(int tx, int ty);
 
+  void initPlayerMesh();
+  void destroyPlayerMesh();
+  void renderPlayer(const glm::mat4& viewProj);
+  void processNetworkMessages();
+  // Returns true if cursor world position should be sampled for a click
+  // action (i.e. a real terrain tile, not an ImGui-owned area).
+  bool drawLoginUi();
+
   Window                                   window_;
   std::unique_ptr<render::MsaaFramebuffer> msaa_;
   render::Shader                           terrainShader_;
@@ -55,6 +65,27 @@ private:
   // hovered tile.
   GLuint                                   hoverVao_     = 0;
   GLuint                                   hoverVbo_     = 0;
+
+  // Player placeholder — a small cylinder + sphere head rendered via the
+  // obstacle shader as a single instance. Phase 5 replaces with proper
+  // humanoid geometry and weapon-from-glTF.
+  GLuint                                   playerVao_         = 0;
+  GLuint                                   playerVboPos_      = 0;
+  GLuint                                   playerVboNrm_      = 0;
+  GLuint                                   playerEbo_         = 0;
+  GLuint                                   playerInstanceVbo_ = 0;
+  GLsizei                                  playerIdxCount_    = 0;
+
+  // Networking
+  net::NetworkClient                       network_;
+  std::optional<shared::PlayerState>       currLocalPlayer_;
+  std::optional<shared::PlayerState>       prevLocalPlayer_;
+  std::chrono::steady_clock::time_point    lastTickTime_{};
+  int                                      currentTick_       = 0;
+  char                                     loginUser_[64]     = "test";
+  char                                     loginPass_[64]     = "test1234";
+  char                                     loginHost_[64]     = "localhost";
+  int                                      loginPort_         = 8080;
 
   std::chrono::steady_clock::time_point    lastFrameTime_{};
   shared::WorldMapFile                     map_;

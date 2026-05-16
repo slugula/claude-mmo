@@ -1,6 +1,7 @@
 #include "app/App.hpp"
 
 #include "render/GlDebug.hpp"
+#include "shared/SharedTypesJson.hpp"
 #include "world/MapGenerator.hpp"
 #include "world/TerrainBuilder.hpp"
 
@@ -16,7 +17,10 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <cfloat>
+#include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
 
 namespace app {
@@ -38,6 +42,23 @@ constexpr const char* kObstacleFragPath  = "shaders/obstacle.frag";
 // Hardcoded sun direction for obstacle Lambert until Phase 6 swaps in proper
 // directional lighting + shadow mapping.
 constexpr glm::vec3 kSunDirection{-0.45f, -0.85f, -0.30f};
+constexpr glm::vec3 kPlayerColor  { 0.25f, 0.45f, 0.85f};  // blue placeholder
+constexpr float     kPlayerHeight = 0.85f;
+constexpr float     kPlayerRadius = 0.22f;
+
+// Avg of 4 corner heights at the integer tile (tx, ty).
+float tileWorldY(const shared::WorldMapFile& map, int tx, int ty) {
+  const int W = map.width;
+  const int H = map.height;
+  if (W <= 0 || H <= 0 || tx < 0 || ty < 0 || tx >= W || ty >= H) return 0.0f;
+  const auto& vh = map.vertexHeights;
+  if (static_cast<int>(vh.size()) != (W + 1) * (H + 1)) return 0.0f;
+  const float SW = vh[(H - ty)     * (W + 1) + tx]     * shared::kMaxTerrainH;
+  const float SE = vh[(H - ty)     * (W + 1) + tx + 1] * shared::kMaxTerrainH;
+  const float NW = vh[(H - ty - 1) * (W + 1) + tx]     * shared::kMaxTerrainH;
+  const float NE = vh[(H - ty - 1) * (W + 1) + tx + 1] * shared::kMaxTerrainH;
+  return (SW + SE + NW + NE) * 0.25f;
+}
 
 std::filesystem::path resolveFromExe(const char* relative) {
   wchar_t buf[MAX_PATH] = {};
@@ -56,6 +77,7 @@ glm::vec3 followTargetForMap(int w, int h) {
 App::~App() {
   if (imguiInited_) shutdownImGui();
   destroyHoverMesh();
+  destroyPlayerMesh();
 }
 
 bool App::init() {
@@ -73,6 +95,12 @@ bool App::init() {
   window_.onMouseButton = [this](int button, int action, int /*mods*/) {
     if (ImGui::GetIO().WantCaptureMouse) return;
     camera_.onMouseButton(button, action);
+    // Left-click on terrain -> MOVE_TO the hovered tile (Phase 4).
+    if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_PRESS
+        && hoveredTile_.hit
+        && network_.status() == net::Connection::Connected) {
+      network_.sendMoveTo(hoveredTile_.tileX, hoveredTile_.tileY);
+    }
   };
   window_.onScroll = [this](double /*xoffset*/, double yoffset) {
     if (ImGui::GetIO().WantCaptureMouse) return;
@@ -98,6 +126,7 @@ bool App::init() {
   obstacles_.initGL();
   generateAndBuildTerrain();
   initHoverMesh();
+  initPlayerMesh();
 
   // Snap the camera to the map center so the first frame isn't mid-lerp.
   camera_.snapTo(followTargetForMap(terrainTileW_, terrainTileH_));
@@ -237,6 +266,10 @@ void App::renderFrame() {
   obstacleShader_.setFloat("u_paletteEnabled", palette_ ? 1.0f : 0.0f);
   obstacles_.render(obstacleShader_);
 
+  // ---- Local player (Phase 4 placeholder) ------------------------------------
+  processNetworkMessages();
+  renderPlayer(viewProj);
+
   // ---- Wireframe grid overlay ------------------------------------------------
   if (wireframe_) {
     wireframeShader_.use();
@@ -269,6 +302,8 @@ void App::renderFrame() {
   ImGui_ImplOpenGL3_NewFrame();
   ImGui_ImplGlfw_NewFrame();
   ImGui::NewFrame();
+
+  drawLoginUi();
 
   if (ImGui::Begin("Phase 2 - Terrain + Camera")) {
     ImGui::Text("GL %s", glGetString(GL_VERSION));
@@ -327,6 +362,33 @@ void App::renderFrame() {
       paletteHues_ = 64; paletteSats_ = 16; paletteLums_ = 64;
     }
     ImGui::EndDisabled();
+
+    ImGui::Separator();
+    ImGui::TextUnformatted("Network (Phase 4)");
+    const auto status = network_.status();
+    const char* statusText = "Disconnected";
+    switch (status) {
+      case net::Connection::LoggingIn:    statusText = "Logging in...";  break;
+      case net::Connection::Connecting:   statusText = "Connecting...";  break;
+      case net::Connection::Connected:    statusText = "Connected";      break;
+      case net::Connection::Failed:       statusText = "Failed";         break;
+      case net::Connection::Disconnected: statusText = "Disconnected";   break;
+    }
+    ImGui::Text("Status: %s", statusText);
+    if (!network_.lastError().empty() && status == net::Connection::Failed) {
+      ImGui::TextWrapped("Error: %s", network_.lastError().c_str());
+    }
+    if (status == net::Connection::Connected) {
+      ImGui::Text("Player: %s  (tick %d)", network_.playerName().c_str(), currentTick_);
+      if (currLocalPlayer_) {
+        ImGui::Text("Tile: (%d, %d)  hp %d/%d",
+                    currLocalPlayer_->tileX, currLocalPlayer_->tileY,
+                    currLocalPlayer_->hp, currLocalPlayer_->maxHp);
+        ImGui::TextUnformatted("Left-click a tile to walk there.");
+      } else {
+        ImGui::TextUnformatted("Waiting for first state tick...");
+      }
+    }
   }
   ImGui::End();
 
@@ -356,6 +418,219 @@ void App::shutdownImGui() {
   ImGui_ImplGlfw_Shutdown();
   ImGui::DestroyContext();
   imguiInited_ = false;
+}
+
+// =====================================================================
+// Player placeholder mesh (Phase 4 — Phase 5 replaces with humanoid + glTF)
+// =====================================================================
+
+void App::initPlayerMesh() {
+  destroyPlayerMesh();
+
+  // Procedural cylinder, 6 sides, radius kPlayerRadius, height kPlayerHeight,
+  // base at Y=0. Each vertex carries a face-aligned normal. (Bottom cap omitted
+  // since the player sits on the ground.)
+  constexpr int   segments = 6;
+  constexpr float twoPi    = 6.2831853f;
+  std::vector<float>    positions;
+  std::vector<float>    normals;
+  std::vector<uint32_t> indices;
+  positions.reserve(segments * 2 * 3 + 6);
+  normals.reserve  (segments * 2 * 3 + 6);
+
+  // Sides
+  for (int i = 0; i < segments; ++i) {
+    const float a  = (static_cast<float>(i) / segments) * twoPi;
+    const float nx = std::cos(a);
+    const float nz = std::sin(a);
+    const float px = nx * kPlayerRadius;
+    const float pz = nz * kPlayerRadius;
+    positions.insert(positions.end(), { px, 0.0f,            pz });
+    normals.insert(normals.end(),     { nx, 0.0f,            nz });
+    positions.insert(positions.end(), { px, kPlayerHeight,   pz });
+    normals.insert(normals.end(),     { nx, 0.0f,            nz });
+  }
+  for (int i = 0; i < segments; ++i) {
+    const uint32_t b0 = static_cast<uint32_t>(2 * i);
+    const uint32_t b1 = static_cast<uint32_t>(2 * ((i + 1) % segments));
+    indices.insert(indices.end(), { b0, b0 + 1, b1 + 1,   b0, b1 + 1, b1 });
+  }
+  // Top cap
+  const uint32_t topCenter = static_cast<uint32_t>(positions.size() / 3);
+  positions.insert(positions.end(), { 0.0f, kPlayerHeight, 0.0f });
+  normals.insert(normals.end(),     { 0.0f, 1.0f,          0.0f });
+  for (int i = 0; i < segments; ++i) {
+    const float a  = (static_cast<float>(i) / segments) * twoPi;
+    positions.insert(positions.end(), { std::cos(a) * kPlayerRadius, kPlayerHeight, std::sin(a) * kPlayerRadius });
+    normals.insert(normals.end(),     { 0.0f, 1.0f, 0.0f });
+  }
+  for (int i = 0; i < segments; ++i) {
+    const uint32_t r0 = topCenter + 1 + static_cast<uint32_t>(i);
+    const uint32_t r1 = topCenter + 1 + static_cast<uint32_t>((i + 1) % segments);
+    indices.insert(indices.end(), { topCenter, r0, r1 });
+  }
+
+  glCreateBuffers(1, &playerVboPos_);
+  glCreateBuffers(1, &playerVboNrm_);
+  glCreateBuffers(1, &playerEbo_);
+  glCreateBuffers(1, &playerInstanceVbo_);
+  glNamedBufferStorage(playerVboPos_, static_cast<GLsizeiptr>(positions.size() * sizeof(float)),
+                       positions.data(), 0);
+  glNamedBufferStorage(playerVboNrm_, static_cast<GLsizeiptr>(normals.size() * sizeof(float)),
+                       normals.data(), 0);
+  glNamedBufferStorage(playerEbo_,    static_cast<GLsizeiptr>(indices.size() * sizeof(uint32_t)),
+                       indices.data(), 0);
+  // 1-instance dynamic buffer — same layout (vec3 pos + float rotY) as the
+  // ObstacleSystem uses, so we render with the existing obstacle shader.
+  glNamedBufferStorage(playerInstanceVbo_, sizeof(float) * 4, nullptr, GL_DYNAMIC_STORAGE_BIT);
+
+  glCreateVertexArrays(1, &playerVao_);
+  glVertexArrayVertexBuffer(playerVao_, 0, playerVboPos_, 0, sizeof(float) * 3);
+  glEnableVertexArrayAttrib(playerVao_, 0);
+  glVertexArrayAttribFormat(playerVao_, 0, 3, GL_FLOAT, GL_FALSE, 0);
+  glVertexArrayAttribBinding(playerVao_, 0, 0);
+  glVertexArrayVertexBuffer(playerVao_, 1, playerVboNrm_, 0, sizeof(float) * 3);
+  glEnableVertexArrayAttrib(playerVao_, 1);
+  glVertexArrayAttribFormat(playerVao_, 1, 3, GL_FLOAT, GL_FALSE, 0);
+  glVertexArrayAttribBinding(playerVao_, 1, 1);
+  // Per-instance attributes (binding 2 with divisor 1): vec3 pos at offset 0,
+  // float rotY at offset 12.
+  glVertexArrayVertexBuffer(playerVao_, 2, playerInstanceVbo_, 0, sizeof(float) * 4);
+  glVertexArrayBindingDivisor(playerVao_, 2, 1);
+  glEnableVertexArrayAttrib(playerVao_, 2);
+  glVertexArrayAttribFormat(playerVao_, 2, 3, GL_FLOAT, GL_FALSE, 0);
+  glVertexArrayAttribBinding(playerVao_, 2, 2);
+  glEnableVertexArrayAttrib(playerVao_, 3);
+  glVertexArrayAttribFormat(playerVao_, 3, 1, GL_FLOAT, GL_FALSE, sizeof(float) * 3);
+  glVertexArrayAttribBinding(playerVao_, 3, 2);
+  glVertexArrayElementBuffer(playerVao_, playerEbo_);
+  playerIdxCount_ = static_cast<GLsizei>(indices.size());
+}
+
+void App::destroyPlayerMesh() {
+  if (playerInstanceVbo_) glDeleteBuffers(1, &playerInstanceVbo_);
+  if (playerEbo_)         glDeleteBuffers(1, &playerEbo_);
+  if (playerVboNrm_)      glDeleteBuffers(1, &playerVboNrm_);
+  if (playerVboPos_)      glDeleteBuffers(1, &playerVboPos_);
+  if (playerVao_)         glDeleteVertexArrays(1, &playerVao_);
+  playerVao_ = playerVboPos_ = playerVboNrm_ = playerEbo_ = playerInstanceVbo_ = 0;
+  playerIdxCount_ = 0;
+}
+
+void App::renderPlayer(const glm::mat4& viewProj) {
+  if (!currLocalPlayer_) return;
+
+  // Compute the smooth-interp position from prev/curr server snapshots.
+  float fx = static_cast<float>(currLocalPlayer_->tileX);
+  float fy = static_cast<float>(currLocalPlayer_->tileY);
+  float yWorld = tileWorldY(map_, currLocalPlayer_->tileX, currLocalPlayer_->tileY);
+  if (prevLocalPlayer_) {
+    const auto now   = std::chrono::steady_clock::now();
+    const auto dtMs  = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastTickTime_).count();
+    const float alpha = std::clamp(static_cast<float>(dtMs) / static_cast<float>(shared::kTickDurationMs),
+                                   0.0f, 1.0f);
+    fx = std::lerp(static_cast<float>(prevLocalPlayer_->tileX), fx, alpha);
+    fy = std::lerp(static_cast<float>(prevLocalPlayer_->tileY), fy, alpha);
+    const float prevY = tileWorldY(map_, prevLocalPlayer_->tileX, prevLocalPlayer_->tileY);
+    yWorld = std::lerp(prevY, yWorld, alpha);
+  }
+
+  const float inst[4] = { fx, yWorld, fy, 0.0f /*rotation deferred to Phase 5*/ };
+  glNamedBufferSubData(playerInstanceVbo_, 0, sizeof(inst), inst);
+
+  obstacleShader_.use();
+  obstacleShader_.setMat4 ("u_viewProj",       viewProj);
+  obstacleShader_.setVec3 ("u_lightDir",       kSunDirection);
+  obstacleShader_.setVec3 ("u_paletteLevels",
+                           glm::vec3(static_cast<float>(paletteHues_),
+                                     static_cast<float>(paletteSats_),
+                                     static_cast<float>(paletteLums_)));
+  obstacleShader_.setFloat("u_paletteEnabled", palette_ ? 1.0f : 0.0f);
+  obstacleShader_.setVec3 ("u_color",          kPlayerColor);
+  glBindVertexArray(playerVao_);
+  glDrawElementsInstanced(GL_TRIANGLES, playerIdxCount_, GL_UNSIGNED_INT, nullptr, 1);
+  glBindVertexArray(0);
+}
+
+// =====================================================================
+// Network message dispatch
+// =====================================================================
+
+void App::processNetworkMessages() {
+  for (const auto& raw : network_.drainMessages()) {
+    // Peek the "type" field first, then re-parse as the appropriate struct.
+    struct TypeOnly { std::string type; };
+    TypeOnly hdr;
+    constexpr glz::opts kPermissive{ .error_on_unknown_keys = false };
+    if (glz::read<kPermissive>(hdr, raw)) continue;
+
+    if (hdr.type == "init") {
+      shared::InitMessage init;
+      if (glz::read<kPermissive>(init, raw)) {
+        std::fprintf(stderr, "[App] init parse failed\n");
+        continue;
+      }
+      std::fprintf(stdout, "[App] init: player=%s tiles=%dx%d %s\n",
+                   init.playerId.c_str(),
+                   init.tiles.empty() ? 0 : static_cast<int>(init.tiles[0].size()),
+                   static_cast<int>(init.tiles.size()),
+                   init.isNewPlayer ? "(new)" : "(returning)");
+      // We keep our procedural map; server tiles are acknowledged but ignored.
+      currLocalPlayer_.reset();
+      prevLocalPlayer_.reset();
+    } else if (hdr.type == "state") {
+      shared::StateMessage st;
+      if (glz::read<kPermissive>(st, raw)) {
+        std::fprintf(stderr, "[App] state parse failed\n");
+        continue;
+      }
+      currentTick_ = st.tick;
+      auto it = st.players.find(network_.playerId());
+      if (it != st.players.end()) {
+        prevLocalPlayer_ = currLocalPlayer_;
+        currLocalPlayer_ = it->second;
+        lastTickTime_    = std::chrono::steady_clock::now();
+      }
+    }
+  }
+}
+
+// =====================================================================
+// Login UI panel — shown until status is Connected.
+// =====================================================================
+
+bool App::drawLoginUi() {
+  if (network_.status() == net::Connection::Connected) return true;
+
+  ImGui::SetNextWindowSizeConstraints(ImVec2(320, 0), ImVec2(420, FLT_MAX));
+  if (ImGui::Begin("Connect to server", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+    ImGui::InputText("Host",     loginHost_, sizeof(loginHost_));
+    ImGui::InputInt ("Port",     &loginPort_);
+    ImGui::InputText("Username", loginUser_, sizeof(loginUser_));
+    ImGui::InputText("Password", loginPass_, sizeof(loginPass_), ImGuiInputTextFlags_Password);
+
+    const auto status = network_.status();
+    const bool busy = (status == net::Connection::LoggingIn || status == net::Connection::Connecting);
+    ImGui::BeginDisabled(busy);
+    if (ImGui::Button("Connect", ImVec2(120, 0))) {
+      network_.loginAndConnect(loginHost_, loginPort_, loginUser_, loginPass_);
+    }
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    switch (status) {
+      case net::Connection::Disconnected: ImGui::TextUnformatted("Disconnected"); break;
+      case net::Connection::LoggingIn:    ImGui::TextUnformatted("Authenticating..."); break;
+      case net::Connection::Connecting:   ImGui::TextUnformatted("Connecting to WebSocket..."); break;
+      case net::Connection::Connected:    ImGui::TextUnformatted("Connected"); break;
+      case net::Connection::Failed:       ImGui::TextColored(ImVec4(1,0.4f,0.4f,1), "Failed"); break;
+    }
+    if (status == net::Connection::Failed && !network_.lastError().empty()) {
+      ImGui::Separator();
+      ImGui::TextWrapped("%s", network_.lastError().c_str());
+    }
+  }
+  ImGui::End();
+  return false;
 }
 
 }  // namespace app

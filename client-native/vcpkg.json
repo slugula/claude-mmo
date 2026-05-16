@@ -12,6 +12,8 @@
       "features": ["gl-api-46"]
     },
     "glm",
+    "glaze",
+    "ixwebsocket",
     {
       "name": "imgui",
       "features": ["glfw-binding", "opengl3-binding", "docking-experimental"]

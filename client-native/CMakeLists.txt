@@ -10,10 +10,12 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 # vcpkg-supplied dependencies
-find_package(glfw3 CONFIG REQUIRED)
-find_package(glad  CONFIG REQUIRED)
-find_package(glm   CONFIG REQUIRED)
-find_package(imgui CONFIG REQUIRED)
+find_package(glfw3       CONFIG REQUIRED)
+find_package(glad        CONFIG REQUIRED)
+find_package(glm         CONFIG REQUIRED)
+find_package(glaze       CONFIG REQUIRED)
+find_package(ixwebsocket CONFIG REQUIRED)
+find_package(imgui       CONFIG REQUIRED)
 
 # ---- Main executable --------------------------------------------------------
 
@@ -23,6 +25,7 @@ add_executable(client-native
   src/app/Window.cpp
   src/camera/GameCamera.cpp
   src/input/Picker.cpp
+  src/net/NetworkClient.cpp
   src/render/GlDebug.cpp
   src/render/Mesh.cpp
   src/render/MsaaFramebuffer.cpp
@@ -38,6 +41,8 @@ target_link_libraries(client-native PRIVATE
   glfw
   glad::glad
   glm::glm
+  glaze::glaze
+  ixwebsocket::ixwebsocket
   imgui::imgui
 )
 
