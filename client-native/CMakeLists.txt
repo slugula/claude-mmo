@@ -63,15 +63,21 @@ if (MSVC)
   )
 endif()
 
-# ---- Copy shaders next to the exe -----------------------------------------
+# ---- Copy shaders + assets next to the exe -------------------------------
 #
 # Map files are NOT copied: the world is generated procedurally in-process
 # (see src/world/MapGenerator.cpp). Map I/O is deferred until after Phase 11.
+# `assets/` holds player.glb (and future models) — copied so the exe can
+# load relative to its own directory regardless of CWD.
 
 add_custom_command(TARGET client-native POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:client-native>/shaders
   COMMAND ${CMAKE_COMMAND} -E copy_directory
     ${CMAKE_CURRENT_SOURCE_DIR}/shaders
     $<TARGET_FILE_DIR:client-native>/shaders
-  COMMENT "Copying shaders to build output"
+  COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:client-native>/assets
+  COMMAND ${CMAKE_COMMAND} -E copy_directory
+    ${CMAKE_CURRENT_SOURCE_DIR}/assets
+    $<TARGET_FILE_DIR:client-native>/assets
+  COMMENT "Copying shaders + assets to build output"
 )
