@@ -50,6 +50,7 @@ private:
 
   void renderPlayer(const glm::mat4& viewProj, float dt);
   void processNetworkMessages();
+  void drawWorldContextMenu();
   // Returns true if cursor world position should be sampled for a click
   // action (i.e. a real terrain tile, not an ImGui-owned area).
   bool drawLoginUi();
@@ -96,6 +97,14 @@ private:
   std::chrono::steady_clock::time_point    lastFrameTime_{};
   shared::WorldMapFile                     map_;
   input::PickResult                        hoveredTile_;
+  // Phase 8b-ii — right-click world context menu. We latch the picked tile
+  // when the menu is requested so the menu's labels match what was under
+  // the cursor at the moment of the click, not whatever the cursor moves
+  // over while the menu is open.
+  bool                                     ctxMenuRequest_ = false;
+  bool                                     ctxMenuTileHit_ = false;
+  int                                      ctxMenuTileX_   = 0;
+  int                                      ctxMenuTileY_   = 0;
 
   uint32_t                                 mapSeed_         = 42;
   float                                    noiseFreq_       = 0.04f;

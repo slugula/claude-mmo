@@ -118,6 +118,17 @@ bool App::init() {
         && network_.status() == net::Connection::Connected) {
       network_.sendMoveTo(hoveredTile_.tileX, hoveredTile_.tileY);
     }
+    // Right-click on world -> Phase 8b-ii context menu. Latch the picked
+    // tile so the menu's content stays stable while the cursor moves.
+    if (button == GLFW_MOUSE_BUTTON_RIGHT && action == GLFW_PRESS
+        && network_.status() == net::Connection::Connected) {
+      ctxMenuRequest_ = true;
+      ctxMenuTileHit_ = hoveredTile_.hit;
+      if (hoveredTile_.hit) {
+        ctxMenuTileX_ = hoveredTile_.tileX;
+        ctxMenuTileY_ = hoveredTile_.tileY;
+      }
+    }
   };
   window_.onScroll = [this](double /*xoffset*/, double yoffset) {
     if (ImGui::GetIO().WantCaptureMouse) return;
@@ -531,8 +542,80 @@ void App::renderFrame() {
   }
   ImGui::End();
 
+  drawWorldContextMenu();
+
   ImGui::Render();
   ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+}
+
+// =====================================================================
+// Right-click context menu — Phase 8b-ii.
+// =====================================================================
+//
+// The menu opens at the cursor when the user right-clicks an in-world
+// location. Its contents are computed from the latched tile + the entities
+// (NPCs, dropped items, obstacles) that occupy it at that moment. The
+// server validates the action; the client never gates "is this valid right
+// now" — clicking Chop on an already-depleted tree is a no-op server-side.
+void App::drawWorldContextMenu() {
+  // Promote a click into an open popup. We delay this to the UI pass so
+  // ImGui's per-frame popup state is in the right place.
+  if (ctxMenuRequest_) {
+    ctxMenuRequest_ = false;
+    if (ctxMenuTileHit_) ImGui::OpenPopup("world_ctx");
+  }
+  if (!ImGui::BeginPopup("world_ctx")) return;
+
+  ImGui::Text("Tile (%d, %d)", ctxMenuTileX_, ctxMenuTileY_);
+  ImGui::Separator();
+
+  // ---- Tile obstacle ------------------------------------------------------
+  shared::ObstacleType obstacle = shared::ObstacleType::none;
+  if (ctxMenuTileY_ >= 0 && ctxMenuTileY_ < static_cast<int>(map_.tiles.size()) &&
+      ctxMenuTileX_ >= 0 && ctxMenuTileX_ < static_cast<int>(map_.tiles[ctxMenuTileY_].size())) {
+    obstacle = map_.tiles[ctxMenuTileY_][ctxMenuTileX_].obstacle;
+  }
+  switch (obstacle) {
+    case shared::ObstacleType::tree:
+      if (ImGui::Selectable("Chop tree")) {
+        network_.sendChopTree(ctxMenuTileX_, ctxMenuTileY_);
+      }
+      break;
+    case shared::ObstacleType::rock:
+      if (ImGui::Selectable("Mine rock")) {
+        network_.sendMineRock(ctxMenuTileX_, ctxMenuTileY_);
+      }
+      break;
+    default: break;
+  }
+
+  // ---- NPCs at this tile --------------------------------------------------
+  for (const auto& n : npcs_) {
+    if (n.tileX != ctxMenuTileX_ || n.tileY != ctxMenuTileY_) continue;
+    if (n.dying) continue;
+    char buf[96];
+    std::snprintf(buf, sizeof(buf), "Attack %s",
+                  n.kind.empty() ? "NPC" : n.kind.c_str());
+    if (ImGui::Selectable(buf)) network_.sendAttackNpc(n.id);
+    std::snprintf(buf, sizeof(buf), "Talk-to %s",
+                  n.kind.empty() ? "NPC" : n.kind.c_str());
+    if (ImGui::Selectable(buf)) network_.sendTalkTo(n.id);
+  }
+
+  // ---- Dropped items at this tile ----------------------------------------
+  for (const auto& it : droppedItems_) {
+    if (it.tileX != ctxMenuTileX_ || it.tileY != ctxMenuTileY_) continue;
+    char buf[96];
+    std::snprintf(buf, sizeof(buf), "Take %s",
+                  it.itemId.empty() ? "item" : it.itemId.c_str());
+    if (ImGui::Selectable(buf)) network_.sendTakeItem(it.id);
+  }
+
+  // ---- Always available --------------------------------------------------
+  if (ImGui::Selectable("Walk here")) {
+    network_.sendMoveTo(ctxMenuTileX_, ctxMenuTileY_);
+  }
+  ImGui::EndPopup();
 }
 
 void App::onResize(int width, int height) {
