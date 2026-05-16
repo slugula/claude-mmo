@@ -46,6 +46,13 @@ target_link_libraries(client-native PRIVATE
   imgui::imgui
 )
 
+# ixwebsocket pulls in mbedtls for TLS; mbedtls's entropy_poll on Windows uses
+# BCryptGenRandom from bcrypt.lib (the CNG API). vcpkg should propagate this
+# but doesn't always — link it explicitly.
+if (WIN32)
+  target_link_libraries(client-native PRIVATE bcrypt)
+endif()
+
 if (MSVC)
   target_compile_options(client-native PRIVATE
     /W4 /permissive- /Zc:preprocessor
