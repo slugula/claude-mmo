@@ -42,10 +42,11 @@ void GameCamera::onCursorPos(double x, double y) {
     } else {
       const double dx = x - lastX_;
       const double dy = y - lastY_;
-      targetAlpha_ -= static_cast<float>(dx) * kDragSensitivity;
-      // Drag UP (negative dy) tips the camera more horizontal (higher beta)
+      // Inverted: drag-right rotates camera right (alpha increases)
+      targetAlpha_ += static_cast<float>(dx) * kDragSensitivity;
+      // Inverted: drag-up tips camera down (lower beta = more top-down)
       targetBeta_ = std::clamp(
-          targetBeta_ - static_cast<float>(dy) * kDragSensitivity,
+          targetBeta_ + static_cast<float>(dy) * kDragSensitivity,
           kMinBeta, kMaxBeta);
     }
   }
@@ -63,12 +64,12 @@ void GameCamera::update(float dt, GLFWwindow* w, const glm::vec3& target) {
   // Arrow-key rotation
   const float rotStep = kRotateSpeed * dt;
   if (w) {
-    if (glfwGetKey(w, GLFW_KEY_LEFT)  == GLFW_PRESS) targetAlpha_ -= rotStep;
-    if (glfwGetKey(w, GLFW_KEY_RIGHT) == GLFW_PRESS) targetAlpha_ += rotStep;
+    if (glfwGetKey(w, GLFW_KEY_LEFT)  == GLFW_PRESS) targetAlpha_ += rotStep;
+    if (glfwGetKey(w, GLFW_KEY_RIGHT) == GLFW_PRESS) targetAlpha_ -= rotStep;
     if (glfwGetKey(w, GLFW_KEY_UP)    == GLFW_PRESS)
-      targetBeta_ = std::clamp(targetBeta_ - rotStep, kMinBeta, kMaxBeta);
-    if (glfwGetKey(w, GLFW_KEY_DOWN)  == GLFW_PRESS)
       targetBeta_ = std::clamp(targetBeta_ + rotStep, kMinBeta, kMaxBeta);
+    if (glfwGetKey(w, GLFW_KEY_DOWN)  == GLFW_PRESS)
+      targetBeta_ = std::clamp(targetBeta_ - rotStep, kMinBeta, kMaxBeta);
   }
 
   // Smooth alpha / beta / radius (exponential decay toward target).

@@ -112,11 +112,80 @@ bool App::init() {
   window_.onMouseButton = [this](int button, int action, int /*mods*/) {
     if (ImGui::GetIO().WantCaptureMouse) return;
     camera_.onMouseButton(button, action);
-    // Left-click on terrain -> MOVE_TO the hovered tile (Phase 4).
+    // Left-click dispatches the primary action for the hovered tile:
+    //   obstacle (tree/rock) -> chop/mine
+    //   NPC at tile -> attack (if attackable) or talk-to
+    //   dropped item at tile -> take
+    //   walkable empty tile -> move_to
+    //   non-walkable tile -> nothing (click feedback only)
     if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_PRESS
         && hoveredTile_.hit
         && network_.status() == net::Connection::Connected) {
-      network_.sendMoveTo(hoveredTile_.tileX, hoveredTile_.tileY);
+      const int tx = hoveredTile_.tileX;
+      const int ty = hoveredTile_.tileY;
+      bool dispatched = false;
+      // Check for obstacle (tree/rock)
+      if (!dispatched && ty >= 0 && ty < static_cast<int>(map_.tiles.size()) &&
+          tx >= 0 && tx < static_cast<int>(map_.tiles[ty].size())) {
+        const auto obs = map_.tiles[ty][tx].obstacle;
+        if (obs == shared::ObstacleType::tree) {
+          network_.sendChopTree(tx, ty);
+          dispatched = true;
+          clickFeedbackColor_ = 1;  // red for interactable
+        } else if (obs == shared::ObstacleType::rock) {
+          network_.sendMineRock(tx, ty);
+          dispatched = true;
+          clickFeedbackColor_ = 1;
+        } else if (obs == shared::ObstacleType::chest) {
+          network_.sendOpenBank();
+          bankOpen_ = true;
+          dispatched = true;
+          clickFeedbackColor_ = 1;
+        }
+      }
+      // Check for NPC at this tile
+      if (!dispatched) {
+        for (const auto& n : npcs_) {
+          if (n.tileX != tx || n.tileY != ty || n.dying) continue;
+          // Use NPC kind to determine action (chicken=attack, shopkeeper=talk)
+          if (n.kind == "chicken") {
+            network_.sendAttackNpc(n.id);
+          } else {
+            network_.sendTalkTo(n.id);
+          }
+          dispatched = true;
+          clickFeedbackColor_ = 1;
+          break;
+        }
+      }
+      // Check for dropped item at this tile
+      if (!dispatched) {
+        for (const auto& it : droppedItems_) {
+          if (it.tileX != tx || it.tileY != ty) continue;
+          network_.sendTakeItem(it.id);
+          dispatched = true;
+          clickFeedbackColor_ = 1;
+          break;
+        }
+      }
+      // Otherwise, walk to the tile (only if walkable)
+      if (!dispatched) {
+        if (ty >= 0 && ty < static_cast<int>(map_.tiles.size()) &&
+            tx >= 0 && tx < static_cast<int>(map_.tiles[ty].size()) &&
+            map_.tiles[ty][tx].walkable) {
+          network_.sendMoveTo(tx, ty);
+          clickFeedbackColor_ = 0;  // yellow for walk
+        } else {
+          clickFeedbackColor_ = 1;  // red for blocked
+        }
+      }
+      // Spawn click feedback marker
+      clickFeedbackActive_ = true;
+      clickFeedbackTime_   = std::chrono::steady_clock::now();
+      double cx, cy;
+      glfwGetCursorPos(window_.handle(), &cx, &cy);
+      clickFeedbackX_ = static_cast<float>(cx);
+      clickFeedbackY_ = static_cast<float>(cy);
     }
     // Right-click on world -> Phase 8b-ii context menu. Latch the picked
     // tile so the menu's content stays stable while the cursor moves.
@@ -280,9 +349,11 @@ void App::renderFrame() {
   // sink below tall terrain.
   glm::vec3 followTarget = followTargetForMap(terrainTileW_, terrainTileH_);
   if (currLocalPlayer_) {
+    // Center camera on the player mesh center (roughly waist height ~1.0 units
+    // above the ground) so the pivot isn't at floor level.
     followTarget = {
       static_cast<float>(currLocalPlayer_->tileX),
-      tileWorldY(map_, currLocalPlayer_->tileX, currLocalPlayer_->tileY),
+      tileWorldY(map_, currLocalPlayer_->tileX, currLocalPlayer_->tileY) + 1.0f,
       static_cast<float>(currLocalPlayer_->tileY)
     };
   }
@@ -476,6 +547,105 @@ void App::renderFrame() {
         viewProj, fbW, fbH,
         currLocalPlayer_, npcs_,
         [this](int tx, int ty) { return tileWorldY(map_, tx, ty); });
+
+    // ---- Context info (top-left) — shows action for hovered tile ----------
+    if (hoveredTile_.hit) {
+      const int tx = hoveredTile_.tileX;
+      const int ty = hoveredTile_.tileY;
+      const char* verb    = "Walk here";
+      const char* subject = "";
+      // Determine primary action text based on what's at this tile
+      if (ty >= 0 && ty < static_cast<int>(map_.tiles.size()) &&
+          tx >= 0 && tx < static_cast<int>(map_.tiles[ty].size())) {
+        const auto obs = map_.tiles[ty][tx].obstacle;
+        if (obs == shared::ObstacleType::tree) { verb = "Chop"; subject = "Tree"; }
+        else if (obs == shared::ObstacleType::rock) { verb = "Mine"; subject = "Rock"; }
+        else if (obs == shared::ObstacleType::chest) { verb = "Bank"; subject = "Chest"; }
+      }
+      // Check NPCs
+      if (subject[0] == '\0') {
+        for (const auto& n : npcs_) {
+          if (n.tileX != tx || n.tileY != ty || n.dying) continue;
+          if (n.kind == "chicken") { verb = "Attack"; }
+          else { verb = "Talk-to"; }
+          subject = n.kind.c_str();
+          break;
+        }
+      }
+      // Check dropped items
+      if (subject[0] == '\0') {
+        for (const auto& it : droppedItems_) {
+          if (it.tileX != tx || it.tileY != ty) continue;
+          verb    = "Take";
+          subject = it.itemId.c_str();
+          break;
+        }
+      }
+      // Draw top-left context info
+      ImDrawList* dl = ImGui::GetForegroundDrawList();
+      char ctxBuf[128];
+      std::snprintf(ctxBuf, sizeof(ctxBuf), "%s %s", verb, subject);
+      dl->AddText(ImVec2(12.0f, 12.0f),
+                  IM_COL32(255, 255, 255, 255), verb);
+      if (subject[0] != '\0') {
+        const ImVec2 verbSize = ImGui::CalcTextSize(verb);
+        dl->AddText(ImVec2(12.0f + verbSize.x + 4.0f, 12.0f),
+                    IM_COL32(255, 180, 50, 255), subject);
+      }
+    }
+
+    // ---- Overhead chat bubbles — world-space text above chatting players ---
+    for (const auto& [id, p] : allPlayers_) {
+      if (p.chatMessage.empty() || p.chatMessageTick <= 0) continue;
+      // Only show if within the last 50 ticks (10 seconds at 200ms/tick)
+      const int age = currentTick_ - p.chatMessageTick;
+      if (age < 0 || age > 50) continue;
+      const float fadeStart = 40;  // start fading at tick 40
+      float alpha = 1.0f;
+      if (age > static_cast<int>(fadeStart)) {
+        alpha = 1.0f - static_cast<float>(age - static_cast<int>(fadeStart)) / 10.0f;
+      }
+      if (alpha <= 0.0f) continue;
+      const float yWorld = tileWorldY(map_, p.tileX, p.tileY);
+      glm::vec2 px;
+      if (!ui::worldToScreen(viewProj,
+              { static_cast<float>(p.tileX), yWorld + 2.6f,
+                static_cast<float>(p.tileY) },
+              fbW, fbH, &px)) continue;
+      ImDrawList* dl = ImGui::GetForegroundDrawList();
+      const ImVec2 textSize = ImGui::CalcTextSize(p.chatMessage.c_str());
+      const float padX = 4.0f, padY = 2.0f;
+      // Background
+      dl->AddRectFilled(
+          ImVec2(px.x - textSize.x * 0.5f - padX, px.y - textSize.y - padY),
+          ImVec2(px.x + textSize.x * 0.5f + padX, px.y + padY),
+          IM_COL32(0, 0, 0, static_cast<int>(140 * alpha)), 4.0f);
+      // Text
+      dl->AddText(
+          ImVec2(px.x - textSize.x * 0.5f, px.y - textSize.y),
+          IM_COL32(255, 255, 0, static_cast<int>(255 * alpha)),
+          p.chatMessage.c_str());
+    }
+  }
+
+  // ---- Click feedback marker (animated expanding circle) ------------------
+  if (clickFeedbackActive_) {
+    const float elapsed = std::chrono::duration<float>(
+        std::chrono::steady_clock::now() - clickFeedbackTime_).count();
+    constexpr float kDuration = 0.45f;
+    if (elapsed > kDuration) {
+      clickFeedbackActive_ = false;
+    } else {
+      const float t = elapsed / kDuration;
+      const float radius = 9.0f * (1.0f + 0.6f * t);  // expand 60%
+      const float alpha = 1.0f - t;                     // fade out
+      ImU32 color = (clickFeedbackColor_ == 0)
+          ? IM_COL32(255, 220, 50, static_cast<int>(alpha * 200))
+          : IM_COL32(200, 50, 50, static_cast<int>(alpha * 200));
+      ImDrawList* dl = ImGui::GetForegroundDrawList();
+      dl->AddCircle(ImVec2(clickFeedbackX_, clickFeedbackY_),
+                    radius, color, 24, 2.0f);
+    }
   }
 
   if (ImGui::Begin("Phase 2 - Terrain + Camera")) {
@@ -662,16 +832,24 @@ void App::drawWorldContextMenu() {
   }
 
   // ---- NPCs at this tile --------------------------------------------------
+  // Show only actions appropriate for this NPC kind:
+  //   chicken -> Attack only
+  //   shopkeeper -> Talk-to only
   for (const auto& n : npcs_) {
     if (n.tileX != ctxMenuTileX_ || n.tileY != ctxMenuTileY_) continue;
     if (n.dying) continue;
+    const char* displayName = n.kind.empty() ? "NPC" : n.kind.c_str();
     char buf[96];
-    std::snprintf(buf, sizeof(buf), "Attack %s",
-                  n.kind.empty() ? "NPC" : n.kind.c_str());
-    if (ImGui::Selectable(buf)) network_.sendAttackNpc(n.id);
-    std::snprintf(buf, sizeof(buf), "Talk-to %s",
-                  n.kind.empty() ? "NPC" : n.kind.c_str());
-    if (ImGui::Selectable(buf)) network_.sendTalkTo(n.id);
+    // Attackable NPCs (chicken, etc.) get Attack
+    if (n.kind == "chicken") {
+      std::snprintf(buf, sizeof(buf), "Attack %s", displayName);
+      if (ImGui::Selectable(buf)) network_.sendAttackNpc(n.id);
+    }
+    // Non-attackable NPCs (shopkeeper, etc.) get Talk-to
+    if (n.kind != "chicken") {
+      std::snprintf(buf, sizeof(buf), "Talk-to %s", displayName);
+      if (ImGui::Selectable(buf)) network_.sendTalkTo(n.id);
+    }
   }
 
   // ---- Dropped items at this tile ----------------------------------------
@@ -949,7 +1127,7 @@ void App::processNetworkMessages() {
           // map (server constants default PLAYER_START_{X,Y} to 128).
           const glm::vec3 snapTo{
             static_cast<float>(currLocalPlayer_->tileX),
-            tileWorldY(map_, currLocalPlayer_->tileX, currLocalPlayer_->tileY),
+            tileWorldY(map_, currLocalPlayer_->tileX, currLocalPlayer_->tileY) + 1.0f,
             static_cast<float>(currLocalPlayer_->tileY)
           };
           camera_.snapTo(snapTo);

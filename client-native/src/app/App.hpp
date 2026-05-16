@@ -130,6 +130,13 @@ private:
   int                                      ctxMenuTileX_   = 0;
   int                                      ctxMenuTileY_   = 0;
 
+  // Click feedback marker — animated expanding circle at cursor pos.
+  bool                                     clickFeedbackActive_ = false;
+  std::chrono::steady_clock::time_point    clickFeedbackTime_{};
+  float                                    clickFeedbackX_  = 0.0f;
+  float                                    clickFeedbackY_  = 0.0f;
+  int                                      clickFeedbackColor_ = 0; // 0=yellow, 1=red
+
   uint32_t                                 mapSeed_         = 42;
   float                                    noiseFreq_       = 0.04f;
   float                                    noiseAmp_        = 1.0f;

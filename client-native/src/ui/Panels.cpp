@@ -375,14 +375,18 @@ void ChatLog::draw(net::NetworkClient* netc) {
   ImGui::EndChild();
   if (netc) {
     ImGui::SetNextItemWidth(-FLT_MIN);
+    // Auto-focus the chat input when the user starts typing and no other
+    // widget has focus (so they don't have to click into the box first).
+    if (!ImGui::IsAnyItemActive() && !ImGui::GetIO().WantTextInput
+        && ImGui::GetIO().InputQueueCharacters.Size > 0) {
+      ImGui::SetKeyboardFocusHere(0);
+    }
     if (ImGui::InputText("##chat_in", inputBuf_, sizeof(inputBuf_),
                          ImGuiInputTextFlags_EnterReturnsTrue)) {
       if (inputBuf_[0] != '\0') {
         netc->sendChat(inputBuf_);
-        // Mirror locally so the speaker sees it immediately; remote
-        // observers see it via the next chatMessageTick.
-        entries_.push_back({ std::string("You: ") + inputBuf_, false });
-        while (entries_.size() > kMax) entries_.pop_front();
+        // No local echo — the server echoes our message back via
+        // chatMessageTick which observePlayers() picks up next tick.
       }
       inputBuf_[0] = '\0';
       ImGui::SetKeyboardFocusHere(-1);   // refocus input for fast follow-ups
