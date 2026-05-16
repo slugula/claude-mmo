@@ -37,6 +37,12 @@ public:
   // method sets u_color per draw to match the obstacle kit being drawn.
   void render(render::Shader& obstacleShader);
 
+  // Depth-only pass for shadow casting. The supplied shader is expected to
+  // have its u_lightViewProj already bound; we just issue the instanced
+  // draws against the same VAOs used for the regular pass. No u_color or
+  // lighting uniforms are touched.
+  void renderDepth(render::Shader& depthShader);
+
   std::size_t treeCount() const { return treeCount_; }
   std::size_t rockCount() const { return rockCount_; }
 

@@ -15,14 +15,19 @@
 
 in  vec4 v_color;
 in  vec3 v_normal;
+in  vec4 v_shadowPos;
 out vec4 fragColor;
 
-uniform vec3  u_paletteLevels;     // (hue_levels, sat_levels, lum_levels)
-uniform float u_paletteEnabled;    // 0 = bypass quantize, 1 = quantize
-uniform vec3  u_lightDir;          // sun direction (from sun toward surface)
-uniform float u_ambient;           // 0..1, base brightness with no direct light
-uniform float u_diffuse;           // 0..1, contribution of N . -L
-uniform float u_lightingEnabled;   // 0 = unlit, 1 = lit
+uniform vec3      u_paletteLevels;    // (hue_levels, sat_levels, lum_levels)
+uniform float     u_paletteEnabled;   // 0 = bypass quantize, 1 = quantize
+uniform vec3      u_lightDir;         // sun direction (from sun toward surface)
+uniform float     u_ambient;          // 0..1, base brightness with no direct light
+uniform float     u_diffuse;          // 0..1, contribution of N . -L
+uniform float     u_lightingEnabled;  // 0 = unlit, 1 = lit
+uniform sampler2D u_shadowMap;
+uniform float     u_shadowsEnabled;   // 0 = ignore shadowmap, 1 = sample
+uniform float     u_shadowDarkness;   // 0..1, how dark a fully-shadowed pixel gets (1 = full ambient only)
+uniform float     u_shadowBias;       // depth bias to suppress acne (e.g. 0.0015)
 
 // ---- HSL <-> RGB --------------------------------------------------------
 
@@ -62,6 +67,30 @@ vec3 hsl2rgb(vec3 hsl) {
     );
 }
 
+// ---- Shadow PCF ---------------------------------------------------------
+//
+// Returns 1.0 = fully shadowed, 0.0 = fully lit. Performs a 3x3 box filter
+// over the depth texture for cheap soft edges.
+float sampleShadow(vec4 shadowPos) {
+    // ortho proj => w=1; divide-by-w is a no-op but keeps the math correct.
+    vec3 proj = shadowPos.xyz / shadowPos.w;
+    proj = proj * 0.5 + 0.5;
+    if (proj.z > 1.0 || proj.z < 0.0) return 0.0;
+    if (proj.x < 0.0 || proj.x > 1.0 || proj.y < 0.0 || proj.y > 1.0) return 0.0;
+
+    float current = proj.z - u_shadowBias;
+    vec2  texel   = 1.0 / vec2(textureSize(u_shadowMap, 0));
+    float occluded = 0.0;
+    for (int dy = -1; dy <= 1; ++dy) {
+        for (int dx = -1; dx <= 1; ++dx) {
+            vec2 uv = proj.xy + vec2(dx, dy) * texel;
+            float d = texture(u_shadowMap, uv).r;
+            occluded += (current > d) ? 1.0 : 0.0;
+        }
+    }
+    return occluded / 9.0;
+}
+
 // ---- Main ---------------------------------------------------------------
 
 void main() {
@@ -74,6 +103,12 @@ void main() {
     float lit   = clamp(u_ambient + u_diffuse * nDotL, 0.0, 1.0);
     vec3  litRgb = rgb * lit;
     rgb = mix(rgb, litRgb, u_lightingEnabled);
+
+    // Phase 6b — directional shadow map. Multiply the lit color by a
+    // (1 - shadow * darkness) factor; bypassed when shadows are off.
+    float shadow = sampleShadow(v_shadowPos);
+    float shadowMul = 1.0 - u_shadowDarkness * shadow * u_shadowsEnabled;
+    rgb *= shadowMul;
 
     // Snap-then-restore via HSL gives banded but hue-stable colors.
     vec3 hsl       = rgb2hsl(rgb);

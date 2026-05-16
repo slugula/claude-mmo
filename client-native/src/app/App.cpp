@@ -42,7 +42,10 @@ constexpr const char* kObstacleVertPath  = "shaders/obstacle.vert";
 constexpr const char* kObstacleFragPath  = "shaders/obstacle.frag";
 constexpr const char* kSkinnedVertPath   = "shaders/skinned.vert";
 constexpr const char* kSkinnedFragPath   = "shaders/skinned.frag";
+constexpr const char* kShadowInstVertPath= "shaders/shadow_instanced.vert";
+constexpr const char* kShadowFragPath    = "shaders/shadow.frag";
 constexpr const char* kPlayerModelPath   = "assets/models/player.glb";
+constexpr int         kShadowMapSize     = 2048;
 
 constexpr glm::vec3 kPlayerColor  { 0.62f, 0.45f, 0.30f};  // skin tone, modulated by Lambert
 constexpr float     kPlayerScale  = 1.0f;
@@ -139,6 +142,15 @@ bool App::init() {
   if (!skinnedShader_.fromFiles(resolveFromExe(kSkinnedVertPath),
                                 resolveFromExe(kSkinnedFragPath))) {
     std::fprintf(stderr, "[App] skinned shader load failed\n");
+    return false;
+  }
+  if (!shadowInstancedShader_.fromFiles(resolveFromExe(kShadowInstVertPath),
+                                        resolveFromExe(kShadowFragPath))) {
+    std::fprintf(stderr, "[App] shadow shader load failed\n");
+    return false;
+  }
+  if (!shadowMap_.init(kShadowMapSize)) {
+    std::fprintf(stderr, "[App] shadow map init failed\n");
     return false;
   }
 
@@ -278,14 +290,39 @@ void App::renderFrame() {
   }
   if (hoveredTile_.hit) updateHoverMesh(hoveredTile_.tileX, hoveredTile_.tileY);
 
-  // ---- Main pass into MSAA framebuffer --------------------------------------
+  const glm::vec3 sunDir = sunDirectionFromYawPitch(sunYawDeg_, sunPitchDeg_);
+
+  // ---- Phase 6b — shadow depth pass -----------------------------------------
+  // Renders obstacle instances into the shadow map depth buffer. Skipped
+  // entirely when shadows are toggled off; the receiver shaders also clamp
+  // to "fully lit" via u_shadowsEnabled so the sampler binding still needs
+  // to point at a valid texture.
+  const glm::vec3 mapCenter = followTargetForMap(terrainTileW_, terrainTileH_);
+  const glm::mat4 lightVP   = render::ShadowMap::lightViewProj(
+      sunDir, mapCenter, shadowHalfExtent_);
+  if (shadowsEnabled_) {
+    shadowMap_.beginPass();
+    shadowInstancedShader_.use();
+    shadowInstancedShader_.setMat4("u_lightViewProj", lightVP);
+    obstacles_.renderDepth(shadowInstancedShader_);
+    shadowMap_.endPass();
+  }
+
+  // ---- Main pass into MSAA framebuffer (rebind after the shadow pass) ------
   msaa_->bind();
   glClearColor(0.45f, 0.65f, 0.85f, 1.0f);
   glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-  const glm::vec3 sunDir = sunDirectionFromYawPitch(sunYawDeg_, sunPitchDeg_);
+  // Shadow texture lives on unit 1; main-pass shaders sample it via
+  // u_shadowMap = 1.
+  glBindTextureUnit(1, shadowMap_.depthTexture());
 
   terrainShader_.use();
+  terrainShader_.setInt  ("u_shadowMap",       1);
+  terrainShader_.setMat4 ("u_lightViewProj",   lightVP);
+  terrainShader_.setFloat("u_shadowsEnabled",  shadowsEnabled_ ? 1.0f : 0.0f);
+  terrainShader_.setFloat("u_shadowDarkness",  shadowDarkness_);
+  terrainShader_.setFloat("u_shadowBias",      shadowBias_);
   terrainShader_.setMat4 ("u_viewProj", viewProj);
   terrainShader_.setVec3 ("u_paletteLevels",
                           glm::vec3(static_cast<float>(paletteHues_),
@@ -427,6 +464,21 @@ void App::renderFrame() {
       sunPitchDeg_ = 58.0f;
       ambient_     = 0.45f;
       diffuse_     = 0.55f;
+    }
+    ImGui::EndDisabled();
+
+    ImGui::Separator();
+    ImGui::TextUnformatted("Shadows (Phase 6b)");
+    ImGui::Checkbox("Directional shadow map", &shadowsEnabled_);
+    ImGui::BeginDisabled(!shadowsEnabled_);
+    ImGui::SliderFloat("Darkness",     &shadowDarkness_,   0.0f, 1.0f, "%.2f");
+    ImGui::SliderFloat("Bias",         &shadowBias_,    0.0001f, 0.02f, "%.4f");
+    ImGui::SliderFloat("Half-extent",  &shadowHalfExtent_, 10.0f, 80.0f, "%.0f");
+    ImGui::Text("Resolution: %d x %d", shadowMap_.size(), shadowMap_.size());
+    if (ImGui::SmallButton("Shadow defaults")) {
+      shadowDarkness_   = 0.55f;
+      shadowBias_       = 0.0025f;
+      shadowHalfExtent_ = 40.0f;
     }
     ImGui::EndDisabled();
 

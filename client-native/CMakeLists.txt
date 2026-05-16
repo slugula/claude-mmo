@@ -34,6 +34,7 @@ add_executable(client-native
   src/render/Mesh.cpp
   src/render/MsaaFramebuffer.cpp
   src/render/Shader.cpp
+  src/render/ShadowMap.cpp
   src/ui/Panels.cpp
   src/ui/WorldOverlays.cpp
   src/world/EntityRenderer.cpp

@@ -7,6 +7,7 @@
 #include "render/Mesh.hpp"
 #include "render/MsaaFramebuffer.hpp"
 #include "render/Shader.hpp"
+#include "render/ShadowMap.hpp"
 #include "shared/SharedTypes.hpp"
 #include "ui/Panels.hpp"
 #include "ui/WorldOverlays.hpp"
@@ -59,6 +60,8 @@ private:
   render::Shader                           wireframeShader_;
   render::Shader                           obstacleShader_;
   render::Shader                           skinnedShader_;
+  render::Shader                           shadowInstancedShader_;
+  render::ShadowMap                        shadowMap_;
   render::Mesh                             terrainMesh_;
   world::ObstacleSystem                    obstacles_;
   world::SkinnedMesh                       playerModel_;
@@ -114,6 +117,11 @@ private:
   float                                    sunPitchDeg_     = 58.0f;
   float                                    ambient_         = 0.45f;
   float                                    diffuse_         = 0.55f;
+  // Phase 6b — shadow map.
+  bool                                     shadowsEnabled_  = true;
+  float                                    shadowDarkness_  = 0.55f;
+  float                                    shadowBias_      = 0.0025f;
+  float                                    shadowHalfExtent_ = 40.0f;
   bool                                     imguiInited_     = false;
 };
 

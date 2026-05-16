@@ -321,4 +321,23 @@ void ObstacleSystem::render(render::Shader& obstacleShader) {
   glBindVertexArray(0);
 }
 
+void ObstacleSystem::renderDepth(render::Shader& /*depthShader*/) {
+  // Same VAOs as the regular render path. The bound program ignores normal
+  // + color attributes; it only reads position + per-instance pos/rotY.
+  if (treeCount_ > 0) {
+    glBindVertexArray(trunk_.vao);
+    glDrawElementsInstanced(GL_TRIANGLES, trunk_.indexCount, GL_UNSIGNED_INT,
+                            nullptr, static_cast<GLsizei>(treeCount_));
+    glBindVertexArray(canopy_.vao);
+    glDrawElementsInstanced(GL_TRIANGLES, canopy_.indexCount, GL_UNSIGNED_INT,
+                            nullptr, static_cast<GLsizei>(treeCount_));
+  }
+  if (rockCount_ > 0) {
+    glBindVertexArray(rock_.vao);
+    glDrawElementsInstanced(GL_TRIANGLES, rock_.indexCount, GL_UNSIGNED_INT,
+                            nullptr, static_cast<GLsizei>(rockCount_));
+  }
+  glBindVertexArray(0);
+}
+
 }  // namespace world
