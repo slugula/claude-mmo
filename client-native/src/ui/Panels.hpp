@@ -6,6 +6,8 @@
 #include <string>
 #include <unordered_map>
 
+namespace net { class NetworkClient; }
+
 namespace ui {
 
 // Phase 8a UI surface: read-only panels driven directly off the latest
@@ -16,8 +18,11 @@ namespace ui {
 // transcript of per-tick chatMessage observations.
 
 void drawSkillsPanel    (const shared::PlayerState& p);
-void drawInventoryPanel (const shared::PlayerState& p);
-void drawEquipmentPanel (const shared::PlayerState& p);
+// Inventory + Equipment panels accept a NetworkClient so right-click
+// "Drop / Equip / Remove" + drag-drop reordering can post actions back
+// to the server. Pass nullptr for a strictly read-only render.
+void drawInventoryPanel (const shared::PlayerState& p, net::NetworkClient* net);
+void drawEquipmentPanel (const shared::PlayerState& p, net::NetworkClient* net);
 
 // Rolling chat log. Append system messages via appendSystem(); call
 // observePlayerChat() once per frame with the local player + a map of remote
@@ -29,7 +34,9 @@ public:
   // playerName as the speaker. Caller passes in the union of (local + remote)
   // players keyed by id.
   void observePlayers(const std::unordered_map<std::string, shared::PlayerState>& players);
-  void draw();
+  // When `net` is non-null, an input field is drawn at the bottom of the
+  // log; submitting it forwards the message to net->sendChat().
+  void draw(net::NetworkClient* net);
 
 private:
   struct Entry {
@@ -40,6 +47,9 @@ private:
   std::deque<Entry>                        entries_;
   // Per-player id -> last seen chatMessageTick, so we only append on change.
   std::unordered_map<std::string, int>     seenChatTick_;
+  // Buffer for the input field — kept across frames so partial typing
+  // survives re-renders.
+  char                                     inputBuf_[256] = {};
 };
 
 }  // namespace ui

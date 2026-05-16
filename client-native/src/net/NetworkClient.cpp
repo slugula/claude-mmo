@@ -146,14 +146,134 @@ void NetworkClient::onWsClose(int code, const std::string& reason) {
   lastError_ = "ws closed: " + reason;
 }
 
-void NetworkClient::sendMoveTo(int targetX, int targetY) {
+void NetworkClient::sendActionRaw(const std::string& body) {
   if (!ws_ || status_.load() != Connection::Connected) return;
-  // Wire format: { type: "actions", actions: [{ type: "MOVE_TO", targetX, targetY }] }
-  char buf[160];
+  std::string out;
+  out.reserve(body.size() + 32);
+  out.append("{\"type\":\"actions\",\"actions\":[");
+  out.append(body);
+  out.append("]}");
+  ws_->send(out);
+}
+
+namespace {
+
+// JSON-escape a string. Covers control chars, quotes, and backslash —
+// enough for chat / item-id / npc-id payloads we control.
+std::string jsonEscape(const std::string& s) {
+  std::string out;
+  out.reserve(s.size() + 2);
+  for (char c : s) {
+    switch (c) {
+      case '"':  out += "\\\""; break;
+      case '\\': out += "\\\\"; break;
+      case '\b': out += "\\b";  break;
+      case '\f': out += "\\f";  break;
+      case '\n': out += "\\n";  break;
+      case '\r': out += "\\r";  break;
+      case '\t': out += "\\t";  break;
+      default:
+        if (static_cast<unsigned char>(c) < 0x20) {
+          char buf[8];
+          std::snprintf(buf, sizeof(buf), "\\u%04x", c);
+          out += buf;
+        } else {
+          out += c;
+        }
+    }
+  }
+  return out;
+}
+
+}  // namespace
+
+void NetworkClient::sendMoveTo(int targetX, int targetY) {
+  char buf[96];
   std::snprintf(buf, sizeof(buf),
-                "{\"type\":\"actions\",\"actions\":[{\"type\":\"MOVE_TO\",\"targetX\":%d,\"targetY\":%d}]}",
+                "{\"type\":\"MOVE_TO\",\"targetX\":%d,\"targetY\":%d}",
                 targetX, targetY);
-  ws_->send(buf);
+  sendActionRaw(buf);
+}
+
+void NetworkClient::sendChopTree(int tileX, int tileY) {
+  char buf[96];
+  std::snprintf(buf, sizeof(buf),
+                "{\"type\":\"CHOP_TREE\",\"tileX\":%d,\"tileY\":%d}",
+                tileX, tileY);
+  sendActionRaw(buf);
+}
+
+void NetworkClient::sendMineRock(int tileX, int tileY) {
+  char buf[96];
+  std::snprintf(buf, sizeof(buf),
+                "{\"type\":\"MINE_ROCK\",\"tileX\":%d,\"tileY\":%d}",
+                tileX, tileY);
+  sendActionRaw(buf);
+}
+
+void NetworkClient::sendAttackNpc(const std::string& npcId) {
+  sendActionRaw("{\"type\":\"ATTACK_NPC\",\"npcId\":\"" + jsonEscape(npcId) + "\"}");
+}
+
+void NetworkClient::sendTalkTo(const std::string& npcId) {
+  sendActionRaw("{\"type\":\"TALK_TO\",\"npcId\":\"" + jsonEscape(npcId) + "\"}");
+}
+
+void NetworkClient::sendTakeItem(const std::string& droppedItemId) {
+  sendActionRaw("{\"type\":\"TAKE_ITEM\",\"droppedItemId\":\"" + jsonEscape(droppedItemId) + "\"}");
+}
+
+void NetworkClient::sendDropItem(int slotIndex) {
+  char buf[64];
+  std::snprintf(buf, sizeof(buf),
+                "{\"type\":\"DROP_ITEM\",\"slotIndex\":%d}", slotIndex);
+  sendActionRaw(buf);
+}
+
+void NetworkClient::sendMoveSlot(int fromSlot, int toSlot) {
+  char buf[96];
+  std::snprintf(buf, sizeof(buf),
+                "{\"type\":\"MOVE_SLOT\",\"fromSlot\":%d,\"toSlot\":%d}",
+                fromSlot, toSlot);
+  sendActionRaw(buf);
+}
+
+void NetworkClient::sendEquipItem(int slotIndex) {
+  char buf[64];
+  std::snprintf(buf, sizeof(buf),
+                "{\"type\":\"EQUIP_ITEM\",\"slotIndex\":%d}", slotIndex);
+  sendActionRaw(buf);
+}
+
+void NetworkClient::sendUnequipItem(const std::string& equipSlot) {
+  sendActionRaw("{\"type\":\"UNEQUIP_ITEM\",\"slot\":\"" + jsonEscape(equipSlot) + "\"}");
+}
+
+void NetworkClient::sendChat(const std::string& message) {
+  sendActionRaw("{\"type\":\"SEND_CHAT\",\"message\":\"" + jsonEscape(message) + "\"}");
+}
+
+void NetworkClient::sendOpenBank() {
+  sendActionRaw("{\"type\":\"OPEN_BANK\"}");
+}
+
+void NetworkClient::sendDepositItem(int slotIndex, int quantity) {
+  char buf[96];
+  std::snprintf(buf, sizeof(buf),
+                "{\"type\":\"DEPOSIT_ITEM\",\"slotIndex\":%d,\"quantity\":%d}",
+                slotIndex, quantity);
+  sendActionRaw(buf);
+}
+
+void NetworkClient::sendDepositAll()  { sendActionRaw("{\"type\":\"DEPOSIT_ALL\"}"); }
+void NetworkClient::sendDepositWorn() { sendActionRaw("{\"type\":\"DEPOSIT_WORN\"}"); }
+
+void NetworkClient::sendWithdrawItem(int bankSlot, int quantity) {
+  char buf[96];
+  std::snprintf(buf, sizeof(buf),
+                "{\"type\":\"WITHDRAW_ITEM\",\"bankSlot\":%d,\"quantity\":%d}",
+                bankSlot, quantity);
+  sendActionRaw(buf);
 }
 
 std::vector<std::string> NetworkClient::drainMessages() {

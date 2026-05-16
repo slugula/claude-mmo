@@ -39,11 +39,29 @@ public:
 
   void disconnect();
 
-  // Send a MOVE_TO action to the server. Encoded as the canonical
-  // `{ type: "actions", actions: [{ type: "MOVE_TO", targetX, targetY }] }`
-  // wire format. Thread-safe; queues internally if the socket isn't open
-  // yet.
-  void sendMoveTo(int targetX, int targetY);
+  // Send a single GameAction. Body is a pre-encoded JSON object — e.g.
+  // `{"type":"CHOP_TREE","tileX":5,"tileY":7}`. We wrap it in the canonical
+  // `{"type":"actions","actions":[<body>]}` envelope and ship it. Threadsafe;
+  // silently drops if the WebSocket isn't connected.
+  void sendActionRaw(const std::string& body);
+
+  // Typed helpers — each builds its body and forwards to sendActionRaw().
+  void sendMoveTo      (int targetX, int targetY);
+  void sendChopTree    (int tileX,   int tileY);
+  void sendMineRock    (int tileX,   int tileY);
+  void sendAttackNpc   (const std::string& npcId);
+  void sendTalkTo      (const std::string& npcId);
+  void sendTakeItem    (const std::string& droppedItemId);
+  void sendDropItem    (int slotIndex);
+  void sendMoveSlot    (int fromSlot, int toSlot);
+  void sendEquipItem   (int slotIndex);
+  void sendUnequipItem (const std::string& equipSlot);
+  void sendChat        (const std::string& message);
+  void sendOpenBank    ();
+  void sendDepositItem (int slotIndex, int quantity);
+  void sendDepositAll  ();
+  void sendDepositWorn ();
+  void sendWithdrawItem(int bankSlot, int quantity);
 
   // ---- State accessors (main-thread reads) --------------------------------
 

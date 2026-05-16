@@ -1,11 +1,15 @@
 #include "ui/Panels.hpp"
 
+#include "net/NetworkClient.hpp"
+
 #include <imgui.h>
 
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <cfloat>
 #include <cstdio>
+#include <cstring>
 #include <optional>
 #include <string>
 #include <vector>
@@ -69,7 +73,13 @@ std::string prettyItemId(const std::string& id) {
   return out;
 }
 
-void drawSlot(const std::optional<shared::ItemStack>& slot, ImVec2 size) {
+// Paint a slot background + item label at the current cursor position, then
+// consume the cell area as an InvisibleButton so callers can attach
+// drag-drop sources/targets and context-menu popups to the same hit-region.
+// Returns true when the cell was clicked this frame.
+bool drawSlot(const char*                              idStr,
+              const std::optional<shared::ItemStack>& slot,
+              ImVec2                                   size) {
   const ImU32 border = IM_COL32(70, 70, 70, 255);
   const ImU32 fill   = IM_COL32(35, 35, 35, 255);
   ImVec2 p = ImGui::GetCursorScreenPos();
@@ -88,7 +98,9 @@ void drawSlot(const std::optional<shared::ItemStack>& slot, ImVec2 size) {
       dl->AddText(ImVec2(p.x + 3, p.y + 2), IM_COL32(255, 230, 100, 255), qty);
     }
   }
-  ImGui::Dummy(size);
+  // InvisibleButton gives us hover/click + drag-drop hooks on a real ImGui
+  // item, instead of a dead Dummy.
+  return ImGui::InvisibleButton(idStr, size);
 }
 
 }  // namespace
@@ -135,18 +147,65 @@ void drawSkillsPanel(const shared::PlayerState& p) {
 }
 
 // ---- Inventory -------------------------------------------------------------
+//
+// Per-slot interactions:
+//   - Drag a non-empty slot onto another slot  -> MOVE_SLOT
+//   - Right-click a non-empty slot             -> popup: Equip / Drop
+//   - Hover                                    -> tooltip with itemId + qty
+//
+// The drag payload is the source slot index. Server validates everything.
 
-void drawInventoryPanel(const shared::PlayerState& p) {
+void drawInventoryPanel(const shared::PlayerState& p, net::NetworkClient* netc) {
   if (!ImGui::Begin("Inventory")) { ImGui::End(); return; }
 
   const float cell = 44.0f;
   const float pad  = 4.0f;
+
   for (int r = 0; r < kInventoryRows; ++r) {
     for (int c = 0; c < kInventoryCols; ++c) {
       const int idx = r * kInventoryCols + c;
       std::optional<shared::ItemStack> slot;
       if (idx < static_cast<int>(p.inventory.size())) slot = p.inventory[idx];
-      drawSlot(slot, ImVec2(cell, cell));
+
+      char idBuf[24];
+      std::snprintf(idBuf, sizeof(idBuf), "##invslot_%d", idx);
+
+      ImGui::PushID(idx);
+      drawSlot(idBuf, slot, ImVec2(cell, cell));
+
+      // ---- Drag source (only when the slot has an item) -------------------
+      if (slot && netc &&
+          ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
+        const int payload = idx;
+        ImGui::SetDragDropPayload("INV_SLOT", &payload, sizeof(payload));
+        ImGui::TextUnformatted(prettyItemId(slot->itemId).c_str());
+        ImGui::EndDragDropSource();
+      }
+      // ---- Drag target -----------------------------------------------------
+      if (netc && ImGui::BeginDragDropTarget()) {
+        if (const ImGuiPayload* pl = ImGui::AcceptDragDropPayload("INV_SLOT")) {
+          int from = *static_cast<const int*>(pl->Data);
+          if (from != idx) netc->sendMoveSlot(from, idx);
+        }
+        ImGui::EndDragDropTarget();
+      }
+      // ---- Right-click popup ----------------------------------------------
+      if (slot && netc && ImGui::BeginPopupContextItem("inv_ctx")) {
+        ImGui::TextUnformatted(prettyItemId(slot->itemId).c_str());
+        ImGui::Separator();
+        if (ImGui::Selectable("Equip")) { netc->sendEquipItem(idx); }
+        if (ImGui::Selectable("Drop"))  { netc->sendDropItem (idx); }
+        ImGui::EndPopup();
+      }
+      // ---- Hover tooltip ---------------------------------------------------
+      if (slot && ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
+        ImGui::BeginTooltip();
+        ImGui::TextUnformatted(prettyItemId(slot->itemId).c_str());
+        if (slot->quantity > 1) ImGui::Text("Quantity: %d", slot->quantity);
+        ImGui::EndTooltip();
+      }
+      ImGui::PopID();
+
       if (c + 1 < kInventoryCols) ImGui::SameLine(0.0f, pad);
     }
   }
@@ -154,15 +213,17 @@ void drawInventoryPanel(const shared::PlayerState& p) {
 }
 
 // ---- Equipment -------------------------------------------------------------
+//
+// Right-click a populated slot to unequip — server moves the item back into
+// the first free inventory slot.
 
-void drawEquipmentPanel(const shared::PlayerState& p) {
+void drawEquipmentPanel(const shared::PlayerState& p, net::NetworkClient* netc) {
   if (!ImGui::Begin("Equipment")) { ImGui::End(); return; }
 
   const float cell = 56.0f;
   const float pad  = 4.0f;
   for (int row = 0; row < 5; ++row) {
     for (int col = 0; col < 3; ++col) {
-      // Find the cell for (row, col)
       const EquipCell* match = nullptr;
       for (const auto& e : kEquipGrid) {
         if (e.row == row && e.col == col) { match = &e; break; }
@@ -171,7 +232,26 @@ void drawEquipmentPanel(const shared::PlayerState& p) {
         std::optional<shared::ItemStack> slot;
         auto it = p.equipped.find(match->slotId);
         if (it != p.equipped.end()) slot = it->second;
-        drawSlot(slot, ImVec2(cell, cell));
+
+        char idBuf[32];
+        std::snprintf(idBuf, sizeof(idBuf), "##eqslot_%s", match->slotId);
+        ImGui::PushID(match->slotId);
+        drawSlot(idBuf, slot, ImVec2(cell, cell));
+
+        if (slot && netc && ImGui::BeginPopupContextItem("eq_ctx")) {
+          ImGui::TextUnformatted(prettyItemId(slot->itemId).c_str());
+          ImGui::Separator();
+          if (ImGui::Selectable("Remove")) {
+            netc->sendUnequipItem(match->slotId);
+          }
+          ImGui::EndPopup();
+        }
+        if (slot && ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
+          ImGui::BeginTooltip();
+          ImGui::Text("%s — %s", match->label, prettyItemId(slot->itemId).c_str());
+          ImGui::EndTooltip();
+        }
+        ImGui::PopID();
       } else {
         ImGui::Dummy(ImVec2(cell, cell));
       }
@@ -200,9 +280,14 @@ void ChatLog::observePlayers(const std::unordered_map<std::string, shared::Playe
   }
 }
 
-void ChatLog::draw() {
+void ChatLog::draw(net::NetworkClient* netc) {
   if (!ImGui::Begin("Chat")) { ImGui::End(); return; }
-  ImGui::BeginChild("chat_scroll", ImVec2(0, 0), false,
+  // Reserve room for the input field at the bottom when a network client
+  // is wired up.
+  const float reserveH = netc
+      ? (ImGui::GetFrameHeightWithSpacing())
+      : 0.0f;
+  ImGui::BeginChild("chat_scroll", ImVec2(0, -reserveH), false,
                     ImGuiWindowFlags_HorizontalScrollbar);
   for (const auto& e : entries_) {
     const ImVec4 color = e.system ? ImVec4(1.0f, 0.92f, 0.30f, 1.0f)
@@ -215,6 +300,21 @@ void ChatLog::draw() {
     ImGui::SetScrollHereY(1.0f);
   }
   ImGui::EndChild();
+  if (netc) {
+    ImGui::SetNextItemWidth(-FLT_MIN);
+    if (ImGui::InputText("##chat_in", inputBuf_, sizeof(inputBuf_),
+                         ImGuiInputTextFlags_EnterReturnsTrue)) {
+      if (inputBuf_[0] != '\0') {
+        netc->sendChat(inputBuf_);
+        // Mirror locally so the speaker sees it immediately; remote
+        // observers see it via the next chatMessageTick.
+        entries_.push_back({ std::string("You: ") + inputBuf_, false });
+        while (entries_.size() > kMax) entries_.pop_front();
+      }
+      inputBuf_[0] = '\0';
+      ImGui::SetKeyboardFocusHere(-1);   // refocus input for fast follow-ups
+    }
+  }
   ImGui::End();
 }
 

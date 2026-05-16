@@ -401,9 +401,9 @@ void App::renderFrame() {
   // something coherent to display).
   if (network_.status() == net::Connection::Connected && currLocalPlayer_) {
     ui::drawSkillsPanel   (*currLocalPlayer_);
-    ui::drawInventoryPanel(*currLocalPlayer_);
-    ui::drawEquipmentPanel(*currLocalPlayer_);
-    chatLog_.draw();
+    ui::drawInventoryPanel(*currLocalPlayer_, &network_);
+    ui::drawEquipmentPanel(*currLocalPlayer_, &network_);
+    chatLog_.draw(&network_);
 
     overlays_.drawWithHeight(
         viewProj, fbW, fbH,
