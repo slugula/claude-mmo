@@ -15,6 +15,7 @@ find_package(glad        CONFIG REQUIRED)
 find_package(glm         CONFIG REQUIRED)
 find_package(glaze       CONFIG REQUIRED)
 find_package(ixwebsocket CONFIG REQUIRED)
+find_package(cgltf       CONFIG REQUIRED)
 find_package(imgui       CONFIG REQUIRED)
 
 # ---- Main executable --------------------------------------------------------
@@ -30,8 +31,10 @@ add_executable(client-native
   src/render/Mesh.cpp
   src/render/MsaaFramebuffer.cpp
   src/render/Shader.cpp
+  src/world/GltfLoader.cpp
   src/world/MapGenerator.cpp
   src/world/ObstacleSystem.cpp
+  src/world/SkinnedMesh.cpp
   src/world/TerrainBuilder.cpp
 )
 
@@ -43,6 +46,7 @@ target_link_libraries(client-native PRIVATE
   glm::glm
   glaze::glaze
   ixwebsocket::ixwebsocket
+  cgltf::cgltf
   imgui::imgui
 )
 

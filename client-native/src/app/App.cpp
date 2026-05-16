@@ -12,6 +12,8 @@
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_opengl3.h>
 
+#include <glm/gtc/matrix_transform.hpp>
+
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
@@ -38,13 +40,15 @@ constexpr const char* kWireframeVertPath = "shaders/wireframe.vert";
 constexpr const char* kWireframeFragPath = "shaders/wireframe.frag";
 constexpr const char* kObstacleVertPath  = "shaders/obstacle.vert";
 constexpr const char* kObstacleFragPath  = "shaders/obstacle.frag";
+constexpr const char* kSkinnedVertPath   = "shaders/skinned.vert";
+constexpr const char* kSkinnedFragPath   = "shaders/skinned.frag";
+constexpr const char* kPlayerModelPath   = "assets/models/player.glb";
 
 // Hardcoded sun direction for obstacle Lambert until Phase 6 swaps in proper
 // directional lighting + shadow mapping.
 constexpr glm::vec3 kSunDirection{-0.45f, -0.85f, -0.30f};
-constexpr glm::vec3 kPlayerColor  { 0.25f, 0.45f, 0.85f};  // blue placeholder
-constexpr float     kPlayerHeight = 0.85f;
-constexpr float     kPlayerRadius = 0.22f;
+constexpr glm::vec3 kPlayerColor  { 0.62f, 0.45f, 0.30f};  // skin tone, modulated by Lambert
+constexpr float     kPlayerScale  = 1.0f;
 
 // Avg of 4 corner heights at the integer tile (tx, ty).
 float tileWorldY(const shared::WorldMapFile& map, int tx, int ty) {
@@ -77,7 +81,6 @@ glm::vec3 followTargetForMap(int w, int h) {
 App::~App() {
   if (imguiInited_) shutdownImGui();
   destroyHoverMesh();
-  destroyPlayerMesh();
 }
 
 bool App::init() {
@@ -122,11 +125,22 @@ bool App::init() {
     std::fprintf(stderr, "[App] obstacle shader load failed\n");
     return false;
   }
+  if (!skinnedShader_.fromFiles(resolveFromExe(kSkinnedVertPath),
+                                resolveFromExe(kSkinnedFragPath))) {
+    std::fprintf(stderr, "[App] skinned shader load failed\n");
+    return false;
+  }
 
   obstacles_.initGL();
   generateAndBuildTerrain();
   initHoverMesh();
-  initPlayerMesh();
+  // Player skinned mesh — failure is non-fatal so we still run if the
+  // asset is missing; the player just won't render.
+  if (!playerModel_.load(resolveFromExe(kPlayerModelPath))) {
+    std::fprintf(stderr, "[App] player glTF load failed — proceeding without a player model\n");
+  } else {
+    playerModel_.setClip("Idle_Loop");
+  }
 
   // Snap the camera to the map center so the first frame isn't mid-lerp.
   camera_.snapTo(followTargetForMap(terrainTileW_, terrainTileH_));
@@ -276,9 +290,9 @@ void App::renderFrame() {
   obstacleShader_.setFloat("u_paletteEnabled", palette_ ? 1.0f : 0.0f);
   obstacles_.render(obstacleShader_);
 
-  // ---- Local player (Phase 4 placeholder) ------------------------------------
+  // ---- Local player (Phase 5: skinned glTF) ----------------------------------
   processNetworkMessages();
-  renderPlayer(viewProj);
+  renderPlayer(viewProj, dt);
 
   // ---- Wireframe grid overlay ------------------------------------------------
   if (wireframe_) {
@@ -434,106 +448,29 @@ void App::shutdownImGui() {
 }
 
 // =====================================================================
-// Player placeholder mesh (Phase 4 — Phase 5 replaces with humanoid + glTF)
+// Player rendering — skinned glTF (Phase 5)
 // =====================================================================
-
-void App::initPlayerMesh() {
-  destroyPlayerMesh();
-
-  // Procedural cylinder, 6 sides, radius kPlayerRadius, height kPlayerHeight,
-  // base at Y=0. Each vertex carries a face-aligned normal. (Bottom cap omitted
-  // since the player sits on the ground.)
-  constexpr int   segments = 6;
-  constexpr float twoPi    = 6.2831853f;
-  std::vector<float>    positions;
-  std::vector<float>    normals;
-  std::vector<uint32_t> indices;
-  positions.reserve(segments * 2 * 3 + 6);
-  normals.reserve  (segments * 2 * 3 + 6);
-
-  // Sides
-  for (int i = 0; i < segments; ++i) {
-    const float a  = (static_cast<float>(i) / segments) * twoPi;
-    const float nx = std::cos(a);
-    const float nz = std::sin(a);
-    const float px = nx * kPlayerRadius;
-    const float pz = nz * kPlayerRadius;
-    positions.insert(positions.end(), { px, 0.0f,            pz });
-    normals.insert(normals.end(),     { nx, 0.0f,            nz });
-    positions.insert(positions.end(), { px, kPlayerHeight,   pz });
-    normals.insert(normals.end(),     { nx, 0.0f,            nz });
-  }
-  for (int i = 0; i < segments; ++i) {
-    const uint32_t b0 = static_cast<uint32_t>(2 * i);
-    const uint32_t b1 = static_cast<uint32_t>(2 * ((i + 1) % segments));
-    indices.insert(indices.end(), { b0, b0 + 1, b1 + 1,   b0, b1 + 1, b1 });
-  }
-  // Top cap
-  const uint32_t topCenter = static_cast<uint32_t>(positions.size() / 3);
-  positions.insert(positions.end(), { 0.0f, kPlayerHeight, 0.0f });
-  normals.insert(normals.end(),     { 0.0f, 1.0f,          0.0f });
-  for (int i = 0; i < segments; ++i) {
-    const float a  = (static_cast<float>(i) / segments) * twoPi;
-    positions.insert(positions.end(), { std::cos(a) * kPlayerRadius, kPlayerHeight, std::sin(a) * kPlayerRadius });
-    normals.insert(normals.end(),     { 0.0f, 1.0f, 0.0f });
-  }
-  for (int i = 0; i < segments; ++i) {
-    const uint32_t r0 = topCenter + 1 + static_cast<uint32_t>(i);
-    const uint32_t r1 = topCenter + 1 + static_cast<uint32_t>((i + 1) % segments);
-    indices.insert(indices.end(), { topCenter, r0, r1 });
-  }
-
-  glCreateBuffers(1, &playerVboPos_);
-  glCreateBuffers(1, &playerVboNrm_);
-  glCreateBuffers(1, &playerEbo_);
-  glCreateBuffers(1, &playerInstanceVbo_);
-  glNamedBufferStorage(playerVboPos_, static_cast<GLsizeiptr>(positions.size() * sizeof(float)),
-                       positions.data(), 0);
-  glNamedBufferStorage(playerVboNrm_, static_cast<GLsizeiptr>(normals.size() * sizeof(float)),
-                       normals.data(), 0);
-  glNamedBufferStorage(playerEbo_,    static_cast<GLsizeiptr>(indices.size() * sizeof(uint32_t)),
-                       indices.data(), 0);
-  // 1-instance dynamic buffer — same layout (vec3 pos + float rotY) as the
-  // ObstacleSystem uses, so we render with the existing obstacle shader.
-  glNamedBufferStorage(playerInstanceVbo_, sizeof(float) * 4, nullptr, GL_DYNAMIC_STORAGE_BIT);
-
-  glCreateVertexArrays(1, &playerVao_);
-  glVertexArrayVertexBuffer(playerVao_, 0, playerVboPos_, 0, sizeof(float) * 3);
-  glEnableVertexArrayAttrib(playerVao_, 0);
-  glVertexArrayAttribFormat(playerVao_, 0, 3, GL_FLOAT, GL_FALSE, 0);
-  glVertexArrayAttribBinding(playerVao_, 0, 0);
-  glVertexArrayVertexBuffer(playerVao_, 1, playerVboNrm_, 0, sizeof(float) * 3);
-  glEnableVertexArrayAttrib(playerVao_, 1);
-  glVertexArrayAttribFormat(playerVao_, 1, 3, GL_FLOAT, GL_FALSE, 0);
-  glVertexArrayAttribBinding(playerVao_, 1, 1);
-  // Per-instance attributes (binding 2 with divisor 1): vec3 pos at offset 0,
-  // float rotY at offset 12.
-  glVertexArrayVertexBuffer(playerVao_, 2, playerInstanceVbo_, 0, sizeof(float) * 4);
-  glVertexArrayBindingDivisor(playerVao_, 2, 1);
-  glEnableVertexArrayAttrib(playerVao_, 2);
-  glVertexArrayAttribFormat(playerVao_, 2, 3, GL_FLOAT, GL_FALSE, 0);
-  glVertexArrayAttribBinding(playerVao_, 2, 2);
-  glEnableVertexArrayAttrib(playerVao_, 3);
-  glVertexArrayAttribFormat(playerVao_, 3, 1, GL_FLOAT, GL_FALSE, sizeof(float) * 3);
-  glVertexArrayAttribBinding(playerVao_, 3, 2);
-  glVertexArrayElementBuffer(playerVao_, playerEbo_);
-  playerIdxCount_ = static_cast<GLsizei>(indices.size());
+//
+// State -> animation clip mapping:
+//   - default          -> Idle_Loop
+//   - is path-walking  -> Walk_Loop
+//   - (extend in Phase 10 for combat / death / chop / etc.)
+namespace {
+const char* clipForPlayer(const shared::PlayerState* p) {
+  if (!p) return "Idle_Loop";
+  const bool walking =
+      !p->path.empty() ||
+      p->destinationX != p->tileX ||
+      p->destinationY != p->tileY;
+  return walking ? "Walk_Loop" : "Idle_Loop";
 }
+}  // namespace
 
-void App::destroyPlayerMesh() {
-  if (playerInstanceVbo_) glDeleteBuffers(1, &playerInstanceVbo_);
-  if (playerEbo_)         glDeleteBuffers(1, &playerEbo_);
-  if (playerVboNrm_)      glDeleteBuffers(1, &playerVboNrm_);
-  if (playerVboPos_)      glDeleteBuffers(1, &playerVboPos_);
-  if (playerVao_)         glDeleteVertexArrays(1, &playerVao_);
-  playerVao_ = playerVboPos_ = playerVboNrm_ = playerEbo_ = playerInstanceVbo_ = 0;
-  playerIdxCount_ = 0;
-}
-
-void App::renderPlayer(const glm::mat4& viewProj) {
+void App::renderPlayer(const glm::mat4& viewProj, float dt) {
   if (!currLocalPlayer_) return;
+  if (!playerModel_.isLoaded()) return;
 
-  // Compute the smooth-interp position from prev/curr server snapshots.
+  // Smooth-interpolated position from prev/curr server snapshots.
   float fx = static_cast<float>(currLocalPlayer_->tileX);
   float fy = static_cast<float>(currLocalPlayer_->tileY);
   float yWorld = tileWorldY(map_, currLocalPlayer_->tileX, currLocalPlayer_->tileY);
@@ -548,21 +485,28 @@ void App::renderPlayer(const glm::mat4& viewProj) {
     yWorld = std::lerp(prevY, yWorld, alpha);
   }
 
-  const float inst[4] = { fx, yWorld, fy, 0.0f /*rotation deferred to Phase 5*/ };
-  glNamedBufferSubData(playerInstanceVbo_, 0, sizeof(inst), inst);
+  // Animation clip & timing
+  const char* desired = clipForPlayer(&*currLocalPlayer_);
+  if (playerModel_.clipName() != desired) {
+    playerModel_.setClip(desired);
+  }
+  playerModel_.update(dt);
 
-  obstacleShader_.use();
-  obstacleShader_.setMat4 ("u_viewProj",       viewProj);
-  obstacleShader_.setVec3 ("u_lightDir",       kSunDirection);
-  obstacleShader_.setVec3 ("u_paletteLevels",
-                           glm::vec3(static_cast<float>(paletteHues_),
-                                     static_cast<float>(paletteSats_),
-                                     static_cast<float>(paletteLums_)));
-  obstacleShader_.setFloat("u_paletteEnabled", palette_ ? 1.0f : 0.0f);
-  obstacleShader_.setVec3 ("u_color",          kPlayerColor);
-  glBindVertexArray(playerVao_);
-  glDrawElementsInstanced(GL_TRIANGLES, playerIdxCount_, GL_UNSIGNED_INT, nullptr, 1);
-  glBindVertexArray(0);
+  // Build the entity's world transform. Forward/facing is left at identity
+  // for now — Phase 10 polish will rotate by PlayerState.facing.
+  glm::mat4 modelMatrix = glm::translate(glm::mat4(1.0f), glm::vec3(fx, yWorld, fy));
+  modelMatrix = glm::scale(modelMatrix, glm::vec3(kPlayerScale));
+
+  skinnedShader_.use();
+  skinnedShader_.setMat4 ("u_viewProj",       viewProj);
+  skinnedShader_.setVec3 ("u_lightDir",       kSunDirection);
+  skinnedShader_.setVec3 ("u_paletteLevels",
+                          glm::vec3(static_cast<float>(paletteHues_),
+                                    static_cast<float>(paletteSats_),
+                                    static_cast<float>(paletteLums_)));
+  skinnedShader_.setFloat("u_paletteEnabled", palette_ ? 1.0f : 0.0f);
+  skinnedShader_.setVec3 ("u_color",          kPlayerColor);
+  playerModel_.render(skinnedShader_, modelMatrix);
 }
 
 // =====================================================================

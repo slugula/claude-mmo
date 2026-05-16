@@ -9,6 +9,7 @@
 #include "render/Shader.hpp"
 #include "shared/SharedTypes.hpp"
 #include "world/ObstacleSystem.hpp"
+#include "world/SkinnedMesh.hpp"
 
 #include <glad/glad.h>
 
@@ -43,9 +44,7 @@ private:
   void destroyHoverMesh();
   void updateHoverMesh(int tx, int ty);
 
-  void initPlayerMesh();
-  void destroyPlayerMesh();
-  void renderPlayer(const glm::mat4& viewProj);
+  void renderPlayer(const glm::mat4& viewProj, float dt);
   void processNetworkMessages();
   // Returns true if cursor world position should be sampled for a click
   // action (i.e. a real terrain tile, not an ImGui-owned area).
@@ -56,8 +55,10 @@ private:
   render::Shader                           terrainShader_;
   render::Shader                           wireframeShader_;
   render::Shader                           obstacleShader_;
+  render::Shader                           skinnedShader_;
   render::Mesh                             terrainMesh_;
   world::ObstacleSystem                    obstacles_;
+  world::SkinnedMesh                       playerModel_;
   camera::GameCamera                       camera_;
 
   // Hover indicator — a small dynamic VAO/VBO holding 4 vertices drawn as
@@ -65,16 +66,6 @@ private:
   // hovered tile.
   GLuint                                   hoverVao_     = 0;
   GLuint                                   hoverVbo_     = 0;
-
-  // Player placeholder — a small cylinder + sphere head rendered via the
-  // obstacle shader as a single instance. Phase 5 replaces with proper
-  // humanoid geometry and weapon-from-glTF.
-  GLuint                                   playerVao_         = 0;
-  GLuint                                   playerVboPos_      = 0;
-  GLuint                                   playerVboNrm_      = 0;
-  GLuint                                   playerEbo_         = 0;
-  GLuint                                   playerInstanceVbo_ = 0;
-  GLsizei                                  playerIdxCount_    = 0;
 
   // Networking
   net::NetworkClient                       network_;
