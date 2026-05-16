@@ -132,6 +132,7 @@ bool App::init() {
   }
 
   obstacles_.initGL();
+  entities_.initGL();
   generateAndBuildTerrain();
   initHoverMesh();
   // Player skinned mesh — failure is non-fatal so we still run if the
@@ -290,6 +291,11 @@ void App::renderFrame() {
   obstacleShader_.setFloat("u_paletteEnabled", palette_ ? 1.0f : 0.0f);
   obstacles_.render(obstacleShader_);
 
+  // ---- NPCs + dropped items (Phase 5d) ---------------------------------------
+  // Reuses the obstacle shader (same uniforms already bound) and per-instance
+  // attribute layout. EntityRenderer sets u_color per draw kind internally.
+  entities_.render(obstacleShader_);
+
   // ---- Local player (Phase 5: skinned glTF) ----------------------------------
   processNetworkMessages();
   renderPlayer(viewProj, dt);
@@ -341,6 +347,8 @@ void App::renderFrame() {
     ImGui::Text("Tris/tile: 2   Indices: %d", terrainIndexCt_);
     ImGui::Text("Obstacles: %zu trees, %zu rocks  (instanced)",
                 obstacles_.treeCount(), obstacles_.rockCount());
+    ImGui::Text("Entities: %zu NPCs, %zu dropped items",
+                entities_.npcCount(), entities_.itemCount());
     if (ImGui::Button("Regenerate (next seed)")) {
       ++mapSeed_;
       generateAndBuildTerrain();
@@ -463,17 +471,27 @@ namespace {
 // length is the unambiguous source of truth.
 const char* clipForPlayer(const shared::PlayerState* p) {
   if (!p) return "Idle_Loop";
-  return p->path.empty() ? "Idle_Loop" : "Walk_Loop";
+  // Death is sticky — server keeps `dying` true for the full death duration
+  // (PLAYER_DEATH_TICKS), so we play Death01 across all those frames.
+  if (p->dying)        return "Death01";
+  if (p->path.empty()) return "Idle_Loop";
+  // Movement at 1 tile per 200ms tick = 5 m/s for a ~1.8m character —
+  // that's full sprint territory. Sprint_Loop looks right at that speed;
+  // Walk_Loop looks like the character is power-sliding instead.
+  return "Sprint_Loop";
 }
 
 // Server's PlayerState.facing -> Y-axis rotation in radians.
 // World convention: +X = east, +Z = north. glTF rest pose forward is -Z so
-// we offset by pi to align "north" with the model's default front.
+// we offset by pi to align "north" with the model's default front. East /
+// west swapped relative to the first cut — our left-handed projection flips
+// the apparent sense of positive rotation around Y vs the right-handed
+// math glm encodes.
 float facingToYaw(const std::string& facing) {
-  if (facing == "north") return 3.14159265f;          // +pi  -> face +Z
-  if (facing == "south") return 0.0f;                  // 0    -> face -Z (model rest)
-  if (facing == "east")  return -1.57079632f;          // -pi/2 -> face +X
-  if (facing == "west")  return  1.57079632f;          // +pi/2 -> face -X
+  if (facing == "north") return 3.14159265f;          // +pi   -> face +Z
+  if (facing == "south") return 0.0f;                  // 0     -> face -Z (model rest)
+  if (facing == "east")  return  1.57079632f;          // +pi/2 -> face +X
+  if (facing == "west")  return -1.57079632f;          // -pi/2 -> face -X
   return 0.0f;
 }
 }  // namespace
@@ -555,7 +573,12 @@ void App::processNetworkMessages() {
         std::fprintf(stderr, "[App] state parse failed\n");
         continue;
       }
-      currentTick_ = st.tick;
+      currentTick_  = st.tick;
+      npcs_         = std::move(st.npcs);
+      droppedItems_ = std::move(st.droppedItems);
+      entities_.rebuildNpcs (npcs_,         map_);
+      entities_.rebuildItems(droppedItems_, map_);
+
       auto it = st.players.find(network_.playerId());
       if (it != st.players.end()) {
         const bool firstState = !currLocalPlayer_.has_value();

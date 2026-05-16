@@ -8,6 +8,7 @@
 #include "render/MsaaFramebuffer.hpp"
 #include "render/Shader.hpp"
 #include "shared/SharedTypes.hpp"
+#include "world/EntityRenderer.hpp"
 #include "world/ObstacleSystem.hpp"
 #include "world/SkinnedMesh.hpp"
 
@@ -59,6 +60,7 @@ private:
   render::Mesh                             terrainMesh_;
   world::ObstacleSystem                    obstacles_;
   world::SkinnedMesh                       playerModel_;
+  world::EntityRenderer                    entities_;
   camera::GameCamera                       camera_;
 
   // Hover indicator — a small dynamic VAO/VBO holding 4 vertices drawn as
@@ -71,6 +73,8 @@ private:
   net::NetworkClient                       network_;
   std::optional<shared::PlayerState>       currLocalPlayer_;
   std::optional<shared::PlayerState>       prevLocalPlayer_;
+  std::vector<shared::NPCState>            npcs_;
+  std::vector<shared::DroppedItemState>    droppedItems_;
   std::chrono::steady_clock::time_point    lastTickTime_{};
   int                                      currentTick_       = 0;
   char                                     loginUser_[64]     = "test";

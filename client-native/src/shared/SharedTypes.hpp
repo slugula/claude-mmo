@@ -79,16 +79,18 @@ struct PlayerState {
   int                       hp             = 0;
   int                       maxHp          = 0;
   std::string               playerName;
+  bool                      dying          = false;
 };
 
-// Partial NPCState — enough to render a placeholder, no behaviour yet.
+// Partial NPCState — enough to render at the right place + face.
 struct NPCState {
   std::string id;
   std::string kind;
-  int         tileX       = 0;
-  int         tileY       = 0;
+  int         tileX  = 0;
+  int         tileY  = 0;
   std::string facing;
-  int         hp          = 0;
+  int         hp     = 0;
+  bool        dying  = false;
 };
 
 struct DroppedItemState {

@@ -34,6 +34,7 @@ add_executable(client-native
   src/render/Mesh.cpp
   src/render/MsaaFramebuffer.cpp
   src/render/Shader.cpp
+  src/world/EntityRenderer.cpp
   src/world/GltfLoader.cpp
   src/world/MapGenerator.cpp
   src/world/ObstacleSystem.cpp
