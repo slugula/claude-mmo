@@ -338,6 +338,21 @@ void App::renderFrame() {
 
   drawLoginUi();
 
+  // Phase 8a — game UI panels + world overlays. Only worth drawing once
+  // we've received a first state from the server (so the panels have
+  // something coherent to display).
+  if (network_.status() == net::Connection::Connected && currLocalPlayer_) {
+    ui::drawSkillsPanel   (*currLocalPlayer_);
+    ui::drawInventoryPanel(*currLocalPlayer_);
+    ui::drawEquipmentPanel(*currLocalPlayer_);
+    chatLog_.draw();
+
+    overlays_.drawWithHeight(
+        viewProj, fbW, fbH,
+        currLocalPlayer_, npcs_,
+        [this](int tx, int ty) { return tileWorldY(map_, tx, ty); });
+  }
+
   if (ImGui::Begin("Phase 2 - Terrain + Camera")) {
     ImGui::Text("GL %s", glGetString(GL_VERSION));
     ImGui::Text("Framebuffer: %d x %d", fbW, fbH);
@@ -576,8 +591,13 @@ void App::processNetworkMessages() {
       currentTick_  = st.tick;
       npcs_         = std::move(st.npcs);
       droppedItems_ = std::move(st.droppedItems);
+      allPlayers_   = st.players;
       entities_.rebuildNpcs (npcs_,         map_);
       entities_.rebuildItems(droppedItems_, map_);
+
+      // Phase 8 — feed chat + hit-splat detectors before we move-from players.
+      chatLog_.observePlayers(allPlayers_);
+      overlays_.update(currentTick_, currLocalPlayer_, npcs_);
 
       auto it = st.players.find(network_.playerId());
       if (it != st.players.end()) {
@@ -586,6 +606,11 @@ void App::processNetworkMessages() {
         currLocalPlayer_ = it->second;
         lastTickTime_    = std::chrono::steady_clock::now();
         if (firstState) {
+          if (!loginAnnounced_) {
+            chatLog_.appendSystem("Welcome to Project Reverie.");
+            chatLog_.appendSystem(std::string("Logged in as ") + network_.playerName() + ".");
+            loginAnnounced_ = true;
+          }
           // Teleport the camera so the player is immediately visible — the
           // server may have placed them well outside our 64x64 procedural
           // map (server constants default PLAYER_START_{X,Y} to 128).

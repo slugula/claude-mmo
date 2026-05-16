@@ -9,6 +9,7 @@
 // TypeScript -> C++ codegen script.
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -66,31 +67,56 @@ struct GridPosition {
   int y = 0;
 };
 
+// One inventory / equipment slot. Item icons (PNG) aren't loaded yet;
+// panels display `itemId` as a short text label.
+struct ItemStack {
+  std::string itemId;
+  int         quantity = 0;
+};
+
+// SkillsState in TS is Record<SkillId, SkillState>. We deserialize as a
+// flat map so any future skill the server adds shows up automatically.
+struct SkillState {
+  int xp    = 0;
+  int level = 1;
+};
+
 // Mirror of PlayerState — partial: only the fields the native client needs
 // for rendering and pathing. The server's response carries more (inventory,
 // skills, equipment, chat, etc.); we skip those for Phase 4.
 struct PlayerState {
-  int                       tileX          = 0;
-  int                       tileY          = 0;
-  std::string               facing;          // "north" / "south" / "east" / "west"
-  std::vector<GridPosition> path;
-  int                       destinationX   = 0;
-  int                       destinationY   = 0;
-  int                       hp             = 0;
-  int                       maxHp          = 0;
-  std::string               playerName;
-  bool                      dying          = false;
+  int                                          tileX          = 0;
+  int                                          tileY          = 0;
+  std::string                                  facing;          // "north" / "south" / "east" / "west"
+  std::vector<GridPosition>                    path;
+  int                                          destinationX   = 0;
+  int                                          destinationY   = 0;
+  int                                          hp             = 0;
+  int                                          maxHp          = 0;
+  std::string                                  playerName;
+  bool                                         dying          = false;
+  // Phase 8 — fields needed by the UI panels.
+  std::vector<std::optional<ItemStack>>        inventory;
+  std::unordered_map<std::string, ItemStack>   equipped;
+  std::unordered_map<std::string, SkillState>  skills;
+  std::string                                  chatMessage;
+  int                                          chatMessageTick = -999;
+  int                                          lastHitTick     = -999;
+  int                                          lastHitDamage   = 0;
 };
 
 // Partial NPCState — enough to render at the right place + face.
 struct NPCState {
   std::string id;
   std::string kind;
-  int         tileX  = 0;
-  int         tileY  = 0;
+  int         tileX         = 0;
+  int         tileY         = 0;
   std::string facing;
-  int         hp     = 0;
-  bool        dying  = false;
+  int         hp            = 0;
+  int         maxHp         = 0;
+  bool        dying         = false;
+  int         lastHitTick   = -999;
+  int         lastHitDamage = 0;
 };
 
 struct DroppedItemState {

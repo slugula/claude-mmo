@@ -8,6 +8,8 @@
 #include "render/MsaaFramebuffer.hpp"
 #include "render/Shader.hpp"
 #include "shared/SharedTypes.hpp"
+#include "ui/Panels.hpp"
+#include "ui/WorldOverlays.hpp"
 #include "world/EntityRenderer.hpp"
 #include "world/ObstacleSystem.hpp"
 #include "world/SkinnedMesh.hpp"
@@ -73,8 +75,14 @@ private:
   net::NetworkClient                       network_;
   std::optional<shared::PlayerState>       currLocalPlayer_;
   std::optional<shared::PlayerState>       prevLocalPlayer_;
+  // All players this tick (local + remote); kept for chat + future overlay
+  // expansion. The map is replaced wholesale on each StateMessage.
+  std::unordered_map<std::string, shared::PlayerState> allPlayers_;
   std::vector<shared::NPCState>            npcs_;
   std::vector<shared::DroppedItemState>    droppedItems_;
+  ui::ChatLog                              chatLog_;
+  ui::WorldOverlays                        overlays_;
+  bool                                     loginAnnounced_ = false;
   std::chrono::steady_clock::time_point    lastTickTime_{};
   int                                      currentTick_       = 0;
   char                                     loginUser_[64]     = "test";
