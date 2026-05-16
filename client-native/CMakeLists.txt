@@ -28,6 +28,7 @@ add_executable(client-native
   src/render/MsaaFramebuffer.cpp
   src/render/Shader.cpp
   src/world/MapGenerator.cpp
+  src/world/ObstacleSystem.cpp
   src/world/TerrainBuilder.cpp
 )
 

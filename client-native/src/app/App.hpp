@@ -7,6 +7,7 @@
 #include "render/MsaaFramebuffer.hpp"
 #include "render/Shader.hpp"
 #include "shared/SharedTypes.hpp"
+#include "world/ObstacleSystem.hpp"
 
 #include <glad/glad.h>
 
@@ -44,7 +45,9 @@ private:
   std::unique_ptr<render::MsaaFramebuffer> msaa_;
   render::Shader                           terrainShader_;
   render::Shader                           wireframeShader_;
+  render::Shader                           obstacleShader_;
   render::Mesh                             terrainMesh_;
+  world::ObstacleSystem                    obstacles_;
   camera::GameCamera                       camera_;
 
   // Hover indicator — a small dynamic VAO/VBO holding 4 vertices drawn as

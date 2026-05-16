@@ -32,6 +32,12 @@ constexpr const char* kTerrainVertPath   = "shaders/terrain.vert";
 constexpr const char* kTerrainFragPath   = "shaders/terrain.frag";
 constexpr const char* kWireframeVertPath = "shaders/wireframe.vert";
 constexpr const char* kWireframeFragPath = "shaders/wireframe.frag";
+constexpr const char* kObstacleVertPath  = "shaders/obstacle.vert";
+constexpr const char* kObstacleFragPath  = "shaders/obstacle.frag";
+
+// Hardcoded sun direction for obstacle Lambert until Phase 6 swaps in proper
+// directional lighting + shadow mapping.
+constexpr glm::vec3 kSunDirection{-0.45f, -0.85f, -0.30f};
 
 std::filesystem::path resolveFromExe(const char* relative) {
   wchar_t buf[MAX_PATH] = {};
@@ -83,7 +89,13 @@ bool App::init() {
     std::fprintf(stderr, "[App] wireframe shader load failed\n");
     return false;
   }
+  if (!obstacleShader_.fromFiles(resolveFromExe(kObstacleVertPath),
+                                 resolveFromExe(kObstacleFragPath))) {
+    std::fprintf(stderr, "[App] obstacle shader load failed\n");
+    return false;
+  }
 
+  obstacles_.initGL();
   generateAndBuildTerrain();
   initHoverMesh();
 
@@ -117,6 +129,8 @@ void App::generateAndBuildTerrain() {
   terrainTileH_   = data.height;
   terrainIndexCt_ = static_cast<int>(data.triangleIndices.size());
   hoveredTile_    = {};  // hover stale after regenerate
+
+  obstacles_.rebuildFromMap(map_);
 
   std::fprintf(stdout, "[App] terrain mesh: %d x %d tiles, %zu verts, %zu tri-idx, %zu line-idx\n",
                data.width, data.height,
@@ -212,6 +226,17 @@ void App::renderFrame() {
   terrainShader_.setFloat("u_paletteEnabled", palette_ ? 1.0f : 0.0f);
   terrainMesh_.draw();
 
+  // ---- Obstacles (instanced) -------------------------------------------------
+  obstacleShader_.use();
+  obstacleShader_.setMat4 ("u_viewProj",       viewProj);
+  obstacleShader_.setVec3 ("u_lightDir",       kSunDirection);
+  obstacleShader_.setVec3 ("u_paletteLevels",
+                           glm::vec3(static_cast<float>(paletteHues_),
+                                     static_cast<float>(paletteSats_),
+                                     static_cast<float>(paletteLums_)));
+  obstacleShader_.setFloat("u_paletteEnabled", palette_ ? 1.0f : 0.0f);
+  obstacles_.render(obstacleShader_);
+
   // ---- Wireframe grid overlay ------------------------------------------------
   if (wireframe_) {
     wireframeShader_.use();
@@ -252,6 +277,8 @@ void App::renderFrame() {
     ImGui::Separator();
     ImGui::Text("Map: %d x %d tiles  (seed %u)", terrainTileW_, terrainTileH_, mapSeed_);
     ImGui::Text("Tris/tile: 2   Indices: %d", terrainIndexCt_);
+    ImGui::Text("Obstacles: %zu trees, %zu rocks  (instanced)",
+                obstacles_.treeCount(), obstacles_.rockCount());
     if (ImGui::Button("Regenerate (next seed)")) {
       ++mapSeed_;
       generateAndBuildTerrain();

@@ -177,6 +177,37 @@ shared::WorldMapFile generateMap(int width, int height, uint32_t seed,
     }
   }
 
+  // ---- Sprinkle obstacles -----------------------------------------------
+  // Density 0.06 matches the legacy OBSTACLE_DENSITY constant. Trees are
+  // 60% of obstacles, rocks the rest. A small clear radius around the map
+  // centre keeps the would-be spawn area free.
+  constexpr float kObstacleDensity   = 0.06f;
+  constexpr float kClearRadius       = 6.0f;
+  const float cx = static_cast<float>(W) * 0.5f;
+  const float cy = static_cast<float>(H) * 0.5f;
+  for (int ty = 0; ty < H; ++ty) {
+    for (int tx = 0; tx < W; ++tx) {
+      const float dx = static_cast<float>(tx) - cx;
+      const float dy = static_cast<float>(ty) - cy;
+      if (std::sqrt(dx * dx + dy * dy) < kClearRadius) continue;
+
+      // Hash-based pseudo-random in [0, 1).
+      uint32_t h = static_cast<uint32_t>(tx) * 73856093u
+                 ^ static_cast<uint32_t>(ty) * 19349663u
+                 ^ (seed + 31337u);
+      h = (h ^ (h >> 13)) * 1274126177u;
+      const float r0 = static_cast<float>(h & 0xFFFFFFu) / 16777215.0f;
+      const float r1 = static_cast<float>((h >> 8) & 0xFFFFFFu) / 16777215.0f;
+
+      if (r0 >= kObstacleDensity) continue;
+      auto& tile = map.tiles[ty][tx];
+      tile.obstacle     = (r1 < 0.6f) ? shared::ObstacleType::tree
+                                      : shared::ObstacleType::rock;
+      tile.walkable     = false;
+      tile.blocksRanged = (tile.obstacle == shared::ObstacleType::tree);
+    }
+  }
+
   std::fprintf(stdout, "[MapGenerator] %d x %d greens-and-browns map (seed=%u freq=%.3f amp=%.2f)\n",
                W, H, seed, baseFreq, amplitude);
   return map;
