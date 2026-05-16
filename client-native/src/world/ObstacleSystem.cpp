@@ -367,11 +367,13 @@ bool ObstacleSystem::renderOutlineAt(render::Shader& /*outlineShader*/,
                  hashRotation(tileX, tileY) };
   glNamedBufferSubData(outlineInstanceVbo_, 0, sizeof(Instance), &inst);
 
-  // Back-face culling of the inflated mesh — in our left-handed projection
-  // (lookAtLH + perspectiveLH) the screen-space winding is inverted, so
-  // GL_BACK is the correct cull face to show only the "rim" shell.
+  // In our left-handed projection (lookAtLH/perspectiveLH) the screen-space
+  // winding is inverted. Tell GL that CW = front so face classification
+  // matches visual reality, then cull front faces to show only the back
+  // shell (the outline rim extending beyond the original silhouette).
+  glFrontFace(GL_CW);
   glEnable(GL_CULL_FACE);
-  glCullFace(GL_BACK);
+  glCullFace(GL_FRONT);
   glDepthMask(GL_FALSE);  // don't write depth — outline is visual-only
 
   if (obs == shared::ObstacleType::tree) {
@@ -389,6 +391,7 @@ bool ObstacleSystem::renderOutlineAt(render::Shader& /*outlineShader*/,
 
   glDepthMask(GL_TRUE);
   glDisable(GL_CULL_FACE);
+  glFrontFace(GL_CCW);  // restore default
   glBindVertexArray(0);
   return true;
 }

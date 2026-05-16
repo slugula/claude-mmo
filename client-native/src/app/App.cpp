@@ -92,6 +92,15 @@ std::filesystem::path resolveFromExe(const char* relative) {
 glm::vec3 followTargetForMap(int w, int h) {
   return { static_cast<float>(w) * 0.5f, 0.0f, static_cast<float>(h) * 0.5f };
 }
+
+// Server's PlayerState.facing -> Y-axis rotation in radians.
+float facingToYaw(const std::string& facing) {
+  if (facing == "north") return 3.14159265f;
+  if (facing == "south") return 0.0f;
+  if (facing == "east")  return  1.57079632f;
+  if (facing == "west")  return -1.57079632f;
+  return 0.0f;
+}
 }  // namespace
 
 App::~App() {
@@ -498,6 +507,36 @@ void App::renderFrame() {
   // ---- Local player (Phase 5: skinned glTF) ----------------------------------
   renderPlayer(viewProj, dt);
 
+  // ---- Remote players — render each with the same skinned mesh ---------------
+  if (playerModel_.isLoaded() && network_.status() == net::Connection::Connected) {
+    for (const auto& [id, rp] : allPlayers_) {
+      if (id == network_.playerId()) continue;  // skip local
+      if (rp.dying) continue;
+      const float rpx = static_cast<float>(rp.tileX);
+      const float rpy = static_cast<float>(rp.tileY);
+      const float rpWorldY = tileWorldY(map_, rp.tileX, rp.tileY);
+      const float rpYaw = facingToYaw(rp.facing);
+      glm::mat4 rpModel = glm::translate(glm::mat4(1.0f), glm::vec3(rpx, rpWorldY, rpy));
+      rpModel = glm::rotate(rpModel, rpYaw, glm::vec3(0.0f, 1.0f, 0.0f));
+      rpModel = glm::scale(rpModel, glm::vec3(kPlayerScale));
+      // Use a slightly different tint for remote players
+      constexpr glm::vec3 kRemoteColor{0.50f, 0.38f, 0.28f};
+      skinnedShader_.use();
+      skinnedShader_.setMat4 ("u_viewProj", viewProj);
+      skinnedShader_.setVec3 ("u_lightDir", sunDir);
+      skinnedShader_.setVec3 ("u_paletteLevels",
+                              glm::vec3(static_cast<float>(paletteHues_),
+                                        static_cast<float>(paletteSats_),
+                                        static_cast<float>(paletteLums_)));
+      skinnedShader_.setFloat("u_paletteEnabled", palette_ ? 1.0f : 0.0f);
+      skinnedShader_.setFloat("u_ambient",        ambient_);
+      skinnedShader_.setFloat("u_diffuse",        diffuse_);
+      skinnedShader_.setFloat("u_lightingEnabled", lightingEnabled_ ? 1.0f : 0.0f);
+      skinnedShader_.setVec3 ("u_color",          kRemoteColor);
+      playerModel_.render(skinnedShader_, rpModel);
+    }
+  }
+
   // ---- Wireframe grid overlay ------------------------------------------------
   if (wireframe_) {
     wireframeShader_.use();
@@ -550,7 +589,7 @@ void App::renderFrame() {
     if (hasObstacle) {
       outlineShader_.use();
       outlineShader_.setMat4 ("u_viewProj",     viewProj);
-      outlineShader_.setFloat("u_outlineWidth", 0.04f);
+      outlineShader_.setFloat("u_outlineWidth", 0.06f);
       outlineShader_.setVec4 ("u_outlineColor", glm::vec4(0.0f, 0.9f, 0.9f, 0.8f));
       obstacles_.renderOutlineAt(outlineShader_, map_, htx, hty);
     }
@@ -696,7 +735,7 @@ void App::renderFrame() {
     }
   }
 
-  if (ImGui::Begin("Phase 2 - Terrain + Camera")) {
+  if (ImGui::Begin("Debug")) {
     ImGui::Text("GL %s", glGetString(GL_VERSION));
     ImGui::Text("Framebuffer: %d x %d", fbW, fbH);
     ImGui::Text("MSAA: %dx", msaa_->samples());
@@ -1060,19 +1099,6 @@ const char* clipForPlayer(const shared::PlayerState* p) {
   return "Sprint_Loop";
 }
 
-// Server's PlayerState.facing -> Y-axis rotation in radians.
-// World convention: +X = east, +Z = north. glTF rest pose forward is -Z so
-// we offset by pi to align "north" with the model's default front. East /
-// west swapped relative to the first cut — our left-handed projection flips
-// the apparent sense of positive rotation around Y vs the right-handed
-// math glm encodes.
-float facingToYaw(const std::string& facing) {
-  if (facing == "north") return 3.14159265f;          // +pi   -> face +Z
-  if (facing == "south") return 0.0f;                  // 0     -> face -Z (model rest)
-  if (facing == "east")  return  1.57079632f;          // +pi/2 -> face +X
-  if (facing == "west")  return -1.57079632f;          // -pi/2 -> face -X
-  return 0.0f;
-}
 }  // namespace
 
 void App::renderPlayer(const glm::mat4& viewProj, float dt) {
