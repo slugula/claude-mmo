@@ -456,13 +456,25 @@ void App::shutdownImGui() {
 //   - is path-walking  -> Walk_Loop
 //   - (extend in Phase 10 for combat / death / chop / etc.)
 namespace {
+// "Walking" iff the server has tiles queued up in `path`. Earlier we also
+// checked destinationX/Y != tileX/Y, but the server can leave a non-matching
+// destination behind for a tick after the player stops, which made the
+// client misread "standing still" as Walk_Loop on first connect. The path
+// length is the unambiguous source of truth.
 const char* clipForPlayer(const shared::PlayerState* p) {
   if (!p) return "Idle_Loop";
-  const bool walking =
-      !p->path.empty() ||
-      p->destinationX != p->tileX ||
-      p->destinationY != p->tileY;
-  return walking ? "Walk_Loop" : "Idle_Loop";
+  return p->path.empty() ? "Idle_Loop" : "Walk_Loop";
+}
+
+// Server's PlayerState.facing -> Y-axis rotation in radians.
+// World convention: +X = east, +Z = north. glTF rest pose forward is -Z so
+// we offset by pi to align "north" with the model's default front.
+float facingToYaw(const std::string& facing) {
+  if (facing == "north") return 3.14159265f;          // +pi  -> face +Z
+  if (facing == "south") return 0.0f;                  // 0    -> face -Z (model rest)
+  if (facing == "east")  return -1.57079632f;          // -pi/2 -> face +X
+  if (facing == "west")  return  1.57079632f;          // +pi/2 -> face -X
+  return 0.0f;
 }
 }  // namespace
 
@@ -492,9 +504,10 @@ void App::renderPlayer(const glm::mat4& viewProj, float dt) {
   }
   playerModel_.update(dt);
 
-  // Build the entity's world transform. Forward/facing is left at identity
-  // for now — Phase 10 polish will rotate by PlayerState.facing.
+  // Build the entity's world transform: translate -> Y-yaw from facing -> scale.
+  const float yaw = facingToYaw(currLocalPlayer_->facing);
   glm::mat4 modelMatrix = glm::translate(glm::mat4(1.0f), glm::vec3(fx, yWorld, fy));
+  modelMatrix = glm::rotate(modelMatrix, yaw, glm::vec3(0.0f, 1.0f, 0.0f));
   modelMatrix = glm::scale(modelMatrix, glm::vec3(kPlayerScale));
 
   skinnedShader_.use();
