@@ -15,8 +15,11 @@ find_package(glad        CONFIG REQUIRED)
 find_package(glm         CONFIG REQUIRED)
 find_package(glaze       CONFIG REQUIRED)
 find_package(ixwebsocket CONFIG REQUIRED)
-find_package(cgltf       CONFIG REQUIRED)
 find_package(imgui       CONFIG REQUIRED)
+
+# cgltf is a single-header library. The vcpkg port installs just the header
+# (no CMake config), so locate it directly and add as an include directory.
+find_path(CGLTF_INCLUDE_DIR cgltf.h REQUIRED)
 
 # ---- Main executable --------------------------------------------------------
 
@@ -38,7 +41,7 @@ add_executable(client-native
   src/world/TerrainBuilder.cpp
 )
 
-target_include_directories(client-native PRIVATE src)
+target_include_directories(client-native PRIVATE src ${CGLTF_INCLUDE_DIR})
 
 target_link_libraries(client-native PRIVATE
   glfw
@@ -46,7 +49,6 @@ target_link_libraries(client-native PRIVATE
   glm::glm
   glaze::glaze
   ixwebsocket::ixwebsocket
-  cgltf::cgltf
   imgui::imgui
 )
 
