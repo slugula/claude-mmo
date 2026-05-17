@@ -22,6 +22,8 @@ find_package(imgui       CONFIG REQUIRED)
 find_path(CGLTF_INCLUDE_DIR    cgltf.h     REQUIRED)
 # miniaudio ships the same way — header only.
 find_path(MINIAUDIO_INCLUDE_DIR miniaudio.h REQUIRED)
+# stb — header only (stb_image.h).  WaterRenderer.cpp defines STB_IMAGE_IMPLEMENTATION.
+find_path(STB_INCLUDE_DIR      stb_image.h REQUIRED)
 
 # ---- Shared rendering / world / camera static library ----------------------
 #
@@ -44,12 +46,15 @@ add_library(game_core STATIC
   src/world/ObstacleSystem.cpp
   src/world/SkinnedMesh.cpp
   src/world/TerrainBuilder.cpp
+  src/world/WaterMesh.cpp
+  src/world/WaterRenderer.cpp
 )
 
 target_include_directories(game_core PUBLIC
   src
   ${CGLTF_INCLUDE_DIR}
   ${MINIAUDIO_INCLUDE_DIR}
+  ${STB_INCLUDE_DIR}
 )
 
 target_link_libraries(game_core PUBLIC

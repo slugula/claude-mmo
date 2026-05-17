@@ -64,6 +64,7 @@ inline bool loadWorldMap(const std::filesystem::path& path, WorldMapFile& out) {
     std::vector<float>                 vertexHeights;
     std::array<int, 2>                 spawnPoint = {32, 32};
     std::vector<NpcSpawn>              npcSpawns;
+    std::vector<WaterTile>             waterTiles;
   };
 
   std::string buf;
@@ -96,6 +97,7 @@ inline bool loadWorldMap(const std::filesystem::path& path, WorldMapFile& out) {
   out.vertexHeights= std::move(disk.vertexHeights);
   out.spawnPoint   = disk.spawnPoint;
   out.npcSpawns    = std::move(disk.npcSpawns);
+  out.waterTiles   = std::move(disk.waterTiles);
 
   // Rebuild x/y coordinates on every tile (they are stored in the JSON but
   // may be stale from older exports; recompute for correctness).
@@ -134,6 +136,15 @@ inline bool saveWorldMap(const std::filesystem::path& path,
     const auto& n = map.npcSpawns[i];
     std::fprintf(f, "%s{\"kind\":\"%s\",\"tileX\":%d,\"tileY\":%d}",
                  i == 0 ? "" : ",", n.kind.c_str(), n.tileX, n.tileY);
+  }
+  std::fprintf(f, "],\n");
+
+  // waterTiles
+  std::fprintf(f, "  \"waterTiles\": [");
+  for (std::size_t i = 0; i < map.waterTiles.size(); ++i) {
+    const auto& w = map.waterTiles[i];
+    std::fprintf(f, "%s{\"tileX\":%d,\"tileY\":%d}",
+                 i == 0 ? "" : ",", w.tileX, w.tileY);
   }
   std::fprintf(f, "],\n");
 

@@ -55,6 +55,13 @@ struct NpcSpawn {
   int         tileY = 0;
 };
 
+// ---- Water tile descriptor (used by the level editor + client renderer) --
+
+struct WaterTile {
+  int tileX = 0;
+  int tileY = 0;
+};
+
 // ---- In-memory map (produced by MapGenerator or loaded from JSON) --------
 
 struct WorldMapFile {
@@ -66,6 +73,7 @@ struct WorldMapFile {
   // the map is generated procedurally by the client).
   std::array<int, 2>                 spawnPoint  = {32, 32};
   std::vector<NpcSpawn>              npcSpawns;
+  std::vector<WaterTile>             waterTiles;
 };
 
 // =====================================================================

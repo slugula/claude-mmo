@@ -43,6 +43,9 @@ constexpr const char* kObstacleVertPath  = "shaders/obstacle.vert";
 constexpr const char* kObstacleFragPath  = "shaders/obstacle.frag";
 constexpr const char* kShadowInstVertPath= "shaders/shadow_instanced.vert";
 constexpr const char* kShadowFragPath    = "shaders/shadow.frag";
+constexpr const char* kWaterVertPath     = "shaders/water.vert";
+constexpr const char* kWaterFragPath     = "shaders/water.frag";
+constexpr const char* kWaterNormalPath   = "assets/water_normal.png";
 constexpr const char* kTreeModelPath     = "assets/models/tree.gltf";
 constexpr int         kShadowMapSize     = 2048;
 
@@ -125,6 +128,13 @@ bool EditorApp::init() {
   if (!loadShader(obstacleShader_,        kObstacleVertPath,   kObstacleFragPath,   "obstacle"))   return false;
   if (!loadShader(shadowInstancedShader_, kShadowInstVertPath, kShadowFragPath,     "shadow"))     return false;
 
+  if (!waterRenderer_.init(resolveFromExe(kWaterVertPath).string(),
+                            resolveFromExe(kWaterFragPath).string(),
+                            resolveFromExe(kWaterNormalPath).string())) {
+    std::fprintf(stderr, "[Editor] water renderer init failed\n");
+    // Non-fatal: editor still works, water just won't render.
+  }
+
   if (!shadowMap_.init(kShadowMapSize)) {
     std::fprintf(stderr, "[Editor] shadow map init failed\n");
     return false;
@@ -183,6 +193,7 @@ void EditorApp::renderFrame(float dt) {
       const auto& snap = undo_.undo();
       map_ = snap.map; npcSpawns_ = snap.npcs;
       rebuildTerrainGL(); rebuildObstacles();
+      waterRenderer_.rebuild(map_, waterUniforms_.waterOffset);
       minimap_.rebuild(map_, npcSpawns_);
     }
     sZ = zNow;
@@ -192,6 +203,7 @@ void EditorApp::renderFrame(float dt) {
       const auto& snap = undo_.redo();
       map_ = snap.map; npcSpawns_ = snap.npcs;
       rebuildTerrainGL(); rebuildObstacles();
+      waterRenderer_.rebuild(map_, waterUniforms_.waterOffset);
       minimap_.rebuild(map_, npcSpawns_);
     }
     sY = yNow;
@@ -467,7 +479,30 @@ void EditorApp::render3DViewport(float dt) {
     }
   }
 
-  viewport3dFbo_->resolve();
+  // ---- Water pass -------------------------------------------------------
+  // First resolve captures the scene (terrain+obstacles) for SSR sampling.
+  // Then we re-bind the MSAA FBO, draw water on top, and resolve again.
+  if (!map_.waterTiles.empty() && waterRenderer_.valid()) {
+    viewport3dFbo_->resolve();   // pre-water snapshot for SSR
+
+    viewport3dFbo_->bind();
+    glViewport(0, 0, viewport3dW_, viewport3dH_);
+
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glDepthMask(GL_FALSE);
+
+    waterRenderer_.render(
+        static_cast<float>(glfwGetTime()),
+        viewProj,
+        viewport3dFbo_->resolveColorTexture(),
+        waterUniforms_);
+
+    glDepthMask(GL_TRUE);
+    glDisable(GL_BLEND);
+  }
+
+  viewport3dFbo_->resolve();   // final resolve for ImGui display
   (void)dt;
 }
 
@@ -487,11 +522,15 @@ void EditorApp::drawMenuBar() {
   if (ImGui::BeginMenu("Edit")) {
     if (ImGui::MenuItem("Undo", "Ctrl+Z", false, undo_.canUndo())) {
       const auto& s = undo_.undo(); map_ = s.map; npcSpawns_ = s.npcs;
-      rebuildTerrainGL(); rebuildObstacles(); minimap_.rebuild(map_, npcSpawns_);
+      rebuildTerrainGL(); rebuildObstacles();
+      waterRenderer_.rebuild(map_, waterUniforms_.waterOffset);
+      minimap_.rebuild(map_, npcSpawns_);
     }
     if (ImGui::MenuItem("Redo", "Ctrl+Y", false, undo_.canRedo())) {
       const auto& s = undo_.redo(); map_ = s.map; npcSpawns_ = s.npcs;
-      rebuildTerrainGL(); rebuildObstacles(); minimap_.rebuild(map_, npcSpawns_);
+      rebuildTerrainGL(); rebuildObstacles();
+      waterRenderer_.rebuild(map_, waterUniforms_.waterOffset);
+      minimap_.rebuild(map_, npcSpawns_);
     }
     ImGui::EndMenu();
   }
@@ -533,6 +572,7 @@ void EditorApp::drawToolbar() {
   toolBtn("Spawn",     EditorTool::PlaceSpawn);
   toolBtn("Walkable",  EditorTool::PaintWalkable);
   toolBtn("Blocked",   EditorTool::PaintBlocked);
+  toolBtn("Water",     EditorTool::PaintWater);
   toolBtn("Erase",     EditorTool::Erase);
 
   ImGui::Separator();
@@ -557,6 +597,35 @@ void EditorApp::drawToolbar() {
   ImGui::TextDisabled("= brush size");
 
   ImGui::End();
+}
+
+// -----------------------------------------------------------------------
+void EditorApp::drawWaterSettings() {
+  auto& u = waterUniforms_;
+  if (ImGui::CollapsingHeader("Water — Basic", ImGuiTreeNodeFlags_DefaultOpen)) {
+    ImGui::SetNextItemWidth(-1); ImGui::ColorEdit3("Shallow##w",  &u.shallowColor.x);
+    ImGui::SetNextItemWidth(-1); ImGui::ColorEdit3("Deep##w",     &u.deepColor.x);
+    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##wsp",  &u.waveSpeed,       0.0f, 2.0f,  "WaveSpd:%.2f");
+    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##wht",  &u.waveHeight,      0.0f, 0.5f,  "WaveH:%.3f");
+    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##nstr", &u.normalStrength,  0.0f, 2.0f,  "NrmStr:%.2f");
+    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##rfl",  &u.reflectStrength, 0.0f, 1.0f,  "Reflect:%.2f");
+    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##caus", &u.causticIntensity,0.0f, 1.0f,  "Caustic:%.2f");
+    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##fthrs",&u.foamThreshold,   0.0f, 1.0f,  "FoamEdge:%.2f");
+  }
+  if (ImGui::CollapsingHeader("Water — Advanced")) {
+    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##wsc",  &u.waveScale,       0.5f, 8.0f,  "WaveSc:%.2f");
+    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##csc",  &u.causticScale,    1.0f, 12.0f, "CausSc:%.2f");
+    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##cspd", &u.causticSpeed,    0.0f, 1.0f,  "CausSpd:%.2f");
+    ImGui::SetNextItemWidth(-1); ImGui::ColorEdit3("Foam##w", &u.foamColor.x);
+    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##fspd", &u.foamSpeed,       0.0f, 2.0f,  "FoamSpd:%.2f");
+    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##fsc",  &u.foamScale,       1.0f, 20.0f, "FoamSc:%.1f");
+    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##prlx", &u.parallaxDepth,   0.0f, 0.15f, "Parallax:%.3f");
+    float prevOff = u.waterOffset;
+    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##woff", &u.waterOffset,     0.0f, 0.5f,  "WaterOff:%.3f");
+    // When waterOffset changes, rebuild water mesh (water Y changes)
+    if (u.waterOffset != prevOff)
+      waterRenderer_.rebuild(map_, u.waterOffset);
+  }
 }
 
 // -----------------------------------------------------------------------
@@ -616,6 +685,11 @@ void EditorApp::drawProperties() {
     npcBtn("chicken");
     npcBtn("shopkeeper");
   }
+
+  // Water settings (always visible so the user can tune water appearance
+  // even when a different tool is selected)
+  ImGui::Separator();
+  drawWaterSettings();
 
   ImGui::Separator();
   ImGui::TextDisabled("Lighting");
@@ -747,6 +821,12 @@ void EditorApp::drawGridView() {
 
       float fr = 0.29f, fg = 0.49f, fb = 0.16f;
       hexToRgbf(tile.groundColor.c_str(), fr, fg, fb);
+
+      // Water tiles render as blue in the 2D grid
+      const bool isWaterTile = std::any_of(
+          map_.waterTiles.begin(), map_.waterTiles.end(),
+          [tx, ty](const shared::WaterTile& w){ return w.tileX == tx && w.tileY == ty; });
+      if (isWaterTile) { fr = 0.15f; fg = 0.40f; fb = 0.80f; }
 
       if (showHeightOverlay_) {
         const int vW = W + 1;
@@ -923,6 +1003,7 @@ void EditorApp::applyBrush(int cx, int cy, float dt) {
   bool dirtyTerrain   = false;
   bool dirtyObstacles = false;
   bool dirtyMinimap   = false;
+  bool dirtyWater     = false;
 
   for (int dy = -half; dy <= half; ++dy) {
     for (int dx = -half; dx <= half; ++dx) {
@@ -931,18 +1012,20 @@ void EditorApp::applyBrush(int cx, int cy, float dt) {
         if (d > r + 0.5f) continue;
       }
       const int tx = cx + dx, ty = cy + dy;
-      applyToolAt(tx, ty, dt, dirtyTerrain, dirtyObstacles, dirtyMinimap);
+      applyToolAt(tx, ty, dt, dirtyTerrain, dirtyObstacles, dirtyMinimap, dirtyWater);
     }
   }
 
   if (dirtyTerrain)   rebuildTerrainGL();
+  if (dirtyWater)     waterRenderer_.rebuild(map_, waterUniforms_.waterOffset);
   if (dirtyObstacles) rebuildObstacles();
   if (dirtyMinimap)   minimap_.rebuild(map_, npcSpawns_);
 }
 
 // -----------------------------------------------------------------------
 void EditorApp::applyToolAt(int tx, int ty, float dt,
-                             bool& dirtyTerrain, bool& dirtyObstacles, bool& dirtyMinimap) {
+                             bool& dirtyTerrain, bool& dirtyObstacles,
+                             bool& dirtyMinimap,  bool& dirtyWater) {
   if (tx < 0 || ty < 0 || tx >= map_.width || ty >= map_.height) return;
   if (ty >= static_cast<int>(map_.tiles.size()))     return;
   if (tx >= static_cast<int>(map_.tiles[ty].size())) return;
@@ -1011,14 +1094,39 @@ void EditorApp::applyToolAt(int tx, int ty, float dt,
       tile.walkable = false;
       break;
     }
+    case EditorTool::PaintWater: {
+      // Avoid duplicate entries
+      const bool already = std::any_of(map_.waterTiles.begin(), map_.waterTiles.end(),
+          [tx, ty](const shared::WaterTile& w){ return w.tileX == tx && w.tileY == ty; });
+      if (!already) {
+        map_.waterTiles.push_back({ tx, ty });
+        tile.walkable = false;
+        // Clear any obstacle on this tile (water supersedes obstacles)
+        setObstacleAtTile(tx, ty, shared::ObstacleType::none);
+        bakeWaterBank(tx, ty);
+        dirtyTerrain = true;
+        dirtyObstacles = true;
+      }
+      dirtyWater   = true;
+      dirtyMinimap = true;
+      break;
+    }
     case EditorTool::Erase: {
       setObstacleAtTile(tx, ty, shared::ObstacleType::none);
       tile.walkable = true;
       npcSpawns_.erase(std::remove_if(npcSpawns_.begin(), npcSpawns_.end(),
         [tx, ty](const shared::NpcSpawn& n){ return n.tileX == tx && n.tileY == ty; }),
         npcSpawns_.end());
+      // Also erase water tile
+      {
+        auto& wt = map_.waterTiles;
+        wt.erase(std::remove_if(wt.begin(), wt.end(),
+            [tx, ty](const shared::WaterTile& w){ return w.tileX == tx && w.tileY == ty; }),
+            wt.end());
+      }
       dirtyObstacles = true;
       dirtyMinimap   = true;
+      dirtyWater     = true;
       break;
     }
   }
@@ -1093,9 +1201,11 @@ void EditorApp::initNewMap(int w, int h) {
     }
   }
   map_.vertexHeights.assign(static_cast<std::size_t>((w + 1) * (h + 1)), 0.0f);
+  map_.waterTiles.clear();
 
   rebuildTerrainGL();
   rebuildObstacles();
+  waterRenderer_.rebuild(map_, waterUniforms_.waterOffset);
   npcSpawns_.clear();
   undo_.clear();
   pushUndo();
@@ -1127,6 +1237,48 @@ void EditorApp::setObstacleAtTile(int tx, int ty, shared::ObstacleType obs) {
     tile.walkable = false; tile.blocksRanged = false;
   } else {
     tile.walkable = false; tile.blocksRanged = true;
+  }
+}
+
+// -----------------------------------------------------------------------
+void EditorApp::bakeWaterBank(int tx, int ty) {
+  const int W = map_.width, H = map_.height;
+  auto& vh = map_.vertexHeights;
+  if (vh.empty() || W <= 0 || H <= 0) return;
+
+  constexpr float kBankSlope = 0.25f;   // world-Y rise per world unit from water edge
+
+  // Natural height at water tile center (before banking)
+  const float naturalHWorld = tileWorldY(tx, ty);
+  const float waterYWorld   = naturalHWorld - waterUniforms_.waterOffset;
+
+  // Iterate over a ±2 tile border of vertices around the water tile.
+  // Vertex (vc, vr) world position: x = vc - 0.5,  z = (H - vr) - 0.5
+  const int vrCenter = H - ty;   // vertex row at south edge of tile ty
+  const int vcCenter = tx;       // vertex col at west  edge of tile tx
+
+  for (int vr = vrCenter - 3; vr <= vrCenter + 2; ++vr) {
+    if (vr < 0 || vr > H) continue;
+    for (int vc = vcCenter - 2; vc <= vcCenter + 3; ++vc) {
+      if (vc < 0 || vc > W) continue;
+      const std::size_t idx = static_cast<std::size_t>(vr * (W + 1) + vc);
+
+      // World XZ of this vertex
+      const float vx = static_cast<float>(vc) - 0.5f;
+      const float vz = static_cast<float>(H - vr) - 0.5f;
+
+      // Distance from tile center
+      const float dx   = vx - static_cast<float>(tx);
+      const float dz   = vz - static_cast<float>(ty);
+      const float dist = std::sqrt(dx * dx + dz * dz);
+
+      const float targetWorld = waterYWorld + kBankSlope * dist;
+      const float targetNorm  = std::clamp(targetWorld / shared::kMaxTerrainH, 0.0f, 1.0f);
+
+      // Only lower terrain (never raise), so we don't mess up hills
+      if (targetNorm < vh[idx])
+        vh[idx] = targetNorm;
+    }
   }
 }
 
@@ -1268,8 +1420,12 @@ void EditorApp::resizeMap(int newW, int newH) {
   npcSpawns_.erase(std::remove_if(npcSpawns_.begin(), npcSpawns_.end(),
     [newW, newH](const shared::NpcSpawn& n){ return n.tileX >= newW || n.tileY >= newH; }),
     npcSpawns_.end());
+  map_.waterTiles.erase(std::remove_if(map_.waterTiles.begin(), map_.waterTiles.end(),
+    [newW, newH](const shared::WaterTile& w){ return w.tileX >= newW || w.tileY >= newH; }),
+    map_.waterTiles.end());
 
   rebuildTerrainGL(); rebuildObstacles();
+  waterRenderer_.rebuild(map_, waterUniforms_.waterOffset);
   minimap_.init(newW, newH); minimap_.rebuild(map_, npcSpawns_);
 }
 
@@ -1288,6 +1444,7 @@ void EditorApp::openFileDialog() {
   npcSpawns_ = map_.npcSpawns;
   currentFilePath_ = std::filesystem::path(path).string();
   rebuildTerrainGL(); rebuildObstacles();
+  waterRenderer_.rebuild(map_, waterUniforms_.waterOffset);
   minimap_.init(map_.width, map_.height); minimap_.rebuild(map_, npcSpawns_);
   camera_.snapTo({ static_cast<float>(map_.width) * 0.5f, 0.0f,
                    static_cast<float>(map_.height) * 0.5f });

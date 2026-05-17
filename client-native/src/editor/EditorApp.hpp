@@ -15,6 +15,7 @@
 #include "world/EntityRenderer.hpp"
 #include "world/ObstacleSystem.hpp"
 #include "world/TerrainBuilder.hpp"
+#include "world/WaterRenderer.hpp"
 
 #include <glad/glad.h>
 #include <glm/glm.hpp>
@@ -59,7 +60,8 @@ private:
 
   // ---- Editing
   void applyToolAt(int tx, int ty, float dt,
-                   bool& dirtyTerrain, bool& dirtyObstacles, bool& dirtyMinimap);
+                   bool& dirtyTerrain, bool& dirtyObstacles,
+                   bool& dirtyMinimap,  bool& dirtyWater);
   void applyBrush(int cx, int cy, float dt);  // dispatches to applyToolAt for each tile in brush
   int  clampTile(int v, int max) const;
 
@@ -97,6 +99,13 @@ private:
   float tileWorldY(int tx, int ty) const;
   void  setObstacleAtTile(int tx, int ty, shared::ObstacleType obs);
 
+  // ---- Water
+  // Deform vertex heights in a ±2 tile radius around the placed water tile so
+  // the terrain slopes smoothly down into the water surface.
+  void bakeWaterBank(int tx, int ty);
+  // Water settings UI block (called from drawProperties).
+  void drawWaterSettings();
+
   // ---- GL / window
   app::Window                                    window_;
   std::unique_ptr<render::MsaaFramebuffer>       viewport3dFbo_;
@@ -112,6 +121,8 @@ private:
   world::ObstacleSystem obstacles_;
   world::EntityRenderer entities_;   // NPC stand-ins
   camera::GameCamera    camera_;
+  world::WaterRenderer  waterRenderer_;
+  world::WaterUniforms  waterUniforms_;
 
   // Raw GPU buffers for incremental terrain updates.
   // These are the VBOs owned by terrainMesh_; we cache them for SubData calls.

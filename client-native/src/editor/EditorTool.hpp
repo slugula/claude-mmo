@@ -11,6 +11,7 @@ enum class EditorTool {
   PlaceSpawn,
   PaintWalkable,    // marks tiles walkable (clears obstacle + sets walkable=true)
   PaintBlocked,     // marks tiles non-walkable WITHOUT placing an obstacle
+  PaintWater,       // paints water tiles (non-walkable, rendered as animated water)
   Erase,
 };
 
