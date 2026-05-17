@@ -18,148 +18,159 @@ namespace ui {
 
 namespace {
 
-// OSRS skill order. Skills the server hasn't sent yet just show as level 1 / 0
-// xp so the panel layout doesn't shuffle.
+// ---- OSRS colour constants --------------------------------------------------
+constexpr ImU32 kSlotBg       = IM_COL32(13,  6,  0, 220);   // empty slot fill
+constexpr ImU32 kSlotBgFilled = IM_COL32(30, 16,  4, 240);   // slot with item
+constexpr ImU32 kSlotBorder   = IM_COL32(107, 79, 41, 180);  // default border
+constexpr ImU32 kSlotHover    = IM_COL32(255,152, 31, 255);  // hover border (orange)
+constexpr ImU32 kItemText     = IM_COL32(240,206, 96, 255);  // item name (gold)
+constexpr ImU32 kQtyText      = IM_COL32(255,221, 68, 255);  // quantity (#ffdd44)
+constexpr ImU32 kSlotLabel    = IM_COL32(120,100, 60, 200);  // empty-slot hint letter
+
+// ---- XP thresholds per level -----------------------------------------------
+// Index i = XP required to reach level (i+2). XP_TABLE[0]=83 means level 2
+// requires 83 XP. Matches TypeScript's XP_TABLE exactly.
+static constexpr std::array<int, 98> kXpTable = {
+  83, 174, 276, 388, 512, 650, 801, 969, 1154, 1358, 1584, 1833, 2107, 2411,
+  2746, 3115, 3523, 3973, 4470, 5018, 5624, 6291, 7028, 7842, 8740, 9730,
+  10824, 12031, 13363, 14833, 16456, 18247, 20224, 22406, 24815, 27473,
+  30408, 33648, 37224, 41171, 45529, 50339, 55649, 61512, 67983, 75127,
+  83014, 91721, 101333, 111945, 123660, 136594, 150872, 166636, 184040,
+  203254, 224466, 247886, 273742, 302288, 333804, 368599, 407015, 449428,
+  496254, 547953, 605032, 668051, 737627, 814445, 899257, 992895, 1096278,
+  1210421, 1336443, 1475581, 1629200, 1798808, 1986068, 2192818, 2421087,
+  2673114, 2951373, 3258594, 3597792, 3972294, 4385776, 4842295, 5346332,
+  5902831, 6517253, 7195629, 7944614, 8771558, 9684577, 10692629, 11805606,
+  13034431,
+};
+
+// Returns the XP required to REACH the given level (level 1 = 0).
+static int xpForLevel(int lvl) {
+  if (lvl <= 1) return 0;
+  if (lvl >= 99) return kXpTable[97];
+  return kXpTable[lvl - 2];
+}
+
+// ---- Skill / equip meta ----------------------------------------------------
 constexpr std::array<const char*, 9> kSkillOrder = {
-  "hitpoints",
-  "attack",
-  "strength",
-  "defence",
-  "ranged",
-  "magic",
-  "prayer",
-  "woodcutting",
-  "fishing",
+  "hitpoints", "attack", "strength", "defence",
+  "ranged",    "magic",  "prayer",   "woodcutting", "fishing",
+};
+
+// Skill icon placeholder colors (one per skill, OSRS-ish palette)
+constexpr std::array<ImU32, 9> kSkillColors = {
+  IM_COL32(220, 40, 40, 255),   // hitpoints — red
+  IM_COL32(200, 50, 50, 255),   // attack — red
+  IM_COL32(130, 80, 200, 255),  // strength — purple
+  IM_COL32(60, 120, 220, 255),  // defence — blue
+  IM_COL32(40, 180, 70, 255),   // ranged — green
+  IM_COL32(50, 50, 220, 255),   // magic — blue
+  IM_COL32(230, 200, 40, 255),  // prayer — yellow
+  IM_COL32(80, 50, 20, 255),    // woodcutting — brown
+  IM_COL32(40, 90, 200, 255),   // fishing — blue
 };
 
 constexpr int kInventoryCols = 4;
-constexpr int kInventoryRows = 7;       // 4 * 7 = 28 slots, OSRS layout
+constexpr int kInventoryRows = 7;
 
-// Equipment slot grid (5 rows x 3 cols).
+// Maximum bank capacity shown in the fraction display.
+constexpr int kMaxBankSlots = 400;
+
 struct EquipCell {
-  int         row;
-  int         col;
-  const char* slotId;        // empty = blank cell
+  int         row, col;
+  const char* slotId;
   const char* label;
 };
-
 constexpr std::array<EquipCell, 15> kEquipGrid = {{
-  {0, 0, "",          ""        }, {0, 1, "head",      "Head"   }, {0, 2, "",          ""        },
-  {1, 0, "",          ""        }, {1, 1, "neck",      "Neck"   }, {1, 2, "ammo",      "Ammo"    },
-  {2, 0, "rightHand", "Main"    }, {2, 1, "body",      "Body"   }, {2, 2, "leftHand",  "Off"     },
-  {3, 0, "",          ""        }, {3, 1, "legs",      "Legs"   }, {3, 2, "",          ""        },
-  {4, 0, "hands",     "Hands"   }, {4, 1, "feet",      "Feet"   }, {4, 2, "ring",      "Ring"    },
+  {0,0,"",         ""     }, {0,1,"head",     "Head" }, {0,2,"",        ""    },
+  {1,0,"",         ""     }, {1,1,"neck",     "Neck" }, {1,2,"ammo",    "Ammo"},
+  {2,0,"rightHand","Main" }, {2,1,"body",     "Body" }, {2,2,"leftHand","Off" },
+  {3,0,"",         ""     }, {3,1,"legs",     "Legs" }, {3,2,"",        ""    },
+  {4,0,"hands",    "Hands"}, {4,1,"feet",     "Feet" }, {4,2,"ring",    "Ring"},
 }};
 
-// Pretty-format an itemId ("bronze_sword" -> "Bronze sword") for the
-// placeholder text labels. Until Phase 8b adds an icon atlas this is the
-// player-visible representation.
+// "bronze_sword" -> "Bronze sword"
 std::string prettyItemId(const std::string& id) {
   if (id.empty()) return {};
   std::string out;
   out.reserve(id.size());
-  bool capitalize = true;
-  for (char c : id) {
-    if (c == '_' || c == '-') {
-      out.push_back(' ');
-      capitalize = false;
-    } else if (capitalize) {
-      out.push_back(static_cast<char>(std::toupper(static_cast<unsigned char>(c))));
-      capitalize = false;
-    } else {
-      out.push_back(c);
-    }
+  bool cap = true;
+  for (char ch : id) {
+    if (ch == '_' || ch == '-') { out.push_back(' '); cap = false; }
+    else if (cap) { out.push_back(static_cast<char>(std::toupper(static_cast<unsigned char>(ch)))); cap = false; }
+    else           out.push_back(ch);
   }
   return out;
 }
 
-// Paint a slot background + item label at the current cursor position, then
-// consume the cell area as an InvisibleButton so callers can attach
-// drag-drop sources/targets and context-menu popups to the same hit-region.
-// Returns true when the cell was clicked this frame.
-bool drawSlot(const char*                              idStr,
+// Format a quantity for display: 1,500,000 → "1.5M", 2500 → "2.5k", etc.
+std::string fmtQty(int q) {
+  char buf[16];
+  if (q >= 10000000)     std::snprintf(buf, sizeof(buf), "%dM",  q / 1000000);
+  else if (q >= 1000000) std::snprintf(buf, sizeof(buf), "%.1fM", q / 1000000.0f);
+  else if (q >= 10000)   std::snprintf(buf, sizeof(buf), "%dk",  q / 1000);
+  else if (q >= 1000)    std::snprintf(buf, sizeof(buf), "%.1fk", q / 1000.0f);
+  else                   std::snprintf(buf, sizeof(buf), "%d",   q);
+  return buf;
+}
+
+// Draw a single item slot at the current cursor position.
+// Returns true when the invisible-button was clicked.
+bool drawSlot(const char* id,
               const std::optional<shared::ItemStack>& slot,
-              ImVec2                                   size) {
-  const ImU32 border = IM_COL32(70, 70, 70, 255);
-  const ImU32 fill   = IM_COL32(35, 35, 35, 255);
-  ImVec2 p = ImGui::GetCursorScreenPos();
+              ImVec2 sz) {
+  ImVec2 p  = ImGui::GetCursorScreenPos();
+  ImVec2 p2 { p.x + sz.x, p.y + sz.y };
   ImDrawList* dl = ImGui::GetWindowDrawList();
-  dl->AddRectFilled(p, ImVec2(p.x + size.x, p.y + size.y), fill);
-  dl->AddRect      (p, ImVec2(p.x + size.x, p.y + size.y), border);
-  if (slot && !slot->itemId.empty()) {
+
+  const bool filled = slot && !slot->itemId.empty();
+  dl->AddRectFilled(p, p2, filled ? kSlotBgFilled : kSlotBg);  // no rounding
+
+  bool clicked = ImGui::InvisibleButton(id, sz);
+  const bool hovered = ImGui::IsItemHovered();
+
+  dl->AddRect(p, p2, hovered ? kSlotHover : kSlotBorder);  // no rounding
+
+  if (filled) {
     const std::string label = prettyItemId(slot->itemId);
-    ImVec2 textSize = ImGui::CalcTextSize(label.c_str());
-    ImVec2 textPos { p.x + (size.x - textSize.x) * 0.5f,
-                     p.y + (size.y - textSize.y) * 0.5f - 6.0f };
-    dl->AddText(textPos, IM_COL32(220, 200, 120, 255), label.c_str());
+    ImVec2 ts = ImGui::CalcTextSize(label.c_str());
+    ImVec2 tp { p.x + (sz.x - ts.x) * 0.5f, p.y + (sz.y - ts.y) * 0.5f - 5.0f };
+    dl->AddText(tp, kItemText, label.c_str());
     if (slot->quantity > 1) {
-      char qty[16];
-      std::snprintf(qty, sizeof(qty), "%d", slot->quantity);
-      dl->AddText(ImVec2(p.x + 3, p.y + 2), IM_COL32(255, 230, 100, 255), qty);
+      const std::string qs = fmtQty(slot->quantity);
+      dl->AddText(ImVec2(p.x + 3.0f, p.y + 2.0f), kQtyText, qs.c_str());
     }
   }
-  // InvisibleButton gives us hover/click + drag-drop hooks on a real ImGui
-  // item, instead of a dead Dummy.
-  return ImGui::InvisibleButton(idStr, size);
+  return clicked;
 }
 
-}  // namespace
+// Draw an empty equipment slot placeholder — shows the first letter of the
+// slot label centered in grey, so users can see what goes where.
+void drawEmptyEquipSlot(const char* label, ImVec2 sz) {
+  ImVec2 p  = ImGui::GetCursorScreenPos();
+  ImVec2 p2 { p.x + sz.x, p.y + sz.y };
+  ImDrawList* dl = ImGui::GetWindowDrawList();
 
-// ---- Skills ---------------------------------------------------------------
+  dl->AddRectFilled(p, p2, kSlotBg);
+  dl->AddRect(p, p2, kSlotBorder);
 
-void drawSkillsPanel(const shared::PlayerState& p) {
-  if (!ImGui::Begin("Skills")) { ImGui::End(); return; }
-
-  int totalLevel = 0;
-  long long totalXp = 0;
-  for (const char* id : kSkillOrder) {
-    auto it = p.skills.find(id);
-    if (it != p.skills.end()) {
-      totalLevel += it->second.level;
-      totalXp    += it->second.xp;
-    } else {
-      totalLevel += 1;
-    }
+  // First letter centered
+  if (label && label[0] != '\0') {
+    char ch[2] = { label[0], '\0' };
+    ImVec2 ts = ImGui::CalcTextSize(ch);
+    dl->AddText(
+      ImVec2(p.x + (sz.x - ts.x) * 0.5f, p.y + (sz.y - ts.y) * 0.5f),
+      kSlotLabel, ch);
   }
 
-  if (ImGui::BeginTable("skills_tbl", 3,
-                        ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerH)) {
-    ImGui::TableSetupColumn("Skill",  ImGuiTableColumnFlags_WidthStretch);
-    ImGui::TableSetupColumn("Level",  ImGuiTableColumnFlags_WidthFixed, 50.0f);
-    ImGui::TableSetupColumn("XP",     ImGuiTableColumnFlags_WidthFixed, 80.0f);
-    ImGui::TableHeadersRow();
-    for (const char* id : kSkillOrder) {
-      ImGui::TableNextRow();
-      ImGui::TableSetColumnIndex(0);
-      ImGui::TextUnformatted(prettyItemId(id).c_str());
-      auto it = p.skills.find(id);
-      const int   lvl = (it != p.skills.end()) ? it->second.level : 1;
-      const int   xp  = (it != p.skills.end()) ? it->second.xp    : 0;
-      ImGui::TableSetColumnIndex(1); ImGui::Text("%d", lvl);
-      ImGui::TableSetColumnIndex(2); ImGui::Text("%d", xp);
-    }
-    ImGui::EndTable();
-  }
-  ImGui::Separator();
-  ImGui::Text("Total level: %d", totalLevel);
-  ImGui::Text("Total XP:    %lld", totalXp);
-  ImGui::End();
+  // Consume the space so layout advances correctly.
+  ImGui::Dummy(sz);
 }
 
-// ---- Inventory -------------------------------------------------------------
-//
-// Per-slot interactions:
-//   - Drag a non-empty slot onto another slot  -> MOVE_SLOT
-//   - Right-click a non-empty slot             -> popup: Equip / Drop
-//   - Hover                                    -> tooltip with itemId + qty
-//
-// The drag payload is the source slot index. Server validates everything.
-
-void drawInventoryPanel(const shared::PlayerState& p, net::NetworkClient* netc) {
-  if (!ImGui::Begin("Inventory")) { ImGui::End(); return; }
-
-  const float cell = 44.0f;
-  const float pad  = 4.0f;
+// ---- Inventory tab (internal) -----------------------------------------------
+void drawInventoryTab(const shared::PlayerState& p, net::NetworkClient* netc) {
+  constexpr float kCell = 44.0f;
+  constexpr float kPad  =  3.0f;
 
   for (int r = 0; r < kInventoryRows; ++r) {
     for (int c = 0; c < kInventoryCols; ++c) {
@@ -167,21 +178,17 @@ void drawInventoryPanel(const shared::PlayerState& p, net::NetworkClient* netc) 
       std::optional<shared::ItemStack> slot;
       if (idx < static_cast<int>(p.inventory.size())) slot = p.inventory[idx];
 
-      char idBuf[24];
-      std::snprintf(idBuf, sizeof(idBuf), "##invslot_%d", idx);
+      char idbuf[24];
+      std::snprintf(idbuf, sizeof(idbuf), "##inv%d", idx);
 
       ImGui::PushID(idx);
-      drawSlot(idBuf, slot, ImVec2(cell, cell));
+      drawSlot(idbuf, slot, ImVec2(kCell, kCell));
 
-      // ---- Drag source (only when the slot has an item) -------------------
-      if (slot && netc &&
-          ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
-        const int payload = idx;
-        ImGui::SetDragDropPayload("INV_SLOT", &payload, sizeof(payload));
+      if (slot && netc && ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
+        ImGui::SetDragDropPayload("INV_SLOT", &idx, sizeof(idx));
         ImGui::TextUnformatted(prettyItemId(slot->itemId).c_str());
         ImGui::EndDragDropSource();
       }
-      // ---- Drag target -----------------------------------------------------
       if (netc && ImGui::BeginDragDropTarget()) {
         if (const ImGuiPayload* pl = ImGui::AcceptDragDropPayload("INV_SLOT")) {
           int from = *static_cast<const int*>(pl->Data);
@@ -189,120 +196,296 @@ void drawInventoryPanel(const shared::PlayerState& p, net::NetworkClient* netc) 
         }
         ImGui::EndDragDropTarget();
       }
-      // ---- Right-click popup ----------------------------------------------
-      if (slot && netc && ImGui::BeginPopupContextItem("inv_ctx")) {
+      if (slot && netc && ImGui::BeginPopupContextItem("##inv_ctx")) {
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.94f, 0.82f, 0.50f, 1.0f));
         ImGui::TextUnformatted(prettyItemId(slot->itemId).c_str());
+        ImGui::PopStyleColor();
         ImGui::Separator();
-        if (ImGui::Selectable("Equip")) { netc->sendEquipItem(idx); }
-        if (ImGui::Selectable("Drop"))  { netc->sendDropItem (idx); }
+        if (ImGui::Selectable("Equip"))   netc->sendEquipItem(idx);
+        if (ImGui::Selectable("Drop"))    netc->sendDropItem(idx);
+        if (ImGui::Selectable("Examine")) {
+          // No server-side description available yet — log item ID to chat.
+          netc->sendExamine(slot->itemId);
+        }
         ImGui::EndPopup();
       }
-      // ---- Hover tooltip ---------------------------------------------------
       if (slot && ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
         ImGui::BeginTooltip();
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.94f, 0.82f, 0.50f, 1.0f));
         ImGui::TextUnformatted(prettyItemId(slot->itemId).c_str());
-        if (slot->quantity > 1) ImGui::Text("Quantity: %d", slot->quantity);
+        ImGui::PopStyleColor();
+        if (slot->quantity > 1) ImGui::Text("Qty: %s", fmtQty(slot->quantity).c_str());
         ImGui::EndTooltip();
       }
       ImGui::PopID();
-
-      if (c + 1 < kInventoryCols) ImGui::SameLine(0.0f, pad);
+      if (c + 1 < kInventoryCols) ImGui::SameLine(0.0f, kPad);
     }
   }
-  ImGui::End();
 }
 
-// ---- Equipment -------------------------------------------------------------
-//
-// Right-click a populated slot to unequip — server moves the item back into
-// the first free inventory slot.
+// ---- Skills tab (internal) ---------------------------------------------------
+void drawSkillsTab(const shared::PlayerState& p) {
+  int      totalLevel = 0;
+  for (const char* id : kSkillOrder) {
+    auto it = p.skills.find(id);
+    totalLevel += (it != p.skills.end()) ? it->second.level : 1;
+  }
 
-void drawEquipmentPanel(const shared::PlayerState& p, net::NetworkClient* netc) {
-  if (!ImGui::Begin("Equipment")) { ImGui::End(); return; }
+  // 3-column card grid — each card shows icon placeholder, name, level, XP bar.
+  constexpr int   kCols    = 3;
+  constexpr float kCardW   = 64.0f;
+  constexpr float kCardH   = 60.0f;
+  constexpr float kIconSz  = 22.0f;
+  constexpr float kPad     =  3.0f;
 
-  const float cell = 56.0f;
-  const float pad  = 4.0f;
+  const int numSkills = static_cast<int>(kSkillOrder.size());
+
+  ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(kPad, kPad));
+
+  for (int i = 0; i < numSkills; ++i) {
+    const char* skillId = kSkillOrder[i];
+    auto it = p.skills.find(skillId);
+    const int  lvl = (it != p.skills.end()) ? it->second.level : 1;
+    const int  xp  = (it != p.skills.end()) ? it->second.xp    : 0;
+
+    // XP progress within this level
+    const int  xpThisLvl  = xpForLevel(lvl);
+    const int  xpNextLvl  = (lvl < 99) ? xpForLevel(lvl + 1) : xpForLevel(99);
+    const int  xpRange    = std::max(1, xpNextLvl - xpThisLvl);
+    const int  xpIntoLvl  = xp - xpThisLvl;
+    const float progress  = (lvl >= 99) ? 1.0f :
+        std::clamp(static_cast<float>(xpIntoLvl) / static_cast<float>(xpRange), 0.0f, 1.0f);
+
+    // Card background
+    ImGui::PushID(i);
+    ImVec2 cardPos = ImGui::GetCursorScreenPos();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    dl->AddRectFilled(cardPos,
+                      ImVec2(cardPos.x + kCardW, cardPos.y + kCardH),
+                      IM_COL32(18, 10, 3, 230));
+    dl->AddRect(cardPos,
+                ImVec2(cardPos.x + kCardW, cardPos.y + kCardH),
+                IM_COL32(107, 79, 41, 180));
+
+    // Invisible button covers the whole card for hover detection.
+    ImGui::InvisibleButton("##card", ImVec2(kCardW, kCardH));
+    const bool hovered = ImGui::IsItemHovered();
+
+    // Icon placeholder (colored square)
+    const float iconX = cardPos.x + (kCardW - kIconSz) * 0.5f;
+    const float iconY = cardPos.y + 4.0f;
+    dl->AddRectFilled(ImVec2(iconX, iconY),
+                      ImVec2(iconX + kIconSz, iconY + kIconSz),
+                      kSkillColors[i]);
+    dl->AddRect(ImVec2(iconX, iconY),
+                ImVec2(iconX + kIconSz, iconY + kIconSz),
+                IM_COL32(0, 0, 0, 160));
+
+    // Skill name (abbreviated to fit)
+    const std::string name = prettyItemId(skillId);
+    ImVec2 nameSz = ImGui::CalcTextSize(name.c_str());
+    dl->AddText(ImVec2(cardPos.x + (kCardW - nameSz.x) * 0.5f,
+                       iconY + kIconSz + 2.0f),
+                IM_COL32(200, 170, 90, 255),
+                name.c_str());
+
+    // Level number (gold, centered)
+    char lvlBuf[8];
+    std::snprintf(lvlBuf, sizeof(lvlBuf), "%d", lvl);
+    ImVec2 lvlSz = ImGui::CalcTextSize(lvlBuf);
+    dl->AddText(ImVec2(cardPos.x + (kCardW - lvlSz.x) * 0.5f,
+                       iconY + kIconSz + 12.0f),
+                IM_COL32(240, 206, 96, 255),
+                lvlBuf);
+
+    // XP progress bar along the bottom of the card
+    const float barY  = cardPos.y + kCardH - 6.0f;
+    const float barX0 = cardPos.x + 2.0f;
+    const float barX1 = cardPos.x + kCardW - 2.0f;
+    const float barW  = barX1 - barX0;
+    dl->AddRectFilled(ImVec2(barX0, barY), ImVec2(barX1, barY + 4.0f),
+                      IM_COL32(20, 10, 0, 200));
+    dl->AddRectFilled(ImVec2(barX0, barY), ImVec2(barX0 + barW * progress, barY + 4.0f),
+                      IM_COL32(40, 180, 50, 230));
+
+    // Hover tooltip
+    if (hovered) {
+      ImGui::BeginTooltip();
+      ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.55f, 0.0f, 1.0f));
+      ImGui::TextUnformatted(name.c_str());
+      ImGui::PopStyleColor();
+      ImGui::Text("Level: %d", lvl);
+      ImGui::Text("XP: %d", xp);
+      if (lvl < 99) {
+        ImGui::Text("Next level: %d XP", xpNextLvl);
+        ImGui::Text("Remaining: %d XP", std::max(0, xpNextLvl - xp));
+      } else {
+        ImGui::TextUnformatted("Max level");
+      }
+      ImGui::EndTooltip();
+    }
+
+    ImGui::PopID();
+    if ((i + 1) % kCols != 0) ImGui::SameLine(0.0f, kPad);
+  }
+
+  ImGui::PopStyleVar();  // ItemSpacing
+
+  ImGui::Separator();
+  ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.00f, 0.65f, 0.15f, 1.0f));
+  ImGui::Text("Total level: %d / %d", totalLevel, 99 * static_cast<int>(kSkillOrder.size()));
+  ImGui::PopStyleColor();
+}
+
+// ---- Equipment tab (internal) -----------------------------------------------
+void drawEquipmentTab(const shared::PlayerState& p, net::NetworkClient* netc) {
+  constexpr float kCell = 52.0f;
+  constexpr float kPad  =  3.0f;
+
   for (int row = 0; row < 5; ++row) {
     for (int col = 0; col < 3; ++col) {
-      const EquipCell* match = nullptr;
+      const EquipCell* m = nullptr;
       for (const auto& e : kEquipGrid) {
-        if (e.row == row && e.col == col) { match = &e; break; }
+        if (e.row == row && e.col == col) { m = &e; break; }
       }
-      if (match && match->slotId && match->slotId[0] != '\0') {
+
+      if (m && m->slotId && m->slotId[0] != '\0') {
+        // Named slot — show item if equipped, or empty-slot label placeholder
         std::optional<shared::ItemStack> slot;
-        auto it = p.equipped.find(match->slotId);
+        auto it = p.equipped.find(m->slotId);
         if (it != p.equipped.end()) slot = it->second;
 
-        char idBuf[32];
-        std::snprintf(idBuf, sizeof(idBuf), "##eqslot_%s", match->slotId);
-        ImGui::PushID(match->slotId);
-        drawSlot(idBuf, slot, ImVec2(cell, cell));
+        char idbuf[32];
+        std::snprintf(idbuf, sizeof(idbuf), "##eq%s", m->slotId);
+        ImGui::PushID(m->slotId);
 
-        if (slot && netc && ImGui::BeginPopupContextItem("eq_ctx")) {
-          ImGui::TextUnformatted(prettyItemId(slot->itemId).c_str());
-          ImGui::Separator();
-          if (ImGui::Selectable("Remove")) {
-            netc->sendUnequipItem(match->slotId);
+        if (slot) {
+          drawSlot(idbuf, slot, ImVec2(kCell, kCell));
+          if (netc && ImGui::BeginPopupContextItem("##eq_ctx")) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.94f, 0.82f, 0.50f, 1.0f));
+            ImGui::TextUnformatted(prettyItemId(slot->itemId).c_str());
+            ImGui::PopStyleColor();
+            ImGui::Separator();
+            if (ImGui::Selectable("Remove")) netc->sendUnequipItem(m->slotId);
+            if (ImGui::Selectable("Examine")) netc->sendExamine(slot->itemId);
+            ImGui::EndPopup();
           }
-          ImGui::EndPopup();
-        }
-        if (slot && ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
-          ImGui::BeginTooltip();
-          ImGui::Text("%s — %s", match->label, prettyItemId(slot->itemId).c_str());
-          ImGui::EndTooltip();
+          if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
+            ImGui::BeginTooltip();
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.94f, 0.82f, 0.50f, 1.0f));
+            ImGui::Text("%s", prettyItemId(slot->itemId).c_str());
+            ImGui::PopStyleColor();
+            ImGui::TextDisabled("(%s slot)", m->label);
+            ImGui::EndTooltip();
+          }
+        } else {
+          // Empty slot — show letter placeholder
+          drawEmptyEquipSlot(m->label, ImVec2(kCell, kCell));
         }
         ImGui::PopID();
       } else {
-        ImGui::Dummy(ImVec2(cell, cell));
+        // True spacer (corners) — invisible
+        ImGui::Dummy(ImVec2(kCell, kCell));
       }
-      if (col + 1 < 3) ImGui::SameLine(0.0f, pad);
+      if (col + 1 < 3) ImGui::SameLine(0.0f, kPad);
     }
+  }
+}
+
+}  // namespace
+
+// ---- Public: HUD panel ------------------------------------------------------
+
+void drawHudPanel(const shared::PlayerState& p, net::NetworkClient* net) {
+  const ImGuiIO& io = ImGui::GetIO();
+  constexpr float kW      = 232.0f;
+  // Skills tab now uses cards — needs a bit more height than before.
+  constexpr float kHudH   = 420.0f;
+  constexpr float kPadX   = 12.0f;
+  constexpr float kPadY   = 12.0f;
+
+  ImGui::SetNextWindowPos(
+      ImVec2(io.DisplaySize.x - kW - kPadX, io.DisplaySize.y - kHudH - kPadY),
+      ImGuiCond_Always);
+  ImGui::SetNextWindowSize(ImVec2(kW, kHudH), ImGuiCond_Always);
+  ImGui::SetNextWindowBgAlpha(0.94f);
+  ImGui::Begin("##hud", nullptr,
+      ImGuiWindowFlags_NoTitleBar  | ImGuiWindowFlags_NoResize    |
+      ImGuiWindowFlags_NoMove      | ImGuiWindowFlags_NoScrollbar |
+      ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoBringToFrontOnFocus);
+
+  if (ImGui::BeginTabBar("##tabs")) {
+    if (ImGui::BeginTabItem("Inventory")) {
+      drawInventoryTab(p, net);
+      ImGui::EndTabItem();
+    }
+    if (ImGui::BeginTabItem("Skills")) {
+      drawSkillsTab(p);
+      ImGui::EndTabItem();
+    }
+    if (ImGui::BeginTabItem("Equipment")) {
+      drawEquipmentTab(p, net);
+      ImGui::EndTabItem();
+    }
+    ImGui::EndTabBar();
   }
   ImGui::End();
 }
 
-// ---- Bank ------------------------------------------------------------------
-//
-// 8 columns x N rows. Right-click a populated slot for Withdraw 1 / Withdraw
-// all. Deposit-side actions live as top-row buttons. The bank's "open"
-// state is purely client-side — there's no server flag, so the App owns
-// the bool and the panel closes by writing through `open`.
+// ---- Public: Bank panel -----------------------------------------------------
 
-void drawBankPanel(const shared::PlayerState& p, net::NetworkClient* netc, bool* open) {
+void drawBankPanel(const shared::PlayerState& p, net::NetworkClient* net, bool* open) {
   if (!open || !*open) return;
-  if (!ImGui::Begin("Bank", open)) { ImGui::End(); return; }
 
-  if (ImGui::Button("Deposit all"))   { if (netc) netc->sendDepositAll();  }
+  const ImGuiIO& io = ImGui::GetIO();
+  constexpr float kW = 460.0f;
+  constexpr float kH = 440.0f;
+  ImGui::SetNextWindowPos(
+      ImVec2((io.DisplaySize.x - kW) * 0.5f, (io.DisplaySize.y - kH) * 0.5f),
+      ImGuiCond_Always);
+  ImGui::SetNextWindowSize(ImVec2(kW, kH), ImGuiCond_Always);
+
+  if (!ImGui::Begin("Bank##panel", open,
+        ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+        ImGuiWindowFlags_NoSavedSettings)) {
+    ImGui::End(); return;
+  }
+
+  if (ImGui::Button("Deposit All"))  { if (net) net->sendDepositAll();  }
   ImGui::SameLine();
-  if (ImGui::Button("Deposit worn"))  { if (netc) netc->sendDepositWorn(); }
+  if (ImGui::Button("Deposit Worn")) { if (net) net->sendDepositWorn(); }
   ImGui::SameLine();
-  ImGui::TextDisabled("(%d slots)", static_cast<int>(p.bank.size()));
+  // Usage fraction: X / max
+  ImGui::TextDisabled("%d / %d items", static_cast<int>(p.bank.size()), kMaxBankSlots);
   ImGui::Separator();
 
   constexpr int   kCols = 8;
   constexpr float kCell = 44.0f;
-  constexpr float kPad  = 3.0f;
+  constexpr float kPad  =  3.0f;
 
-  // Inventory mini-strip for one-click deposit. 4 cols x 7 rows on the
-  // right side wouldn't fit alongside the bank grid in a small window, so
-  // we put the bank above and the inventory deposit list below.
-  ImGui::BeginChild("bank_grid", ImVec2(0, kCell * 6 + 12), true);
+  ImGui::BeginChild("##bk_grid", ImVec2(0, kCell * 5 + 16), true);
   for (int i = 0; i < static_cast<int>(p.bank.size()); ++i) {
     const auto& slot = p.bank[i];
-    char idBuf[24];
-    std::snprintf(idBuf, sizeof(idBuf), "##bankslot_%d", i);
+    char idbuf[24];
+    std::snprintf(idbuf, sizeof(idbuf), "##bk%d", i);
     ImGui::PushID(i);
-    drawSlot(idBuf, slot, ImVec2(kCell, kCell));
-    if (slot && netc && ImGui::BeginPopupContextItem("bank_ctx")) {
+    drawSlot(idbuf, slot, ImVec2(kCell, kCell));
+    if (slot && net && ImGui::BeginPopupContextItem("##bkctx")) {
+      ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.94f, 0.82f, 0.50f, 1.0f));
       ImGui::TextUnformatted(prettyItemId(slot->itemId).c_str());
+      ImGui::PopStyleColor();
       ImGui::Separator();
-      if (ImGui::Selectable("Withdraw 1"))   netc->sendWithdrawItem(i, 1);
-      if (ImGui::Selectable("Withdraw all")) netc->sendWithdrawItem(i, slot->quantity);
+      if (ImGui::Selectable("Withdraw 1"))   net->sendWithdrawItem(i, 1);
+      if (ImGui::Selectable("Withdraw All")) net->sendWithdrawItem(i, slot->quantity);
+      if (ImGui::Selectable("Examine"))      net->sendExamine(slot->itemId);
       ImGui::EndPopup();
     }
     if (slot && ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
       ImGui::BeginTooltip();
-      ImGui::Text("%s  (%d)", prettyItemId(slot->itemId).c_str(), slot->quantity);
+      ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.94f, 0.82f, 0.50f, 1.0f));
+      ImGui::Text("%s", prettyItemId(slot->itemId).c_str());
+      ImGui::PopStyleColor();
+      if (slot->quantity > 1) ImGui::Text("Qty: %s", fmtQty(slot->quantity).c_str());
       ImGui::EndTooltip();
     }
     ImGui::PopID();
@@ -311,19 +494,21 @@ void drawBankPanel(const shared::PlayerState& p, net::NetworkClient* netc, bool*
   ImGui::EndChild();
 
   ImGui::Separator();
-  ImGui::TextUnformatted("Inventory  (right-click to Deposit)");
-  ImGui::BeginChild("bank_inv", ImVec2(0, kCell * 2 + 12), true);
+  ImGui::TextUnformatted("Inventory  (right-click to deposit)");
+  ImGui::BeginChild("##bk_inv", ImVec2(0, kCell * 2 + 12), true);
   for (int i = 0; i < static_cast<int>(p.inventory.size()); ++i) {
     const auto& slot = p.inventory[i];
-    char idBuf[24];
-    std::snprintf(idBuf, sizeof(idBuf), "##binv_%d", i);
+    char idbuf[24];
+    std::snprintf(idbuf, sizeof(idbuf), "##bi%d", i);
     ImGui::PushID(i);
-    drawSlot(idBuf, slot, ImVec2(kCell, kCell));
-    if (slot && netc && ImGui::BeginPopupContextItem("binv_ctx")) {
+    drawSlot(idbuf, slot, ImVec2(kCell, kCell));
+    if (slot && net && ImGui::BeginPopupContextItem("##bictx")) {
+      ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.94f, 0.82f, 0.50f, 1.0f));
       ImGui::TextUnformatted(prettyItemId(slot->itemId).c_str());
+      ImGui::PopStyleColor();
       ImGui::Separator();
-      if (ImGui::Selectable("Deposit 1"))   netc->sendDepositItem(i, 1);
-      if (ImGui::Selectable("Deposit all")) netc->sendDepositItem(i, slot->quantity);
+      if (ImGui::Selectable("Deposit 1"))   net->sendDepositItem(i, 1);
+      if (ImGui::Selectable("Deposit All")) net->sendDepositItem(i, slot->quantity);
       ImGui::EndPopup();
     }
     ImGui::PopID();
@@ -332,64 +517,85 @@ void drawBankPanel(const shared::PlayerState& p, net::NetworkClient* netc, bool*
   ImGui::EndChild();
 
   ImGui::End();
+
+  // Close on click-outside: if the bank is open but the user clicked somewhere
+  // that isn't any ImGui window, close it and tell the server.
+  if (*open &&
+      ImGui::IsMouseClicked(ImGuiMouseButton_Left) &&
+      !ImGui::IsWindowHovered(ImGuiHoveredFlags_AnyWindow)) {
+    *open = false;
+    if (net) net->sendCloseBank();
+  }
 }
 
-// ---- Chat log --------------------------------------------------------------
+// ---- ChatLog ----------------------------------------------------------------
 
 void ChatLog::appendSystem(std::string line) {
   entries_.push_back({ std::move(line), true });
   while (entries_.size() > kMax) entries_.pop_front();
 }
 
-void ChatLog::observePlayers(const std::unordered_map<std::string, shared::PlayerState>& players) {
-  for (const auto& [id, p] : players) {
-    if (p.chatMessage.empty() || p.chatMessageTick <= 0) continue;
+void ChatLog::observePlayers(
+    const std::unordered_map<std::string, shared::PlayerState>& players) {
+  for (const auto& [id, pl] : players) {
+    if (pl.chatMessage.empty() || pl.chatMessageTick <= 0) continue;
     auto it = seenChatTick_.find(id);
-    if (it != seenChatTick_.end() && it->second == p.chatMessageTick) continue;
-    seenChatTick_[id] = p.chatMessageTick;
-    std::string speaker = p.playerName.empty() ? id : p.playerName;
-    entries_.push_back({ speaker + ": " + p.chatMessage, false });
+    if (it != seenChatTick_.end() && it->second == pl.chatMessageTick) continue;
+    seenChatTick_[id] = pl.chatMessageTick;
+    std::string speaker = pl.playerName.empty() ? id : pl.playerName;
+    entries_.push_back({ speaker + ": " + pl.chatMessage, false });
     while (entries_.size() > kMax) entries_.pop_front();
   }
 }
 
 void ChatLog::draw(net::NetworkClient* netc) {
-  if (!ImGui::Begin("Chat")) { ImGui::End(); return; }
-  // Reserve room for the input field at the bottom when a network client
-  // is wired up.
-  const float reserveH = netc
-      ? (ImGui::GetFrameHeightWithSpacing())
-      : 0.0f;
-  ImGui::BeginChild("chat_scroll", ImVec2(0, -reserveH), false,
+  const ImGuiIO& io = ImGui::GetIO();
+  constexpr float kW    = 420.0f;
+  constexpr float kH    = 175.0f;
+  constexpr float kPadX = 12.0f;
+  constexpr float kPadY = 12.0f;
+  ImGui::SetNextWindowPos(
+      ImVec2(kPadX, io.DisplaySize.y - kH - kPadY),
+      ImGuiCond_Always);
+  ImGui::SetNextWindowSize(ImVec2(kW, kH), ImGuiCond_Always);
+  ImGui::SetNextWindowBgAlpha(0.82f);
+
+  if (!ImGui::Begin("##chat", nullptr,
+        ImGuiWindowFlags_NoTitleBar  | ImGuiWindowFlags_NoResize    |
+        ImGuiWindowFlags_NoMove      | ImGuiWindowFlags_NoBringToFrontOnFocus |
+        ImGuiWindowFlags_NoSavedSettings)) {
+    ImGui::End(); return;
+  }
+
+  const float reserveH = netc ? ImGui::GetFrameHeightWithSpacing() : 0.0f;
+  ImGui::BeginChild("##chat_scroll", ImVec2(0, -reserveH), false,
                     ImGuiWindowFlags_HorizontalScrollbar);
   for (const auto& e : entries_) {
-    const ImVec4 color = e.system ? ImVec4(1.0f, 0.92f, 0.30f, 1.0f)
-                                  : ImVec4(1.0f, 1.0f,  1.0f, 1.0f);
-    ImGui::PushStyleColor(ImGuiCol_Text, color);
+    const ImVec4 col = e.system
+        ? ImVec4(1.0f, 0.92f, 0.30f, 1.0f)
+        : ImVec4(1.0f, 1.0f,  1.0f, 1.0f);
+    ImGui::PushStyleColor(ImGuiCol_Text, col);
     ImGui::TextWrapped("%s", e.text.c_str());
     ImGui::PopStyleColor();
   }
-  if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 1.0f) {
+  if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 1.0f)
     ImGui::SetScrollHereY(1.0f);
-  }
   ImGui::EndChild();
+
   if (netc) {
-    ImGui::SetNextItemWidth(-FLT_MIN);
-    // Auto-focus the chat input when the user starts typing and no other
-    // widget has focus (so they don't have to click into the box first).
-    if (!ImGui::IsAnyItemActive() && !ImGui::GetIO().WantTextInput
-        && ImGui::GetIO().InputQueueCharacters.Size > 0) {
+    // Auto-focus: if a printable character was typed and no other widget is
+    // active, redirect keyboard input to the chat field immediately.
+    if (!ImGui::IsAnyItemActive() && io.InputQueueCharacters.Size > 0) {
       ImGui::SetKeyboardFocusHere(0);
     }
+    ImGui::SetNextItemWidth(-FLT_MIN);
     if (ImGui::InputText("##chat_in", inputBuf_, sizeof(inputBuf_),
                          ImGuiInputTextFlags_EnterReturnsTrue)) {
       if (inputBuf_[0] != '\0') {
         netc->sendChat(inputBuf_);
-        // No local echo — the server echoes our message back via
-        // chatMessageTick which observePlayers() picks up next tick.
       }
       inputBuf_[0] = '\0';
-      ImGui::SetKeyboardFocusHere(-1);   // refocus input for fast follow-ups
+      ImGui::SetKeyboardFocusHere(-1);
     }
   }
   ImGui::End();

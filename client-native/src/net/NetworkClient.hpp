@@ -34,8 +34,12 @@ public:
 
   // Posts /auth/login then opens the WebSocket. Returns immediately; check
   // status() / lastError() for progress. Background-threaded.
-  void loginAndConnect(std::string host, int port,
-                       std::string username, std::string password);
+  void loginAndConnect   (std::string host, int port,
+                          std::string username, std::string password);
+
+  // Posts /auth/register (creates account) then logs in automatically.
+  void registerAndConnect(std::string host, int port,
+                          std::string username, std::string password);
 
   void disconnect();
 
@@ -62,6 +66,8 @@ public:
   void sendDepositAll  ();
   void sendDepositWorn ();
   void sendWithdrawItem(int bankSlot, int quantity);
+  void sendCloseBank  ();
+  void sendExamine    (const std::string& itemId);
 
   // ---- State accessors (main-thread reads) --------------------------------
 
@@ -76,7 +82,8 @@ public:
 
 private:
   void runLoginThread(std::string host, int port,
-                      std::string username, std::string password);
+                      std::string username, std::string password,
+                      bool registerFirst = false);
   void onWsMessage(const std::string& msg);
   void onWsClose(int code, const std::string& reason);
 

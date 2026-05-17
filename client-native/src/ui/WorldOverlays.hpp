@@ -46,6 +46,15 @@ private:
   // damage only spawns one splat.
   std::unordered_map<std::string, int> seenHitTick_;
   std::vector<Splat>                   splats_;
+
+  // Seeded on the first state message so we don't fire splats for ticks that
+  // already existed when the session started.
+  bool initialized_ = false;
+
+  // Local player health bar fade: stays visible for kHealthBarFadeSec seconds
+  // after HP returns to full. Zero when no bar should be shown.
+  std::chrono::steady_clock::time_point localHealthBarFadeUntil_{};
+  static constexpr float kHealthBarFadeSec = 10.0f;
 };
 
 // Convert a world position to pixel coordinates on the default framebuffer.
@@ -89,21 +98,49 @@ inline void WorldOverlays::drawWithHeight(const glm::mat4& viewProj,
                       ImVec2(x + w,       y + h), IM_COL32(0, 0, 0, 255));
   };
 
-  // Local player
+  // Local player — only show when damaged; fade out kHealthBarFadeSec after
+  // returning to full HP so it doesn't disappear with a jarring snap.
   if (localPlayer && localPlayer->maxHp > 0) {
-    const float yWorld = getHeight(localPlayer->tileX, localPlayer->tileY);
-    drawHealthBar({static_cast<float>(localPlayer->tileX),
-                   yWorld + 2.4f,
-                   static_cast<float>(localPlayer->tileY)},
-                  localPlayer->hp, localPlayer->maxHp);
+    const auto nowBar = std::chrono::steady_clock::now();
+    if (localPlayer->hp < localPlayer->maxHp) {
+      // Actively damaged — keep the fade timer well ahead of now.
+      localHealthBarFadeUntil_ = nowBar +
+          std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+              std::chrono::duration<float>(kHealthBarFadeSec));
+    }
+    const float secLeft = std::chrono::duration<float>(localHealthBarFadeUntil_ - nowBar).count();
+    if (secLeft > 0.0f) {
+      const float alpha = std::clamp(secLeft / 1.5f, 0.0f, 1.0f);  // fade last 1.5s
+      const float yWorld = getHeight(localPlayer->tileX, localPlayer->tileY);
+      // Save/restore alpha via draw list — fade the whole bar.
+      const ImU32 bgCol  = IM_COL32(50, 0, 0, static_cast<int>(220 * alpha));
+      const ImU32 fgCol  = IM_COL32(40, 200, 40, static_cast<int>(230 * alpha));
+      const ImU32 brdCol = IM_COL32(0, 0, 0, static_cast<int>(255 * alpha));
+      glm::vec2 px;
+      const glm::vec3 anchor {
+        static_cast<float>(localPlayer->tileX),
+        yWorld + 1.6f,    // lowered: sits just above the character head
+        static_cast<float>(localPlayer->tileY)
+      };
+      if (worldToScreen(viewProj, anchor, fbWidth, fbHeight, &px)) {
+        constexpr float w = 44.0f, h = 6.0f;
+        const float x = px.x - w * 0.5f, y = px.y - 4.0f;
+        const float frac = std::clamp(
+            static_cast<float>(localPlayer->hp) / static_cast<float>(localPlayer->maxHp),
+            0.0f, 1.0f);
+        dl->AddRectFilled(ImVec2(x,            y), ImVec2(x + w,         y + h), bgCol);
+        dl->AddRectFilled(ImVec2(x,            y), ImVec2(x + w * frac,  y + h), fgCol);
+        dl->AddRect      (ImVec2(x,            y), ImVec2(x + w,         y + h), brdCol);
+      }
+    }
   }
-  // NPCs — only show a bar for NPCs that have taken damage recently.
+  // NPCs — only show a bar for NPCs that have taken damage.
   for (const auto& n : npcs) {
     if (n.dying || n.maxHp <= 0) continue;
     if (n.hp >= n.maxHp) continue;            // unwounded NPCs get no bar
     const float yWorld = getHeight(n.tileX, n.tileY);
     drawHealthBar({static_cast<float>(n.tileX),
-                   yWorld + 1.8f,
+                   yWorld + 1.6f,
                    static_cast<float>(n.tileY)},
                   n.hp, n.maxHp);
   }

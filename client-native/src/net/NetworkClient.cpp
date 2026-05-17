@@ -45,33 +45,53 @@ NetworkClient::~NetworkClient() {
 void NetworkClient::loginAndConnect(std::string host, int port,
                                     std::string username, std::string password) {
   if (status_.load() == Connection::Connected) return;
-
   status_   = Connection::LoggingIn;
   lastError_.clear();
   host_     = std::move(host);
   port_     = port;
-
-  // Run on a detached thread so we don't block the render loop. The
-  // background thread updates atomic status_ and string fields, which are
-  // safe to read on the main thread (lastError_/playerId_/playerName_ are
-  // only read once status reaches Failed or Connected).
   std::thread([this, u = std::move(username), p = std::move(password)]() mutable {
-    runLoginThread(host_, port_, std::move(u), std::move(p));
+    runLoginThread(host_, port_, std::move(u), std::move(p), false);
+  }).detach();
+}
+
+void NetworkClient::registerAndConnect(std::string host, int port,
+                                       std::string username, std::string password) {
+  if (status_.load() == Connection::Connected) return;
+  status_   = Connection::LoggingIn;
+  lastError_.clear();
+  host_     = std::move(host);
+  port_     = port;
+  std::thread([this, u = std::move(username), p = std::move(password)]() mutable {
+    runLoginThread(host_, port_, std::move(u), std::move(p), true);
   }).detach();
 }
 
 void NetworkClient::runLoginThread(std::string host, int port,
-                                   std::string username, std::string password) {
-  // ---- HTTP POST /auth/login ---------------------------------------------
+                                   std::string username, std::string password,
+                                   bool registerFirst) {
   ix::HttpClient http;
   auto args = http.createRequest();
   args->extraHeaders["Content-Type"] = "application/json";
-
-  // Hand-build the request body. The server's express.json() parser accepts
-  // any conformant JSON; we keep escaping minimal because username/password
-  // are user-typed ASCII.
   std::string body = "{\"username\":\"" + username + "\",\"password\":\"" + password + "\"}";
 
+  // ---- Optional: POST /auth/register first --------------------------------
+  if (registerFirst) {
+    const std::string regUrl = "http://" + host + ":" + std::to_string(port) + "/auth/register";
+    auto regResp = http.post(regUrl, body, args);
+    if (!regResp) {
+      lastError_ = "no response from server";
+      status_    = Connection::Failed;
+      return;
+    }
+    if (regResp->statusCode != 200 && regResp->statusCode != 201) {
+      lastError_ = "registration failed (" + std::to_string(regResp->statusCode) + "): " + regResp->body;
+      status_    = Connection::Failed;
+      return;
+    }
+    // Registration succeeded — now fall through to login.
+  }
+
+  // ---- HTTP POST /auth/login ---------------------------------------------
   const std::string url = "http://" + host + ":" + std::to_string(port) + "/auth/login";
   auto resp = http.post(url, body, args);
 
@@ -267,6 +287,15 @@ void NetworkClient::sendDepositItem(int slotIndex, int quantity) {
 
 void NetworkClient::sendDepositAll()  { sendActionRaw("{\"type\":\"DEPOSIT_ALL\"}"); }
 void NetworkClient::sendDepositWorn() { sendActionRaw("{\"type\":\"DEPOSIT_WORN\"}"); }
+void NetworkClient::sendCloseBank()   { sendActionRaw("{\"type\":\"CLOSE_BANK\"}"); }
+
+void NetworkClient::sendExamine(const std::string& itemId) {
+  // The server looks up the item description and sends it back as a chat
+  // message. If the server doesn't support EXAMINE yet, this is a no-op.
+  char buf[128];
+  std::snprintf(buf, sizeof(buf), "{\"type\":\"EXAMINE\",\"itemId\":\"%s\"}", itemId.c_str());
+  sendActionRaw(buf);
+}
 
 void NetworkClient::sendWithdrawItem(int bankSlot, int quantity) {
   char buf[96];

@@ -47,7 +47,7 @@ private:
   void generateAndBuildTerrain();
   void initHoverMesh();
   void destroyHoverMesh();
-  void updateHoverMesh(int tx, int ty);
+  void updateHoverMesh(int tx, int ty, int szX = 1, int szY = 1);
 
   void renderPlayer(const glm::mat4& viewProj, float dt);
   void processNetworkMessages();
@@ -56,6 +56,7 @@ private:
   // Returns true if cursor world position should be sampled for a click
   // action (i.e. a real terrain tile, not an ImGui-owned area).
   bool drawLoginUi();
+  void drawJoinModal();
 
   Window                                   window_;
   std::unique_ptr<render::MsaaFramebuffer> msaa_;
@@ -85,6 +86,16 @@ private:
   // All players this tick (local + remote); kept for chat + future overlay
   // expansion. The map is replaced wholesale on each StateMessage.
   std::unordered_map<std::string, shared::PlayerState> allPlayers_;
+  // Per-remote-player interpolation + animation state (prev/curr snapshots
+  // for smooth position lerp, independent animation clip/time).
+  struct RemoteAnim {
+    int   clipIndex = -1;   // index into playerModel_ animations
+    float clipTime  = 0.0f;
+    float yaw       = 0.0f; // smoothed yaw
+  };
+  std::unordered_map<std::string, shared::PlayerState> prevRemotePlayers_;
+  std::unordered_map<std::string, shared::PlayerState> currRemotePlayers_;
+  std::unordered_map<std::string, RemoteAnim>          remoteAnims_;
   std::vector<shared::NPCState>            npcs_;
   std::vector<shared::DroppedItemState>    droppedItems_;
   // Per-id previous + current NPC snapshots for Phase 10 interpolation.
@@ -119,6 +130,9 @@ private:
   char                                     loginPass_[64]     = "test1234";
   char                                     loginHost_[64]     = "localhost";
   int                                      loginPort_         = 8080;
+  bool                                     loginRegisterMode_ = false;  // false=Login, true=Register
+  bool                                     isNewPlayer_       = false;
+  char                                     joinNameBuf_[21]   = {};
 
   std::chrono::steady_clock::time_point    lastFrameTime_{};
   shared::WorldMapFile                     map_;

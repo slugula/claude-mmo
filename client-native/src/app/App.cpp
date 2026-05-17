@@ -19,6 +19,7 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cfloat>
 #include <cmath>
 #include <cstdio>
@@ -47,6 +48,7 @@ constexpr const char* kOutlineFragPath   = "shaders/outline.frag";
 constexpr const char* kShadowInstVertPath= "shaders/shadow_instanced.vert";
 constexpr const char* kShadowFragPath    = "shaders/shadow.frag";
 constexpr const char* kPlayerModelPath   = "assets/models/player.glb";
+constexpr const char* kTreeModelPath     = "assets/models/tree.gltf";
 constexpr int         kShadowMapSize     = 2048;
 
 constexpr glm::vec3 kPlayerColor  { 0.62f, 0.45f, 0.30f};  // skin tone, modulated by Lambert
@@ -101,6 +103,14 @@ float facingToYaw(const std::string& facing) {
   if (facing == "west")  return -1.57079632f;
   return 0.0f;
 }
+
+// Choose the animation clip name for a given player's current state.
+const char* clipForPlayer(const shared::PlayerState* p) {
+  if (!p) return "Idle_Loop";
+  if (p->dying)        return "Death01";
+  if (p->path.empty()) return "Idle_Loop";
+  return "Sprint_Loop";
+}
 }  // namespace
 
 App::~App() {
@@ -120,8 +130,9 @@ bool App::init() {
   // ImGui's GLFW backend chains these — its handlers run first, then ours.
   // We bail when ImGui claims the mouse so clicks on UI don't rotate the
   // camera and scroll over a slider zooms it instead of the world.
-  window_.onMouseButton = [this](int button, int action, int /*mods*/) {
+  window_.onMouseButton = [this](int button, int action, int mods) {
     if (ImGui::GetIO().WantCaptureMouse) return;
+    (void)mods;
     camera_.onMouseButton(button, action);
     // Left-click dispatches the primary action for the hovered tile.
     // Priority: NPC > dropped item > obstacle > walk (NPCs and items are
@@ -247,6 +258,9 @@ bool App::init() {
   }
 
   obstacles_.initGL();
+  if (!obstacles_.loadTreeModel(resolveFromExe(kTreeModelPath))) {
+    std::fprintf(stderr, "[App] tree model load failed — using procedural trees\n");
+  }
   entities_.initGL();
   generateAndBuildTerrain();
   initHoverMesh();
@@ -266,6 +280,7 @@ bool App::init() {
   glDisable(GL_CULL_FACE);
 
   initImGui();
+
   if (!audio_.init()) {
     std::fprintf(stderr, "[App] audio init failed — proceeding without sound\n");
   }
@@ -321,26 +336,26 @@ void App::destroyHoverMesh() {
   hoverVao_ = hoverVbo_ = 0;
 }
 
-void App::updateHoverMesh(int tx, int ty) {
-  // 4 corners of tile (tx, ty) at the current vertex heights.
-  // Babylon-convention layout: vertex (row, col) at world (col-0.5, h, H-row-0.5)
+void App::updateHoverMesh(int tx, int ty, int szX, int szY) {
+  // 4 corners of a szX × szY tile region whose SW corner is (tx, ty).
   const int   W   = terrainTileW_;
   const int   H   = terrainTileH_;
   const auto& vh  = map_.vertexHeights;
   if (W <= 0 || H <= 0 || vh.empty()) return;
 
-  const float hSW = vh[(H - ty)     * (W + 1) + tx]     * shared::kMaxTerrainH;
-  const float hSE = vh[(H - ty)     * (W + 1) + tx + 1] * shared::kMaxTerrainH;
-  const float hNW = vh[(H - ty - 1) * (W + 1) + tx]     * shared::kMaxTerrainH;
-  const float hNE = vh[(H - ty - 1) * (W + 1) + tx + 1] * shared::kMaxTerrainH;
+  const int tx2 = tx + szX - 1;
+  const int ty2 = ty + szY - 1;
 
-  // GL_LINE_LOOP visits the 4 vertices in order and closes the loop back to
-  // the start. Order SW→SE→NE→NW gives a clean rectangle outline.
+  const float hSW = vh[(H - ty)      * (W + 1) + tx]      * shared::kMaxTerrainH;
+  const float hSE = vh[(H - ty)      * (W + 1) + tx2 + 1] * shared::kMaxTerrainH;
+  const float hNW = vh[(H - ty2 - 1) * (W + 1) + tx]      * shared::kMaxTerrainH;
+  const float hNE = vh[(H - ty2 - 1) * (W + 1) + tx2 + 1] * shared::kMaxTerrainH;
+
   const float verts[12] = {
-      tx - 0.5f, hSW, ty - 0.5f,
-      tx + 0.5f, hSE, ty - 0.5f,
-      tx + 0.5f, hNE, ty + 0.5f,
-      tx - 0.5f, hNW, ty + 0.5f,
+      tx  - 0.5f, hSW, ty  - 0.5f,
+      tx2 + 0.5f, hSE, ty  - 0.5f,
+      tx2 + 0.5f, hNE, ty2 + 0.5f,
+      tx  - 0.5f, hNW, ty2 + 0.5f,
   };
   glNamedBufferSubData(hoverVbo_, 0, sizeof(verts), verts);
 }
@@ -382,10 +397,91 @@ void App::renderFrame() {
     input::screenToRay(cursorX, cursorY, fbW, fbH, viewProj, &rayOrigin, &rayDir);
     hoveredTile_ = input::pickTile(rayOrigin, rayDir, map_.vertexHeights,
                                    terrainTileW_, terrainTileH_);
+
+    // ---- Obstacle ray-pick (secondary pass) ----------------------------------
+    // The terrain heightfield pick finds where the ray hits the ground. When
+    // the cursor is over a raised obstacle (tree canopy, rock top) but the ray
+    // hits an adjacent tile, this pass tests the ray against each obstacle's
+    // bounding cylinder and overrides the result when it's closer.
+    //
+    // Key correctness detail: we test BOTH roots of the quadratic (t1=entry,
+    // t2=exit). For steep camera angles the ray often enters the infinite
+    // cylinder above the top cap (t1 Y-rejected) but exits through the side
+    // within the valid height range (t2 accepted). Skipping t2 was the
+    // original bug that made this pass appear to do nothing.
+    {
+      float bestT = hoveredTile_.hit ? hoveredTile_.rayT : FLT_MAX;
+      int bestTx = -1, bestTy = -1;
+
+      for (int oty = 0; oty < terrainTileH_; ++oty) {
+        for (int otx = 0; otx < terrainTileW_; ++otx) {
+          const auto obs = map_.tiles[oty][otx].obstacle;
+          if (obs == shared::ObstacleType::none) continue;
+
+          const float cx    = static_cast<float>(otx);
+          const float cz    = static_cast<float>(oty);
+          const float baseY = tileWorldY(map_, otx, oty);
+
+          float r, h;
+          if (obs == shared::ObstacleType::tree) {
+            r = 0.55f;  // slightly wider than the 1-tile visual footprint
+            h = 4.0f;   // a little above kScaleY=3.5 to cover canopy rounding
+          } else {
+            r = 0.40f;
+            h = 0.80f;
+          }
+
+          const float dx = rayOrigin.x - cx;
+          const float dz = rayOrigin.z - cz;
+          const float a  = rayDir.x * rayDir.x + rayDir.z * rayDir.z;
+
+          float tHit = -1.0f;
+
+          if (a < 1e-6f) {
+            // Nearly vertical ray — check XZ footprint, intersect top cap.
+            if (dx * dx + dz * dz > r * r) continue;
+            if (std::abs(rayDir.y) < 1e-7f) continue;
+            const float tCap = (baseY + h - rayOrigin.y) / rayDir.y;
+            if (tCap > 1e-4f) tHit = tCap;
+          } else {
+            const float b    = 2.0f * (dx * rayDir.x + dz * rayDir.z);
+            const float c    = dx * dx + dz * dz - r * r;
+            const float disc = b * b - 4.0f * a * c;
+            if (disc < 0.0f) continue;
+
+            const float sqD = std::sqrt(disc);
+            const float inv2a = 1.0f / (2.0f * a);
+            // Test both roots; take the nearest one whose Y falls in [baseY, baseY+h].
+            for (float ti : { (-b - sqD) * inv2a, (-b + sqD) * inv2a }) {
+              if (ti <= 1e-4f) continue;
+              const float hitY = rayOrigin.y + ti * rayDir.y;
+              if (hitY < baseY || hitY > baseY + h) continue;
+              tHit = ti;
+              break;  // roots are ordered; smallest valid wins
+            }
+          }
+
+          if (tHit > 0.0f && tHit < bestT) {
+            bestT  = tHit;
+            bestTx = otx;
+            bestTy = oty;
+          }
+        }
+      }
+
+      if (bestTx >= 0) {
+        hoveredTile_.hit      = true;
+        hoveredTile_.tileX    = bestTx;
+        hoveredTile_.tileY    = bestTy;
+        hoveredTile_.worldPos = rayOrigin + bestT * rayDir;
+        hoveredTile_.rayT     = bestT;
+      }
+    }
   } else {
     hoveredTile_.hit = false;
   }
-  if (hoveredTile_.hit) updateHoverMesh(hoveredTile_.tileX, hoveredTile_.tileY);
+  if (hoveredTile_.hit)
+    updateHoverMesh(hoveredTile_.tileX, hoveredTile_.tileY);
 
   const glm::vec3 sunDir = sunDirectionFromYawPitch(sunYawDeg_, sunPitchDeg_);
 
@@ -408,7 +504,7 @@ void App::renderFrame() {
   // ---- Main pass into MSAA framebuffer (rebind after the shadow pass) ------
   msaa_->bind();
   glClearColor(0.45f, 0.65f, 0.85f, 1.0f);
-  glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+  glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
 
   // Shadow texture lives on unit 1; main-pass shaders sample it via
   // u_shadowMap = 1.
@@ -456,6 +552,9 @@ void App::renderFrame() {
         prevLocalPlayer_.reset();
         prevNpcs_.clear();
         currNpcs_.clear();
+        prevRemotePlayers_.clear();
+        currRemotePlayers_.clear();
+        remoteAnims_.clear();
         npcs_.clear();
         droppedItems_.clear();
         entities_.setNpcInstances({});
@@ -507,33 +606,79 @@ void App::renderFrame() {
   // ---- Local player (Phase 5: skinned glTF) ----------------------------------
   renderPlayer(viewProj, dt);
 
-  // ---- Remote players — render each with the same skinned mesh ---------------
+  // ---- Remote players — render each with independent animation & interpolation
   if (playerModel_.isLoaded() && network_.status() == net::Connection::Connected) {
-    for (const auto& [id, rp] : allPlayers_) {
-      if (id == network_.playerId()) continue;  // skip local
+    // Compute tick alpha for remote player interpolation (same basis as NPCs).
+    const auto  nowRp   = std::chrono::steady_clock::now();
+    const auto  dtMsRp  = std::chrono::duration_cast<std::chrono::milliseconds>(nowRp - lastTickTime_).count();
+    const float rpAlpha = std::clamp(static_cast<float>(dtMsRp) /
+                                     static_cast<float>(shared::kTickDurationMs),
+                                     0.0f, 1.0f);
+
+    skinnedShader_.use();
+    skinnedShader_.setMat4 ("u_viewProj", viewProj);
+    skinnedShader_.setVec3 ("u_lightDir", sunDir);
+    skinnedShader_.setVec3 ("u_paletteLevels",
+                            glm::vec3(static_cast<float>(paletteHues_),
+                                      static_cast<float>(paletteSats_),
+                                      static_cast<float>(paletteLums_)));
+    skinnedShader_.setFloat("u_paletteEnabled", palette_ ? 1.0f : 0.0f);
+    skinnedShader_.setFloat("u_ambient",        ambient_);
+    skinnedShader_.setFloat("u_diffuse",        diffuse_);
+    skinnedShader_.setFloat("u_lightingEnabled", lightingEnabled_ ? 1.0f : 0.0f);
+    constexpr glm::vec3 kRemoteColor{0.50f, 0.38f, 0.28f};
+    skinnedShader_.setVec3 ("u_color", kRemoteColor);
+
+    for (const auto& [id, rp] : currRemotePlayers_) {
       if (rp.dying) continue;
-      const float rpx = static_cast<float>(rp.tileX);
-      const float rpy = static_cast<float>(rp.tileY);
-      const float rpWorldY = tileWorldY(map_, rp.tileX, rp.tileY);
-      const float rpYaw = facingToYaw(rp.facing);
-      glm::mat4 rpModel = glm::translate(glm::mat4(1.0f), glm::vec3(rpx, rpWorldY, rpy));
-      rpModel = glm::rotate(rpModel, rpYaw, glm::vec3(0.0f, 1.0f, 0.0f));
+
+      // --- Position interpolation ---
+      float fx = static_cast<float>(rp.tileX);
+      float fy = static_cast<float>(rp.tileY);
+      auto prevIt = prevRemotePlayers_.find(id);
+      if (prevIt != prevRemotePlayers_.end()) {
+        fx = std::lerp(static_cast<float>(prevIt->second.tileX), fx, rpAlpha);
+        fy = std::lerp(static_cast<float>(prevIt->second.tileY), fy, rpAlpha);
+      }
+      const float rpWorldY = tileWorldY(map_,
+                                        static_cast<int>(std::round(fx)),
+                                        static_cast<int>(std::round(fy)));
+
+      // --- Yaw smoothing ---
+      const float targetYaw = facingToYaw(rp.facing);
+      auto& ra = remoteAnims_[id];
+      constexpr float kTwoPi = 6.28318531f;
+      float delta = std::fmod(targetYaw - ra.yaw + kTwoPi + 3.14159265f,
+                              kTwoPi) - 3.14159265f;
+      const float yawK = 1.0f - std::exp(-dt / 0.08f);
+      ra.yaw += delta * yawK;
+
+      // --- Independent animation ---
+      const char* desiredClip = clipForPlayer(&rp);
+      const int wantIdx = playerModel_.findClipIndex(desiredClip);
+      if (wantIdx != ra.clipIndex) {
+        ra.clipIndex = wantIdx;
+        ra.clipTime  = 0.0f;
+      }
+      ra.clipTime += dt;
+      // Wrap clip time (get duration from model).
+      if (ra.clipIndex >= 0) {
+        const auto* animName = playerModel_.animationNameAt(ra.clipIndex);
+        (void)animName; // duration clamping handled inside renderAs's evaluatePose
+      }
+
+      glm::mat4 rpModel = glm::translate(glm::mat4(1.0f), glm::vec3(fx, rpWorldY, fy));
+      rpModel = glm::rotate(rpModel, ra.yaw, glm::vec3(0.0f, 1.0f, 0.0f));
       rpModel = glm::scale(rpModel, glm::vec3(kPlayerScale));
-      // Use a slightly different tint for remote players
-      constexpr glm::vec3 kRemoteColor{0.50f, 0.38f, 0.28f};
-      skinnedShader_.use();
-      skinnedShader_.setMat4 ("u_viewProj", viewProj);
-      skinnedShader_.setVec3 ("u_lightDir", sunDir);
-      skinnedShader_.setVec3 ("u_paletteLevels",
-                              glm::vec3(static_cast<float>(paletteHues_),
-                                        static_cast<float>(paletteSats_),
-                                        static_cast<float>(paletteLums_)));
-      skinnedShader_.setFloat("u_paletteEnabled", palette_ ? 1.0f : 0.0f);
-      skinnedShader_.setFloat("u_ambient",        ambient_);
-      skinnedShader_.setFloat("u_diffuse",        diffuse_);
-      skinnedShader_.setFloat("u_lightingEnabled", lightingEnabled_ ? 1.0f : 0.0f);
-      skinnedShader_.setVec3 ("u_color",          kRemoteColor);
-      playerModel_.render(skinnedShader_, rpModel);
+      playerModel_.renderAs(skinnedShader_, rpModel, ra.clipIndex, ra.clipTime);
+    }
+
+    // Prune remoteAnims_ entries for players that have left.
+    for (auto it = remoteAnims_.begin(); it != remoteAnims_.end(); ) {
+      if (currRemotePlayers_.find(it->first) == currRemotePlayers_.end())
+        it = remoteAnims_.erase(it);
+      else
+        ++it;
     }
   }
 
@@ -588,9 +733,9 @@ void App::renderFrame() {
     // Draw obstacle outline shell (cyan glow)
     if (hasObstacle) {
       outlineShader_.use();
-      outlineShader_.setMat4 ("u_viewProj",     viewProj);
-      outlineShader_.setFloat("u_outlineWidth", 0.06f);
-      outlineShader_.setVec4 ("u_outlineColor", glm::vec4(0.0f, 0.9f, 0.9f, 0.8f));
+      outlineShader_.setMat4("u_viewProj",     viewProj);
+      outlineShader_.setVec4("u_outlineColor", glm::vec4(0.0f, 0.9f, 0.9f, 0.8f));
+      // u_outlineWidth is managed internally by renderOutlineAt (two-pass stencil)
       obstacles_.renderOutlineAt(outlineShader_, map_, htx, hty);
     }
     // For NPCs/items we draw a highlight square around the tile instead
@@ -613,22 +758,22 @@ void App::renderFrame() {
   msaa_->resolve();
   msaa_->blitToDefault(fbW, fbH);
 
-  // ---- UI pass on default framebuffer ---------------------------------------
+  // ---- ImGui UI pass on default framebuffer ----------------------------------
   ImGui_ImplOpenGL3_NewFrame();
   ImGui_ImplGlfw_NewFrame();
   ImGui::NewFrame();
 
-  drawLoginUi();
+  const bool connected = (network_.status() == net::Connection::Connected);
+  drawLoginUi();   // no-op when connected
 
-  // Phase 8a — game UI panels + world overlays. Only worth drawing once
-  // we've received a first state from the server (so the panels have
-  // something coherent to display).
-  if (network_.status() == net::Connection::Connected && currLocalPlayer_) {
-    ui::drawSkillsPanel   (*currLocalPlayer_);
-    ui::drawInventoryPanel(*currLocalPlayer_, &network_);
-    ui::drawEquipmentPanel(*currLocalPlayer_, &network_);
-    ui::drawBankPanel     (*currLocalPlayer_, &network_, &bankOpen_);
-    chatLog_.draw(&network_);
+  if (connected && isNewPlayer_) {
+    drawJoinModal();
+  }
+
+  if (connected && currLocalPlayer_) {
+    ui::drawHudPanel  (*currLocalPlayer_, &network_);
+    ui::drawBankPanel (*currLocalPlayer_, &network_, &bankOpen_);
+    chatLog_.draw     (&network_);
 
     overlays_.drawWithHeight(
         viewProj, fbW, fbH,
@@ -678,6 +823,55 @@ void App::renderFrame() {
         const ImVec2 verbSize = ImGui::CalcTextSize(verb);
         dl->AddText(ImVec2(12.0f + verbSize.x + 4.0f, 12.0f),
                     IM_COL32(255, 180, 50, 255), subject);
+      }
+    }
+
+    // ---- World interactable hover tooltip (cursor-following) ---------------
+    // Show the target name near the cursor when hovering a non-ground tile,
+    // suppressed when the cursor is over any ImGui panel.
+    if (hoveredTile_.hit &&
+        !ImGui::IsWindowHovered(ImGuiHoveredFlags_AnyWindow)) {
+      const int tx = hoveredTile_.tileX;
+      const int ty = hoveredTile_.tileY;
+      const char* tooltipName = nullptr;
+      // NPC?
+      for (const auto& n : npcs_) {
+        if (n.tileX == tx && n.tileY == ty && !n.dying) {
+          tooltipName = n.kind.c_str(); break;
+        }
+      }
+      // Obstacle (tree/rock/chest)?
+      if (!tooltipName &&
+          ty >= 0 && ty < static_cast<int>(map_.tiles.size()) &&
+          tx >= 0 && tx < static_cast<int>(map_.tiles[ty].size())) {
+        const auto obs = map_.tiles[ty][tx].obstacle;
+        if      (obs == shared::ObstacleType::tree)  tooltipName = "Tree";
+        else if (obs == shared::ObstacleType::rock)  tooltipName = "Rock";
+        else if (obs == shared::ObstacleType::chest) tooltipName = "Chest";
+      }
+      // Dropped item?
+      if (!tooltipName) {
+        for (const auto& di : droppedItems_) {
+          if (di.tileX == tx && di.tileY == ty) {
+            tooltipName = di.itemId.c_str(); break;
+          }
+        }
+      }
+      if (tooltipName) {
+        const ImGuiIO& io2 = ImGui::GetIO();
+        ImVec2 ttPos { io2.MousePos.x + 16.0f, io2.MousePos.y + 16.0f };
+        // Bounce off right edge
+        const ImVec2 textSz = ImGui::CalcTextSize(tooltipName);
+        if (ttPos.x + textSz.x + 8.0f > io2.DisplaySize.x)
+          ttPos.x = io2.MousePos.x - textSz.x - 8.0f;
+        ImDrawList* dl2 = ImGui::GetForegroundDrawList();
+        dl2->AddRectFilled(ImVec2(ttPos.x - 4, ttPos.y - 2),
+                           ImVec2(ttPos.x + textSz.x + 4, ttPos.y + textSz.y + 2),
+                           IM_COL32(15, 8, 2, 220));
+        dl2->AddRect(ImVec2(ttPos.x - 4, ttPos.y - 2),
+                     ImVec2(ttPos.x + textSz.x + 4, ttPos.y + textSz.y + 2),
+                     IM_COL32(107, 79, 41, 200));
+        dl2->AddText(ttPos, IM_COL32(240, 206, 96, 255), tooltipName);
       }
     }
 
@@ -1058,7 +1252,92 @@ void App::initImGui() {
   ImGui::CreateContext();
   ImGuiIO& io = ImGui::GetIO();
   io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
-  ImGui::StyleColorsDark();
+
+  // OSRS pixel font — ProggyClean at 13px gives a retro game feel.
+  // Falls back gracefully to ImGui's built-in bitmap font if the file isn't found.
+  const auto fontPath = resolveFromExe("assets/ProggyClean.ttf");
+  if (std::filesystem::exists(fontPath)) {
+    io.Fonts->AddFontFromFileTTF(fontPath.string().c_str(), 13.0f);
+  } else {
+    io.Fonts->AddFontDefault();
+  }
+
+  // OSRS-inspired dark brown / gold theme. OSRS has zero rounding — square
+  // corners everywhere — which is key to avoiding the "debug tool" look.
+  ImGuiStyle& s = ImGui::GetStyle();
+  s.WindowRounding    = 0.0f;
+  s.FrameRounding     = 0.0f;
+  s.GrabRounding      = 0.0f;
+  s.ScrollbarRounding = 0.0f;
+  s.TabRounding       = 0.0f;
+  s.PopupRounding     = 0.0f;
+  s.ChildRounding     = 0.0f;
+  s.WindowBorderSize  = 1.0f;
+  s.FrameBorderSize   = 1.0f;
+  s.ItemSpacing       = ImVec2(4.0f, 4.0f);
+  s.FramePadding      = ImVec2(5.0f, 3.0f);
+  s.WindowPadding     = ImVec2(6.0f, 6.0f);
+  s.ScrollbarSize     = 8.0f;
+  s.GrabMinSize       = 6.0f;
+
+  ImVec4* c = s.Colors;
+  // OSRS gold text — the single biggest visual differentiator from grey debug UIs
+  c[ImGuiCol_Text]                  = ImVec4(0.94f, 0.82f, 0.50f, 1.00f);
+  c[ImGuiCol_TextDisabled]          = ImVec4(0.54f, 0.44f, 0.25f, 1.00f);
+  // Deep brownstone panel — much darker than default grey, feels like stone
+  c[ImGuiCol_WindowBg]              = ImVec4(0.11f, 0.07f, 0.03f, 0.97f);
+  c[ImGuiCol_ChildBg]               = ImVec4(0.09f, 0.06f, 0.02f, 0.80f);
+  c[ImGuiCol_PopupBg]               = ImVec4(0.10f, 0.06f, 0.02f, 0.97f);
+  // Visible brownstone border — frames elements without being harsh
+  c[ImGuiCol_Border]                = ImVec4(0.42f, 0.31f, 0.16f, 0.90f);
+  c[ImGuiCol_BorderShadow]          = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
+  // Dark slot background — the classic OSRS inventory cell darkness
+  c[ImGuiCol_FrameBg]               = ImVec4(0.07f, 0.04f, 0.01f, 0.90f);
+  c[ImGuiCol_FrameBgHovered]        = ImVec4(0.15f, 0.09f, 0.03f, 0.90f);
+  c[ImGuiCol_FrameBgActive]         = ImVec4(0.20f, 0.12f, 0.04f, 1.00f);
+  // Title bars — slightly lighter brownstone than the window bg
+  c[ImGuiCol_TitleBg]               = ImVec4(0.18f, 0.11f, 0.04f, 1.00f);
+  c[ImGuiCol_TitleBgActive]         = ImVec4(0.28f, 0.17f, 0.07f, 1.00f);
+  c[ImGuiCol_TitleBgCollapsed]      = ImVec4(0.11f, 0.07f, 0.03f, 0.90f);
+  c[ImGuiCol_MenuBarBg]             = ImVec4(0.18f, 0.11f, 0.04f, 1.00f);
+  c[ImGuiCol_ScrollbarBg]           = ImVec4(0.05f, 0.03f, 0.01f, 0.80f);
+  c[ImGuiCol_ScrollbarGrab]         = ImVec4(0.42f, 0.31f, 0.16f, 0.90f);
+  c[ImGuiCol_ScrollbarGrabHovered]  = ImVec4(0.55f, 0.40f, 0.20f, 1.00f);
+  c[ImGuiCol_ScrollbarGrabActive]   = ImVec4(0.70f, 0.52f, 0.25f, 1.00f);
+  // OSRS orange-gold accent for interactive elements
+  c[ImGuiCol_CheckMark]             = ImVec4(1.00f, 0.65f, 0.15f, 1.00f);
+  c[ImGuiCol_SliderGrab]            = ImVec4(1.00f, 0.65f, 0.15f, 0.85f);
+  c[ImGuiCol_SliderGrabActive]      = ImVec4(1.00f, 0.75f, 0.25f, 1.00f);
+  c[ImGuiCol_Button]                = ImVec4(0.28f, 0.17f, 0.07f, 1.00f);
+  c[ImGuiCol_ButtonHovered]         = ImVec4(0.42f, 0.26f, 0.10f, 1.00f);
+  c[ImGuiCol_ButtonActive]          = ImVec4(0.18f, 0.11f, 0.04f, 1.00f);
+  c[ImGuiCol_Header]                = ImVec4(0.28f, 0.17f, 0.07f, 0.90f);
+  c[ImGuiCol_HeaderHovered]         = ImVec4(0.42f, 0.26f, 0.10f, 0.90f);
+  c[ImGuiCol_HeaderActive]          = ImVec4(0.55f, 0.34f, 0.14f, 1.00f);
+  c[ImGuiCol_Separator]             = ImVec4(0.42f, 0.31f, 0.16f, 0.60f);
+  c[ImGuiCol_SeparatorHovered]      = ImVec4(1.00f, 0.65f, 0.15f, 0.78f);
+  c[ImGuiCol_SeparatorActive]       = ImVec4(1.00f, 0.75f, 0.25f, 1.00f);
+  c[ImGuiCol_ResizeGrip]            = ImVec4(0.28f, 0.17f, 0.07f, 0.50f);
+  c[ImGuiCol_ResizeGripHovered]     = ImVec4(1.00f, 0.65f, 0.15f, 0.78f);
+  c[ImGuiCol_ResizeGripActive]      = ImVec4(1.00f, 0.75f, 0.25f, 1.00f);
+  c[ImGuiCol_Tab]                   = ImVec4(0.15f, 0.09f, 0.03f, 0.95f);
+  c[ImGuiCol_TabHovered]            = ImVec4(0.42f, 0.26f, 0.10f, 1.00f);
+  c[ImGuiCol_TabActive]             = ImVec4(0.28f, 0.17f, 0.07f, 1.00f);
+  c[ImGuiCol_TabUnfocused]          = ImVec4(0.10f, 0.06f, 0.02f, 0.95f);
+  c[ImGuiCol_TabUnfocusedActive]    = ImVec4(0.20f, 0.12f, 0.04f, 1.00f);
+  c[ImGuiCol_DockingPreview]        = ImVec4(1.00f, 0.65f, 0.15f, 0.70f);
+  c[ImGuiCol_PlotLines]             = ImVec4(0.94f, 0.82f, 0.50f, 1.00f);
+  c[ImGuiCol_PlotHistogram]         = ImVec4(1.00f, 0.65f, 0.15f, 1.00f);
+  c[ImGuiCol_TableHeaderBg]         = ImVec4(0.20f, 0.12f, 0.04f, 1.00f);
+  c[ImGuiCol_TableBorderStrong]     = ImVec4(0.42f, 0.31f, 0.16f, 1.00f);
+  c[ImGuiCol_TableBorderLight]      = ImVec4(0.28f, 0.17f, 0.07f, 1.00f);
+  c[ImGuiCol_TableRowBg]            = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
+  c[ImGuiCol_TableRowBgAlt]         = ImVec4(1.00f, 1.00f, 1.00f, 0.04f);
+  c[ImGuiCol_TextSelectedBg]        = ImVec4(1.00f, 0.65f, 0.15f, 0.35f);
+  c[ImGuiCol_DragDropTarget]        = ImVec4(1.00f, 0.65f, 0.15f, 0.90f);
+  c[ImGuiCol_NavHighlight]          = ImVec4(1.00f, 0.65f, 0.15f, 1.00f);
+  c[ImGuiCol_ModalWindowDimBg]      = ImVec4(0.00f, 0.00f, 0.00f, 0.65f);
+
   // install_callbacks=true chains GLFW callbacks: ImGui's handlers run first,
   // then ours (which were registered in Window::init).
   ImGui_ImplGlfw_InitForOpenGL(window_.handle(), true);
@@ -1076,30 +1355,6 @@ void App::shutdownImGui() {
 // =====================================================================
 // Player rendering — skinned glTF (Phase 5)
 // =====================================================================
-//
-// State -> animation clip mapping:
-//   - default          -> Idle_Loop
-//   - is path-walking  -> Walk_Loop
-//   - (extend in Phase 10 for combat / death / chop / etc.)
-namespace {
-// "Walking" iff the server has tiles queued up in `path`. Earlier we also
-// checked destinationX/Y != tileX/Y, but the server can leave a non-matching
-// destination behind for a tick after the player stops, which made the
-// client misread "standing still" as Walk_Loop on first connect. The path
-// length is the unambiguous source of truth.
-const char* clipForPlayer(const shared::PlayerState* p) {
-  if (!p) return "Idle_Loop";
-  // Death is sticky — server keeps `dying` true for the full death duration
-  // (PLAYER_DEATH_TICKS), so we play Death01 across all those frames.
-  if (p->dying)        return "Death01";
-  if (p->path.empty()) return "Idle_Loop";
-  // Movement at 1 tile per 200ms tick = 5 m/s for a ~1.8m character —
-  // that's full sprint territory. Sprint_Loop looks right at that speed;
-  // Walk_Loop looks like the character is power-sliding instead.
-  return "Sprint_Loop";
-}
-
-}  // namespace
 
 void App::renderPlayer(const glm::mat4& viewProj, float dt) {
   if (!currLocalPlayer_) return;
@@ -1195,6 +1450,8 @@ void App::processNetworkMessages() {
                    init.tiles.empty() ? 0 : static_cast<int>(init.tiles[0].size()),
                    static_cast<int>(init.tiles.size()),
                    init.isNewPlayer ? "(new)" : "(returning)");
+      isNewPlayer_ = init.isNewPlayer;
+      if (isNewPlayer_) joinNameBuf_[0] = '\0';
       // We keep our procedural map; server tiles are acknowledged but ignored.
       currLocalPlayer_.reset();
       prevLocalPlayer_.reset();
@@ -1214,6 +1471,13 @@ void App::processNetworkMessages() {
       currNpcs_.clear();
       currNpcs_.reserve(npcs_.size());
       for (const auto& n : npcs_) currNpcs_.emplace(n.id, n);
+      // Remote player interpolation snapshots.
+      prevRemotePlayers_ = currRemotePlayers_;
+      currRemotePlayers_.clear();
+      for (const auto& [id, ps] : st.players) {
+        if (id == network_.playerId()) continue;
+        currRemotePlayers_.emplace(id, ps);
+      }
       // Items don't move per tick — snap them.
       entities_.rebuildItems(droppedItems_, map_);
 
@@ -1224,6 +1488,9 @@ void App::processNetworkMessages() {
         auto mit = st.messages.find(network_.playerId());
         if (mit != st.messages.end()) {
           for (const auto& msg : mit->second) {
+            // Skip raw chat relay entries ("chat:player: text") — those are
+            // already surfaced via observePlayers() from chatMessage/chatMessageTick.
+            if (msg.size() >= 5 && msg.compare(0, 5, "chat:") == 0) continue;
             chatLog_.appendSystem(msg);
           }
         }
@@ -1316,35 +1583,201 @@ void App::processNetworkMessages() {
 bool App::drawLoginUi() {
   if (network_.status() == net::Connection::Connected) return true;
 
-  ImGui::SetNextWindowSizeConstraints(ImVec2(320, 0), ImVec2(420, FLT_MAX));
-  if (ImGui::Begin("Connect to server", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-    ImGui::InputText("Host",     loginHost_, sizeof(loginHost_));
-    ImGui::InputInt ("Port",     &loginPort_);
-    ImGui::InputText("Username", loginUser_, sizeof(loginUser_));
-    ImGui::InputText("Password", loginPass_, sizeof(loginPass_), ImGuiInputTextFlags_Password);
+  // Full-screen dark overlay behind the login box.
+  const ImGuiIO& io = ImGui::GetIO();
+  ImGui::GetBackgroundDrawList()->AddRectFilled(
+      ImVec2(0, 0), io.DisplaySize, IM_COL32(0, 0, 0, 180));
 
-    const auto status = network_.status();
-    const bool busy = (status == net::Connection::LoggingIn || status == net::Connection::Connecting);
-    ImGui::BeginDisabled(busy);
-    if (ImGui::Button("Connect", ImVec2(120, 0))) {
-      network_.loginAndConnect(loginHost_, loginPort_, loginUser_, loginPass_);
-    }
-    ImGui::EndDisabled();
-    ImGui::SameLine();
-    switch (status) {
-      case net::Connection::Disconnected: ImGui::TextUnformatted("Disconnected"); break;
-      case net::Connection::LoggingIn:    ImGui::TextUnformatted("Authenticating..."); break;
-      case net::Connection::Connecting:   ImGui::TextUnformatted("Connecting to WebSocket..."); break;
-      case net::Connection::Connected:    ImGui::TextUnformatted("Connected"); break;
-      case net::Connection::Failed:       ImGui::TextColored(ImVec4(1,0.4f,0.4f,1), "Failed"); break;
-    }
-    if (status == net::Connection::Failed && !network_.lastError().empty()) {
-      ImGui::Separator();
-      ImGui::TextWrapped("%s", network_.lastError().c_str());
-    }
+  // Centred, fixed-width window, no title bar.
+  constexpr float kW = 280.0f;
+  ImGui::SetNextWindowSize(ImVec2(kW, 0.0f), ImGuiCond_Always);
+  ImGui::SetNextWindowPos(
+      ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f),
+      ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+  ImGui::Begin("##login", nullptr,
+      ImGuiWindowFlags_NoTitleBar  | ImGuiWindowFlags_NoResize |
+      ImGuiWindowFlags_NoMove      | ImGuiWindowFlags_AlwaysAutoResize |
+      ImGuiWindowFlags_NoSavedSettings);
+
+  // Title / logo
+  {
+    const char* title = "Reverie";
+    const float tw = ImGui::CalcTextSize(title).x;
+    ImGui::SetCursorPosX((kW - tw) * 0.5f - ImGui::GetStyle().WindowPadding.x);
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.00f, 0.60f, 0.12f, 1.0f));
+    ImGui::Text("%s", title);
+    ImGui::PopStyleColor();
+
+    const char* sub = "Project Reverie";
+    const float sw = ImGui::CalcTextSize(sub).x;
+    ImGui::SetCursorPosX((kW - sw) * 0.5f - ImGui::GetStyle().WindowPadding.x);
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.78f, 0.63f, 0.38f, 1.0f));
+    ImGui::TextUnformatted(sub);
+    ImGui::PopStyleColor();
   }
+
+  ImGui::Spacing();
+  ImGui::Separator();
+  ImGui::Spacing();
+
+  // Form — two-column table keeps labels and inputs aligned.
+  if (ImGui::BeginTable("##lf", 2)) {
+    ImGui::TableSetupColumn("##lc", ImGuiTableColumnFlags_WidthFixed, 68.0f);
+    ImGui::TableSetupColumn("##li", ImGuiTableColumnFlags_WidthStretch);
+    const ImVec4 lCol(0.78f, 0.63f, 0.38f, 1.0f);
+
+    ImGui::TableNextRow(); ImGui::TableSetColumnIndex(0);
+    ImGui::TextColored(lCol, "Host");
+    ImGui::TableSetColumnIndex(1); ImGui::SetNextItemWidth(-FLT_MIN);
+    ImGui::InputText("##host", loginHost_, sizeof(loginHost_));
+
+    ImGui::TableNextRow(); ImGui::TableSetColumnIndex(0);
+    ImGui::TextColored(lCol, "Port");
+    ImGui::TableSetColumnIndex(1); ImGui::SetNextItemWidth(-FLT_MIN);
+    ImGui::InputInt("##port", &loginPort_);
+
+    ImGui::TableNextRow(); ImGui::TableSetColumnIndex(0);
+    ImGui::TextColored(lCol, "Username");
+    ImGui::TableSetColumnIndex(1); ImGui::SetNextItemWidth(-FLT_MIN);
+    ImGui::InputText("##user", loginUser_, sizeof(loginUser_));
+
+    ImGui::TableNextRow(); ImGui::TableSetColumnIndex(0);
+    ImGui::TextColored(lCol, "Password");
+    ImGui::TableSetColumnIndex(1); ImGui::SetNextItemWidth(-FLT_MIN);
+    ImGui::InputText("##pass", loginPass_, sizeof(loginPass_),
+                     ImGuiInputTextFlags_Password);
+
+    ImGui::EndTable();
+  }
+
+  ImGui::Spacing();
+  const auto status = network_.status();
+  const bool busy = (status == net::Connection::LoggingIn ||
+                     status == net::Connection::Connecting);
+
+  // Login / Register toggle buttons
+  {
+    const ImVec4 activeCol  (0.55f, 0.34f, 0.14f, 1.0f);
+    const ImVec4 inactiveCol(0.28f, 0.17f, 0.07f, 1.0f);
+    const float  halfW = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
+
+    ImGui::PushStyleColor(ImGuiCol_Button, loginRegisterMode_ ? inactiveCol : activeCol);
+    if (ImGui::Button("Login", ImVec2(halfW, 0.0f))) loginRegisterMode_ = false;
+    ImGui::PopStyleColor();
+    ImGui::SameLine();
+    ImGui::PushStyleColor(ImGuiCol_Button, loginRegisterMode_ ? activeCol : inactiveCol);
+    if (ImGui::Button("Register", ImVec2(halfW, 0.0f))) loginRegisterMode_ = true;
+    ImGui::PopStyleColor();
+  }
+
+  ImGui::Spacing();
+  ImGui::BeginDisabled(busy);
+  const char* actionLabel = loginRegisterMode_ ? "Create Account" : "Connect";
+  if (ImGui::Button(actionLabel, ImVec2(-FLT_MIN, 0.0f))) {
+    if (loginRegisterMode_)
+      network_.registerAndConnect(loginHost_, loginPort_, loginUser_, loginPass_);
+    else
+      network_.loginAndConnect(loginHost_, loginPort_, loginUser_, loginPass_);
+  }
+  ImGui::EndDisabled();
+
+  // Status text
+  switch (status) {
+    case net::Connection::Disconnected:
+      break;
+    case net::Connection::LoggingIn:
+      ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.78f, 0.63f, 0.38f, 1.0f));
+      ImGui::TextUnformatted("Authenticating...");
+      ImGui::PopStyleColor();
+      break;
+    case net::Connection::Connecting:
+      ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.78f, 0.63f, 0.38f, 1.0f));
+      ImGui::TextUnformatted("Connecting...");
+      ImGui::PopStyleColor();
+      break;
+    case net::Connection::Connected:
+      break;
+    case net::Connection::Failed:
+      ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.35f, 0.35f, 1.0f));
+      ImGui::TextWrapped("%s",
+          network_.lastError().empty() ? "Connection failed"
+                                       : network_.lastError().c_str());
+      ImGui::PopStyleColor();
+      break;
+  }
+
   ImGui::End();
   return false;
+}
+
+// =====================================================================
+// PlayerJoinModal — name picker for new accounts
+// =====================================================================
+
+void App::drawJoinModal() {
+  // Dim the background so the modal draws attention.
+  ImGui::GetBackgroundDrawList()->AddRectFilled(
+      ImVec2(0, 0), ImGui::GetIO().DisplaySize, IM_COL32(0, 0, 0, 160));
+
+  const ImGuiIO& io = ImGui::GetIO();
+  constexpr float kW = 300.0f;
+
+  ImGui::SetNextWindowSize(ImVec2(kW, 0.0f), ImGuiCond_Always);
+  ImGui::SetNextWindowPos(
+      ImVec2(io.DisplaySize.x * 0.5f, io.DisplaySize.y * 0.5f),
+      ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+  ImGui::Begin("##join_modal", nullptr,
+      ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+      ImGuiWindowFlags_NoMove     | ImGuiWindowFlags_AlwaysAutoResize |
+      ImGuiWindowFlags_NoSavedSettings);
+
+  // Title
+  {
+    const char* title = "Welcome to Reverie!";
+    const float tw = ImGui::CalcTextSize(title).x;
+    ImGui::SetCursorPosX((kW - tw) * 0.5f - ImGui::GetStyle().WindowPadding.x);
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.00f, 0.65f, 0.15f, 1.0f));
+    ImGui::TextUnformatted(title);
+    ImGui::PopStyleColor();
+  }
+
+  ImGui::Spacing();
+  ImGui::TextWrapped("Choose a name for your character (up to 12 characters):");
+  ImGui::Spacing();
+
+  ImGui::SetNextItemWidth(-FLT_MIN);
+  ImGui::InputText("##joinname", joinNameBuf_, sizeof(joinNameBuf_),
+                   ImGuiInputTextFlags_CallbackCharFilter,
+                   [](ImGuiInputTextCallbackData* data) -> int {
+                     // Allow alphanumeric and space only; max 12 chars enforced by buf size.
+                     if (data->EventChar < 128 &&
+                         (std::isalnum(static_cast<unsigned char>(data->EventChar)) ||
+                          data->EventChar == ' '))
+                       return 0;
+                     return 1;  // reject
+                   });
+
+  ImGui::Spacing();
+
+  const bool nameOk = (joinNameBuf_[0] != '\0');
+  ImGui::BeginDisabled(!nameOk);
+  if (ImGui::Button("Confirm", ImVec2(-FLT_MIN, 0.0f))) {
+    // Send SET_NAME action to the server.
+    char buf[80];
+    std::snprintf(buf, sizeof(buf),
+                  "{\"type\":\"SET_NAME\",\"playerName\":\"%s\"}", joinNameBuf_);
+    network_.sendActionRaw(buf);
+    isNewPlayer_ = false;
+  }
+  ImGui::EndDisabled();
+
+  if (!nameOk) {
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.7f, 0.5f, 0.3f, 1.0f));
+    ImGui::TextUnformatted("Enter a name to continue.");
+    ImGui::PopStyleColor();
+  }
+
+  ImGui::End();
 }
 
 }  // namespace app

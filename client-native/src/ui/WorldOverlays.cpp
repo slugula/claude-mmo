@@ -22,6 +22,20 @@ void WorldOverlays::update(int /*currentTick*/,
                            const std::vector<shared::NPCState>&      npcs) {
   const auto now = std::chrono::steady_clock::now();
 
+  // On the very first state message, seed seenHitTick_ with every entity's
+  // current lastHitTick so we don't fire splats for damage that already
+  // happened before this session started.
+  if (!initialized_) {
+    initialized_ = true;
+    if (localPlayer && localPlayer->lastHitTick > 0)
+      seenHitTick_["__local__"] = localPlayer->lastHitTick;
+    for (const auto& n : npcs) {
+      if (n.lastHitTick > 0)
+        seenHitTick_[n.id] = n.lastHitTick;
+    }
+    return;  // Don't spawn anything on the seeding frame.
+  }
+
   auto spawnSplat = [&](const std::string& id, int hitTick, int dmg,
                         glm::vec3 anchor) {
     if (hitTick <= 0) return;
