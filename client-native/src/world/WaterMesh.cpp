@@ -56,26 +56,43 @@ void WaterMesh::build(const shared::WorldMapFile& map, float waterOffset) {
   verts.reserve(map.waterTiles.size() * 4);
   indices.reserve(map.waterTiles.size() * 6);
 
+  // --- Single global water Y ------------------------------------------------
+  // Compute ONE shared surface height from the average of ALL non-water border
+  // tile heights across the entire water body.  This prevents per-tile height
+  // differences that produce a stepped / diamond-shaped look.
+  float hSum = 0.0f;
+  int   hCnt = 0;
   for (const auto& wt : map.waterTiles) {
-    const int tx = wt.tileX, ty = wt.tileY;
-    if (tx < 0 || ty < 0 || tx >= W || ty >= H) continue;
-
-    // Compute water surface Y from non-water neighbour heights.
-    float hSum = 0.0f;
-    int   hCnt = 0;
+    if (wt.tileX < 0 || wt.tileY < 0 || wt.tileX >= W || wt.tileY >= H) continue;
     for (int dy = -1; dy <= 1; ++dy) {
       for (int dx = -1; dx <= 1; ++dx) {
         if (dx == 0 && dy == 0) continue;
-        const int nx = tx + dx, ny = ty + dy;
+        const int nx = wt.tileX + dx, ny = wt.tileY + dy;
         if (nx >= 0 && ny >= 0 && nx < W && ny < H && !isWater(nx, ny)) {
           hSum += tileWorldY(map, nx, ny);
           ++hCnt;
         }
       }
     }
-    const float naturalH = hCnt > 0 ? hSum / static_cast<float>(hCnt)
-                                     : tileWorldY(map, tx, ty);
-    const float waterY   = naturalH - waterOffset;
+  }
+  // Fallback when all tiles are interior (no terrain neighbours): use the
+  // average height of the water tiles themselves.
+  if (hCnt == 0) {
+    for (const auto& wt : map.waterTiles) {
+      if (wt.tileX >= 0 && wt.tileY >= 0 && wt.tileX < W && wt.tileY < H) {
+        hSum += tileWorldY(map, wt.tileX, wt.tileY);
+        ++hCnt;
+      }
+    }
+  }
+  const float globalWaterY = (hCnt > 0 ? hSum / static_cast<float>(hCnt) : 0.0f)
+                             - waterOffset;
+
+  for (const auto& wt : map.waterTiles) {
+    const int tx = wt.tileX, ty = wt.tileY;
+    if (tx < 0 || ty < 0 || tx >= W || ty >= H) continue;
+
+    const float waterY = globalWaterY;
 
     const float cx = static_cast<float>(tx);
     const float cz = static_cast<float>(ty);

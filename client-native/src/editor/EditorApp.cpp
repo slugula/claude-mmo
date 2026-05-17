@@ -488,18 +488,13 @@ void EditorApp::render3DViewport(float dt) {
     viewport3dFbo_->bind();
     glViewport(0, 0, viewport3dW_, viewport3dH_);
 
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-    glDepthMask(GL_FALSE);
-
+    // Water is opaque; no blending needed.  Depth writes enabled so the hover
+    // outline correctly renders on top of the water surface.
     waterRenderer_.render(
         static_cast<float>(glfwGetTime()),
         viewProj,
         viewport3dFbo_->resolveColorTexture(),
         waterUniforms_);
-
-    glDepthMask(GL_TRUE);
-    glDisable(GL_BLEND);
   }
 
   viewport3dFbo_->resolve();   // final resolve for ImGui display

@@ -81,7 +81,7 @@ void main() {
     float foam = step(uFoamThreshold, vShoreWeight) * foamNoise(vUV, uTime);
     waterColor = mix(waterColor, uFoamColor, foam);
 
-    // Semi-transparent: alpha 0.85 so terrain/seabed shows through near shore
-    float alpha = mix(0.92, 0.70, vShoreWeight);
-    fragColor = vec4(waterColor, alpha);
+    // Fully opaque — terrain must not poke through the water surface.
+    // The depth/shallow colour gradient + parallax already sell the depth.
+    fragColor = vec4(waterColor, 1.0);
 }
