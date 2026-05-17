@@ -15,6 +15,7 @@ namespace ui {
 // a UI panel (overrides world-hover context when the HUD owns the mouse).
 struct UiHoverState {
   enum class Kind { None, InventoryItem, EquipSlot, EmptyEquipSlot } kind = Kind::None;
+  std::string verb;       // e.g. "Wield", "Wear", "Eat" — empty for no primary action
   std::string itemName;   // e.g. "Bronze sword"
   std::string slotLabel;  // e.g. "Head"
 };

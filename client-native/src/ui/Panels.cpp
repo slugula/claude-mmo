@@ -114,6 +114,48 @@ std::string fmtQty(int q) {
   return buf;
 }
 
+// ---- Item definition helpers (mirrors src/data/items.json) -----------------
+// Returns the equip slot string for an item, or "" if not equippable.
+const char* equipSlotForItem(const std::string& id) {
+  // rightHand — weapons and tools
+  if (id == "axe"           || id == "iron_axe"       ||
+      id == "pickaxe"       || id == "bronze_sword"    ||
+      id == "iron_sword"    || id == "bronze_longsword"||
+      id == "basic_chaingun") return "rightHand";
+  // leftHand
+  if (id == "bronze_shield") return "leftHand";
+  // ammo
+  if (id == "arrow" || id == "kinetic_charges") return "ammo";
+  // armour
+  if (id == "leather_helm"  || id == "bronze_helm")   return "head";
+  if (id == "leather_body")                           return "body";
+  if (id == "leather_legs")                           return "legs";
+  if (id == "leather_gloves")                         return "hands";
+  if (id == "leather_boots")                          return "feet";
+  if (id == "gold_ring")                              return "ring";
+  if (id == "amulet")                                 return "neck";
+  return "";
+}
+
+// Returns true for cooked food items that can be eaten.
+bool isFood(const std::string& id) {
+  return id == "shrimp" || id == "trout";
+}
+
+// Returns the primary left-click verb for an inventory item.
+// "Wield" for hand-slot weapons/tools, "Wear" for armour/ammo,
+// "Eat" for food, "" if there is no primary action.
+const char* primaryInventoryVerb(const std::string& id) {
+  const char* slot = equipSlotForItem(id);
+  if (slot[0] != '\0') {
+    const bool isHandSlot = (std::strcmp(slot, "rightHand") == 0 ||
+                              std::strcmp(slot, "leftHand")  == 0);
+    return isHandSlot ? "Wield" : "Wear";
+  }
+  if (isFood(id)) return "Eat";
+  return "";
+}
+
 // Draw a single item slot at the current cursor position.
 // Returns true when the invisible-button was clicked.
 bool drawSlot(const char* id,
@@ -185,9 +227,12 @@ void drawInventoryTab(const shared::PlayerState& p, net::NetworkClient* netc,
       ImGui::PushID(idx);
       const bool clicked = drawSlot(idbuf, slot, ImVec2(kCell, kCell));
 
-      // Left-click: equip immediately (right-click opens context menu below).
-      if (clicked && slot && netc)
-        netc->sendEquipItem(idx);
+      // Left-click: equip only if the item has an equip slot.
+      if (clicked && slot && netc) {
+        if (equipSlotForItem(slot->itemId)[0] != '\0')
+          netc->sendEquipItem(idx);
+        // else: non-equippable — left-click does nothing (right-click has actions)
+      }
 
       if (slot && netc && ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
         ImGui::SetDragDropPayload("INV_SLOT", &idx, sizeof(idx));
@@ -218,6 +263,7 @@ void drawInventoryTab(const shared::PlayerState& p, net::NetworkClient* netc,
         // Top-left context info
         if (hover) {
           hover->kind     = UiHoverState::Kind::InventoryItem;
+          hover->verb     = primaryInventoryVerb(slot->itemId);
           hover->itemName = prettyItemId(slot->itemId);
         }
         // ImGui tooltip (item details)

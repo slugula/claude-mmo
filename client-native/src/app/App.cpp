@@ -881,7 +881,7 @@ void App::renderFrame() {
       const char* subject = "";
       switch (uiHover_.kind) {
         case ui::UiHoverState::Kind::InventoryItem:
-          verb    = "Equip";
+          verb    = uiHover_.verb.c_str();     // "Wield", "Wear", "Eat", or ""
           subject = uiHover_.itemName.c_str();
           break;
         case ui::UiHoverState::Kind::EquipSlot:
