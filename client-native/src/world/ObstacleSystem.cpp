@@ -1,7 +1,10 @@
 #include "world/ObstacleSystem.hpp"
 
+#include <cgltf.h>
+
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 
 namespace world {
 
@@ -171,17 +174,23 @@ ObstacleSystem::~ObstacleSystem() {
 
 void ObstacleSystem::destroy() {
   for (Kit* k : {&trunk_, &canopy_, &rock_,
-                 &outlineTrunk_, &outlineCanopy_, &outlineRock_}) {
+                 &outlineTrunk_, &outlineCanopy_, &outlineRock_,
+                 &treeTrunkGltf_, &treeCanopyGltf_,
+                 &outlineTreeTrunkGltf_, &outlineTreeCanopyGltf_}) {
     if (k->vao)          glDeleteVertexArrays(1, &k->vao);
     if (k->ebo)          glDeleteBuffers(1, &k->ebo);
     if (k->vboNormals)   glDeleteBuffers(1, &k->vboNormals);
     if (k->vboPositions) glDeleteBuffers(1, &k->vboPositions);
     *k = {};
   }
-  if (treeInstanceVbo_) glDeleteBuffers(1, &treeInstanceVbo_);
-  if (rockInstanceVbo_) glDeleteBuffers(1, &rockInstanceVbo_);
-  if (outlineInstanceVbo_) glDeleteBuffers(1, &outlineInstanceVbo_);
+  if (treeInstanceVbo_)          glDeleteBuffers(1, &treeInstanceVbo_);
+  if (rockInstanceVbo_)          glDeleteBuffers(1, &rockInstanceVbo_);
+  if (outlineInstanceVbo_)       glDeleteBuffers(1, &outlineInstanceVbo_);
+  if (treeGltfInstanceVbo_)      glDeleteBuffers(1, &treeGltfInstanceVbo_);
+  if (outlineTreeGltfInstanceVbo_) glDeleteBuffers(1, &outlineTreeGltfInstanceVbo_);
   treeInstanceVbo_ = rockInstanceVbo_ = outlineInstanceVbo_ = 0;
+  treeGltfInstanceVbo_ = outlineTreeGltfInstanceVbo_ = 0;
+  treeModelLoaded_ = false;
   treeCount_ = rockCount_ = 0;
 }
 
@@ -278,17 +287,29 @@ void ObstacleSystem::rebuildFromMap(const shared::WorldMapFile& map) {
   const auto& vh = map.vertexHeights;
   if (static_cast<int>(vh.size()) != (W + 1) * (H + 1)) return;
 
+  auto isTile = [&](int tx, int ty, shared::ObstacleType t) -> bool {
+    if (tx < 0 || ty < 0 || tx >= W || ty >= H) return false;
+    return map.tiles[ty][tx].obstacle == t;
+  };
+
   for (int ty = 0; ty < H; ++ty) {
     for (int tx = 0; tx < W; ++tx) {
       const auto& tile = map.tiles[ty][tx];
       if (tile.obstacle == shared::ObstacleType::none) continue;
 
-      const float y = tileCenterY(vh, W, H, tx, ty);
-      Instance inst{ static_cast<float>(tx), y, static_cast<float>(ty),
-                     hashRotation(tx, ty) };
-
-      if (tile.obstacle == shared::ObstacleType::tree)      trees.push_back(inst);
-      else if (tile.obstacle == shared::ObstacleType::rock) rocks.push_back(inst);
+      if (tile.obstacle == shared::ObstacleType::tree) {
+        // One instance per tree tile, centred on the tile.
+        const float y = tileCenterY(vh, W, H, tx, ty);
+        Instance inst{ static_cast<float>(tx), y,
+                       static_cast<float>(ty),
+                       hashRotation(tx, ty) };
+        trees.push_back(inst);
+      } else if (tile.obstacle == shared::ObstacleType::rock) {
+        const float y = tileCenterY(vh, W, H, tx, ty);
+        Instance inst{ static_cast<float>(tx), y, static_cast<float>(ty),
+                       hashRotation(tx, ty) };
+        rocks.push_back(inst);
+      }
     }
   }
 
@@ -296,9 +317,12 @@ void ObstacleSystem::rebuildFromMap(const shared::WorldMapFile& map) {
   if (trees.size() > 4096) trees.resize(4096);
   if (rocks.size() > 4096) rocks.resize(4096);
 
-  glNamedBufferSubData(treeInstanceVbo_, 0,
-                       static_cast<GLsizeiptr>(trees.size() * sizeof(Instance)),
-                       trees.data());
+  const auto treeBytesz = static_cast<GLsizeiptr>(trees.size() * sizeof(Instance));
+  glNamedBufferSubData(treeInstanceVbo_, 0, treeBytesz, trees.data());
+  // The glTF VAOs read from treeGltfInstanceVbo_ (a separate buffer bound at
+  // load time). Keep it in sync so gltF trees render at the correct positions.
+  if (treeModelLoaded_ && treeGltfInstanceVbo_)
+    glNamedBufferSubData(treeGltfInstanceVbo_, 0, treeBytesz, trees.data());
   glNamedBufferSubData(rockInstanceVbo_, 0,
                        static_cast<GLsizeiptr>(rocks.size() * sizeof(Instance)),
                        rocks.data());
@@ -311,18 +335,31 @@ void ObstacleSystem::rebuildFromMap(const shared::WorldMapFile& map) {
 
 void ObstacleSystem::render(render::Shader& obstacleShader) {
   // The caller has already set u_viewProj, u_lightDir, and the palette
-  // uniforms. We just bind each VAO, set u_color, and issue an instanced
-  // draw.
+  // uniforms. We just bind each VAO, set u_color, and issue an instanced draw.
   if (treeCount_ > 0) {
-    obstacleShader.setVec3("u_color", trunk_.color);
-    glBindVertexArray(trunk_.vao);
-    glDrawElementsInstanced(GL_TRIANGLES, trunk_.indexCount, GL_UNSIGNED_INT,
-                            nullptr, static_cast<GLsizei>(treeCount_));
-
-    obstacleShader.setVec3("u_color", canopy_.color);
-    glBindVertexArray(canopy_.vao);
-    glDrawElementsInstanced(GL_TRIANGLES, canopy_.indexCount, GL_UNSIGNED_INT,
-                            nullptr, static_cast<GLsizei>(treeCount_));
+    if (treeModelLoaded_) {
+      if (treeTrunkGltf_.vao) {
+        obstacleShader.setVec3("u_color", treeTrunkGltf_.color);
+        glBindVertexArray(treeTrunkGltf_.vao);
+        glDrawElementsInstanced(GL_TRIANGLES, treeTrunkGltf_.indexCount,
+                                GL_UNSIGNED_INT, nullptr, static_cast<GLsizei>(treeCount_));
+      }
+      if (treeCanopyGltf_.vao) {
+        obstacleShader.setVec3("u_color", treeCanopyGltf_.color);
+        glBindVertexArray(treeCanopyGltf_.vao);
+        glDrawElementsInstanced(GL_TRIANGLES, treeCanopyGltf_.indexCount,
+                                GL_UNSIGNED_INT, nullptr, static_cast<GLsizei>(treeCount_));
+      }
+    } else {
+      obstacleShader.setVec3("u_color", trunk_.color);
+      glBindVertexArray(trunk_.vao);
+      glDrawElementsInstanced(GL_TRIANGLES, trunk_.indexCount, GL_UNSIGNED_INT,
+                              nullptr, static_cast<GLsizei>(treeCount_));
+      obstacleShader.setVec3("u_color", canopy_.color);
+      glBindVertexArray(canopy_.vao);
+      glDrawElementsInstanced(GL_TRIANGLES, canopy_.indexCount, GL_UNSIGNED_INT,
+                              nullptr, static_cast<GLsizei>(treeCount_));
+    }
   }
   if (rockCount_ > 0) {
     obstacleShader.setVec3("u_color", rock_.color);
@@ -334,15 +371,26 @@ void ObstacleSystem::render(render::Shader& obstacleShader) {
 }
 
 void ObstacleSystem::renderDepth(render::Shader& /*depthShader*/) {
-  // Same VAOs as the regular render path. The bound program ignores normal
-  // + color attributes; it only reads position + per-instance pos/rotY.
   if (treeCount_ > 0) {
-    glBindVertexArray(trunk_.vao);
-    glDrawElementsInstanced(GL_TRIANGLES, trunk_.indexCount, GL_UNSIGNED_INT,
-                            nullptr, static_cast<GLsizei>(treeCount_));
-    glBindVertexArray(canopy_.vao);
-    glDrawElementsInstanced(GL_TRIANGLES, canopy_.indexCount, GL_UNSIGNED_INT,
-                            nullptr, static_cast<GLsizei>(treeCount_));
+    if (treeModelLoaded_) {
+      if (treeTrunkGltf_.vao) {
+        glBindVertexArray(treeTrunkGltf_.vao);
+        glDrawElementsInstanced(GL_TRIANGLES, treeTrunkGltf_.indexCount,
+                                GL_UNSIGNED_INT, nullptr, static_cast<GLsizei>(treeCount_));
+      }
+      if (treeCanopyGltf_.vao) {
+        glBindVertexArray(treeCanopyGltf_.vao);
+        glDrawElementsInstanced(GL_TRIANGLES, treeCanopyGltf_.indexCount,
+                                GL_UNSIGNED_INT, nullptr, static_cast<GLsizei>(treeCount_));
+      }
+    } else {
+      glBindVertexArray(trunk_.vao);
+      glDrawElementsInstanced(GL_TRIANGLES, trunk_.indexCount, GL_UNSIGNED_INT,
+                              nullptr, static_cast<GLsizei>(treeCount_));
+      glBindVertexArray(canopy_.vao);
+      glDrawElementsInstanced(GL_TRIANGLES, canopy_.indexCount, GL_UNSIGNED_INT,
+                              nullptr, static_cast<GLsizei>(treeCount_));
+    }
   }
   if (rockCount_ > 0) {
     glBindVertexArray(rock_.vao);
@@ -352,7 +400,7 @@ void ObstacleSystem::renderDepth(render::Shader& /*depthShader*/) {
   glBindVertexArray(0);
 }
 
-bool ObstacleSystem::renderOutlineAt(render::Shader& /*outlineShader*/,
+bool ObstacleSystem::renderOutlineAt(render::Shader& outlineShader,
                                      const shared::WorldMapFile& map,
                                      int tileX, int tileY) {
   if (tileY < 0 || tileY >= map.height || tileX < 0 || tileX >= map.width) return false;
@@ -363,36 +411,247 @@ bool ObstacleSystem::renderOutlineAt(render::Shader& /*outlineShader*/,
   if (static_cast<int>(vh.size()) != (map.width + 1) * (map.height + 1)) return false;
 
   const float cy = tileCenterY(vh, map.width, map.height, tileX, tileY);
-  Instance inst{ static_cast<float>(tileX), cy, static_cast<float>(tileY),
-                 hashRotation(tileX, tileY) };
-  glNamedBufferSubData(outlineInstanceVbo_, 0, sizeof(Instance), &inst);
+  const bool  isTree = (obs == shared::ObstacleType::tree);
 
-  // In our left-handed projection (lookAtLH/perspectiveLH) the screen-space
-  // winding is inverted. Tell GL that CW = front so face classification
-  // matches visual reality, then cull front faces to show only the back
-  // shell (the outline rim extending beyond the original silhouette).
-  glFrontFace(GL_CW);
-  glEnable(GL_CULL_FACE);
-  glCullFace(GL_FRONT);
-  glDepthMask(GL_FALSE);  // don't write depth — outline is visual-only
-
-  if (obs == shared::ObstacleType::tree) {
-    glBindVertexArray(outlineTrunk_.vao);
-    glDrawElementsInstanced(GL_TRIANGLES, outlineTrunk_.indexCount,
-                            GL_UNSIGNED_INT, nullptr, 1);
-    glBindVertexArray(outlineCanopy_.vao);
-    glDrawElementsInstanced(GL_TRIANGLES, outlineCanopy_.indexCount,
-                            GL_UNSIGNED_INT, nullptr, 1);
+  // Upload the single-instance data into the appropriate outline VBO.
+  // Instance position must match what rebuildFromMap uploaded:
+  // trees and rocks are both centred at (tileX, cy, tileY).
+  const Instance inst{ static_cast<float>(tileX), cy,
+                       static_cast<float>(tileY),
+                       hashRotation(tileX, tileY) };
+  if (isTree && treeModelLoaded_) {
+    glNamedBufferSubData(outlineTreeGltfInstanceVbo_, 0, sizeof(Instance), &inst);
   } else {
-    glBindVertexArray(outlineRock_.vao);
-    glDrawElementsInstanced(GL_TRIANGLES, outlineRock_.indexCount,
-                            GL_UNSIGNED_INT, nullptr, 1);
+    glNamedBufferSubData(outlineInstanceVbo_, 0, sizeof(Instance), &inst);
   }
 
-  glDepthMask(GL_TRUE);
+  // Draw the appropriate kit(s) for this obstacle type. All kits share the
+  // same VAO layout and the same instance buffer updated above.
+  auto drawKits = [&]() {
+    if (isTree) {
+      if (treeModelLoaded_) {
+        if (outlineTreeTrunkGltf_.vao) {
+          glBindVertexArray(outlineTreeTrunkGltf_.vao);
+          glDrawElementsInstanced(GL_TRIANGLES, outlineTreeTrunkGltf_.indexCount,
+                                  GL_UNSIGNED_INT, nullptr, 1);
+        }
+        if (outlineTreeCanopyGltf_.vao) {
+          glBindVertexArray(outlineTreeCanopyGltf_.vao);
+          glDrawElementsInstanced(GL_TRIANGLES, outlineTreeCanopyGltf_.indexCount,
+                                  GL_UNSIGNED_INT, nullptr, 1);
+        }
+      } else {
+        glBindVertexArray(outlineTrunk_.vao);
+        glDrawElementsInstanced(GL_TRIANGLES, outlineTrunk_.indexCount,
+                                GL_UNSIGNED_INT, nullptr, 1);
+        glBindVertexArray(outlineCanopy_.vao);
+        glDrawElementsInstanced(GL_TRIANGLES, outlineCanopy_.indexCount,
+                                GL_UNSIGNED_INT, nullptr, 1);
+      }
+    } else {
+      glBindVertexArray(outlineRock_.vao);
+      glDrawElementsInstanced(GL_TRIANGLES, outlineRock_.indexCount,
+                              GL_UNSIGNED_INT, nullptr, 1);
+    }
+    glBindVertexArray(0);
+  };
+
+  // ── Pass 1: Stencil write ─────────────────────────────────────────────────
+  // Render the unmodified geometry into the stencil buffer only. Every
+  // fragment that belongs to the visible obstacle silhouette gets stencil=1.
+  // Colour and depth writes are suppressed; depth test uses LEQUAL so the
+  // already-drawn obstacle pixels (equal depth) pass.
+  glEnable(GL_STENCIL_TEST);
+  glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+  glDepthMask(GL_FALSE);
+  glDepthFunc(GL_LEQUAL);
+  glStencilMask(0xFF);
+  glStencilFunc(GL_ALWAYS, 1, 0xFF);
+  glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);  // write 1 on depth pass
+
+  outlineShader.setFloat("u_outlineWidth", 0.0f);  // no inflation — stamp exact silhouette
+  drawKits();
+
+  // ── Pass 2: Inflated outline, silhouette-only ─────────────────────────────
+  // Render the geometry inflated outward along normals, but accept only the
+  // ring of pixels outside the stencil-marked interior (NOTEQUAL 1). Culling
+  // is disabled — the stencil clips the interior; no cull-face trick needed.
+  glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+  glStencilFunc(GL_NOTEQUAL, 1, 0xFF);
+  glStencilMask(0x00);          // don't modify stencil during this pass
   glDisable(GL_CULL_FACE);
-  glFrontFace(GL_CCW);  // restore default
-  glBindVertexArray(0);
+
+  outlineShader.setFloat("u_outlineWidth", 0.06f);
+  drawKits();
+
+  // ── Restore GL state ──────────────────────────────────────────────────────
+  glEnable(GL_CULL_FACE);       // back-face culling back on (cull mode unchanged = GL_BACK)
+  glDepthMask(GL_TRUE);
+  glDepthFunc(GL_LESS);
+  glStencilMask(0xFF);
+  glDisable(GL_STENCIL_TEST);
+  return true;
+}
+
+bool ObstacleSystem::loadTreeModel(const std::filesystem::path& path) {
+  cgltf_options opts{};
+  cgltf_data*   data = nullptr;
+  const std::string pathStr = path.string();
+
+  if (cgltf_parse_file(&opts, pathStr.c_str(), &data) != cgltf_result_success) {
+    std::fprintf(stderr, "[ObstacleSystem] tree model parse failed: %s\n", pathStr.c_str());
+    return false;
+  }
+  if (cgltf_load_buffers(&opts, data, pathStr.c_str()) != cgltf_result_success) {
+    std::fprintf(stderr, "[ObstacleSystem] tree model load_buffers failed\n");
+    cgltf_free(data);
+    return false;
+  }
+
+  Mesh trunkMesh, canopyMesh;
+
+  // Scale model to a 1×1 tile footprint (original X/Z width ≈ 0.94 tiles)
+  // and roughly 2× player height in Y.  Separate XZ / Y scales let us
+  // control the silhouette independently of the height.
+  constexpr float kScaleXZ = 1.066f;  // 1.0 / 0.938 ≈ fills exactly 1 tile wide
+  constexpr float kScaleY  = 3.5f;    // ≈ 2× player height (~1.75 units tall)
+
+  for (size_t ni = 0; ni < data->nodes_count; ++ni) {
+    const cgltf_node* node = &data->nodes[ni];
+    if (!node->mesh) continue;
+
+    // Get the world transform for this node (accounts for all parent transforms).
+    float mat[16];
+    cgltf_node_transform_world(node, mat);
+
+    for (size_t pi = 0; pi < node->mesh->primitives_count; ++pi) {
+      const cgltf_primitive* prim = &node->mesh->primitives[pi];
+
+      const cgltf_accessor* posAcc = nullptr;
+      const cgltf_accessor* nrmAcc = nullptr;
+      for (size_t ai = 0; ai < prim->attributes_count; ++ai) {
+        if (prim->attributes[ai].type == cgltf_attribute_type_position)
+          posAcc = prim->attributes[ai].data;
+        else if (prim->attributes[ai].type == cgltf_attribute_type_normal)
+          nrmAcc = prim->attributes[ai].data;
+      }
+      if (!posAcc) continue;
+
+      // Material index 0 → trunk, 1+ → canopy.
+      int matIdx = -1;
+      if (prim->material) {
+        for (size_t mi = 0; mi < data->materials_count; ++mi) {
+          if (&data->materials[mi] == prim->material) { matIdx = static_cast<int>(mi); break; }
+        }
+      }
+      Mesh& target = (matIdx == 0) ? trunkMesh : canopyMesh;
+      const uint32_t baseVert = static_cast<uint32_t>(target.positions.size() / 3);
+
+      // Positions — apply node world transform then scale.
+      for (size_t vi = 0; vi < posAcc->count; ++vi) {
+        float p[3] = {};
+        cgltf_accessor_read_float(posAcc, vi, p, 3);
+        // Column-major 4×4 matrix multiply (translation in last column).
+        const float lx = mat[0]*p[0] + mat[4]*p[1] + mat[8]*p[2]  + mat[12];
+        const float ly = mat[1]*p[0] + mat[5]*p[1] + mat[9]*p[2]  + mat[13];
+        const float lz = mat[2]*p[0] + mat[6]*p[1] + mat[10]*p[2] + mat[14];
+        target.positions.insert(target.positions.end(),
+                                {lx * kScaleXZ, ly * kScaleY, lz * kScaleXZ});
+      }
+
+      // Normals — apply rotation part of the matrix only.
+      if (nrmAcc) {
+        for (size_t vi = 0; vi < nrmAcc->count; ++vi) {
+          float n[3] = {};
+          cgltf_accessor_read_float(nrmAcc, vi, n, 3);
+          float nx = mat[0]*n[0] + mat[4]*n[1] + mat[8]*n[2];
+          float ny = mat[1]*n[0] + mat[5]*n[1] + mat[9]*n[2];
+          float nz = mat[2]*n[0] + mat[6]*n[1] + mat[10]*n[2];
+          const float len = std::sqrt(nx*nx + ny*ny + nz*nz);
+          if (len > 1e-6f) { nx /= len; ny /= len; nz /= len; }
+          target.normals.insert(target.normals.end(), {nx, ny, nz});
+        }
+      } else {
+        for (size_t vi = 0; vi < posAcc->count; ++vi)
+          target.normals.insert(target.normals.end(), {0.0f, 1.0f, 0.0f});
+      }
+
+      // Indices.
+      if (prim->indices) {
+        for (size_t ii = 0; ii < prim->indices->count; ++ii) {
+          uint32_t idx = 0;
+          cgltf_accessor_read_uint(prim->indices, ii, &idx, 1);
+          target.indices.push_back(baseVert + idx);
+        }
+      } else {
+        for (uint32_t vi = 0; vi < static_cast<uint32_t>(posAcc->count); ++vi)
+          target.indices.push_back(baseVert + vi);
+      }
+    }
+  }
+  cgltf_free(data);
+
+  if (trunkMesh.positions.empty() && canopyMesh.positions.empty()) {
+    std::fprintf(stderr, "[ObstacleSystem] tree model: no geometry found\n");
+    return false;
+  }
+
+  // Create instance VBOs (capacity for 4096 instances each).
+  if (!treeGltfInstanceVbo_) {
+    glCreateBuffers(1, &treeGltfInstanceVbo_);
+    glNamedBufferStorage(treeGltfInstanceVbo_, sizeof(Instance) * 4096,
+                         nullptr, GL_DYNAMIC_STORAGE_BIT);
+  }
+  if (!outlineTreeGltfInstanceVbo_) {
+    glCreateBuffers(1, &outlineTreeGltfInstanceVbo_);
+    glNamedBufferStorage(outlineTreeGltfInstanceVbo_, sizeof(Instance),
+                         nullptr, GL_DYNAMIC_STORAGE_BIT);
+  }
+
+  if (!trunkMesh.positions.empty()) {
+    uploadKitMesh(treeTrunkGltf_, trunkMesh.positions, trunkMesh.normals,
+                  trunkMesh.indices, treeGltfInstanceVbo_);
+    treeTrunkGltf_.color = glm::vec3(0.24f, 0.18f, 0.06f);
+    uploadKitMesh(outlineTreeTrunkGltf_, trunkMesh.positions, trunkMesh.normals,
+                  trunkMesh.indices, outlineTreeGltfInstanceVbo_);
+  }
+  if (!canopyMesh.positions.empty()) {
+    uploadKitMesh(treeCanopyGltf_, canopyMesh.positions, canopyMesh.normals,
+                  canopyMesh.indices, treeGltfInstanceVbo_);
+    treeCanopyGltf_.color = glm::vec3(0.12f, 0.32f, 0.06f);
+    uploadKitMesh(outlineTreeCanopyGltf_, canopyMesh.positions, canopyMesh.normals,
+                  canopyMesh.indices, outlineTreeGltfInstanceVbo_);
+  }
+
+  // Compute model-space AABB from all scaled vertex positions (used by the
+  // pick loop to do geometry-accurate hover detection).
+  {
+    glm::vec3 bMin( 1e9f,  1e9f,  1e9f);
+    glm::vec3 bMax(-1e9f, -1e9f, -1e9f);
+    auto accumMesh = [&](const Mesh& m) {
+      for (std::size_t i = 0; i + 2 < m.positions.size(); i += 3) {
+        bMin.x = std::min(bMin.x, m.positions[i]);
+        bMin.y = std::min(bMin.y, m.positions[i + 1]);
+        bMin.z = std::min(bMin.z, m.positions[i + 2]);
+        bMax.x = std::max(bMax.x, m.positions[i]);
+        bMax.y = std::max(bMax.y, m.positions[i + 1]);
+        bMax.z = std::max(bMax.z, m.positions[i + 2]);
+      }
+    };
+    accumMesh(trunkMesh);
+    accumMesh(canopyMesh);
+    if (bMin.x < bMax.x) {
+      treeGltfAABBMin_ = bMin;
+      treeGltfAABBMax_ = bMax;
+    }
+  }
+
+  treeModelLoaded_ = true;
+  std::fprintf(stdout, "[ObstacleSystem] tree.gltf loaded — %zu trunk verts, %zu canopy verts  "
+               "AABB [%.2f,%.2f,%.2f]..[%.2f,%.2f,%.2f]\n",
+               trunkMesh.positions.size() / 3, canopyMesh.positions.size() / 3,
+               treeGltfAABBMin_.x, treeGltfAABBMin_.y, treeGltfAABBMin_.z,
+               treeGltfAABBMax_.x, treeGltfAABBMax_.y, treeGltfAABBMax_.z);
   return true;
 }
 

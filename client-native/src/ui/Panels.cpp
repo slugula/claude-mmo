@@ -168,7 +168,8 @@ void drawEmptyEquipSlot(const char* label, ImVec2 sz) {
 }
 
 // ---- Inventory tab (internal) -----------------------------------------------
-void drawInventoryTab(const shared::PlayerState& p, net::NetworkClient* netc) {
+void drawInventoryTab(const shared::PlayerState& p, net::NetworkClient* netc,
+                      UiHoverState* hover) {
   constexpr float kCell = 44.0f;
   constexpr float kPad  =  3.0f;
 
@@ -182,7 +183,11 @@ void drawInventoryTab(const shared::PlayerState& p, net::NetworkClient* netc) {
       std::snprintf(idbuf, sizeof(idbuf), "##inv%d", idx);
 
       ImGui::PushID(idx);
-      drawSlot(idbuf, slot, ImVec2(kCell, kCell));
+      const bool clicked = drawSlot(idbuf, slot, ImVec2(kCell, kCell));
+
+      // Left-click: equip immediately (right-click opens context menu below).
+      if (clicked && slot && netc)
+        netc->sendEquipItem(idx);
 
       if (slot && netc && ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
         ImGui::SetDragDropPayload("INV_SLOT", &idx, sizeof(idx));
@@ -209,13 +214,21 @@ void drawInventoryTab(const shared::PlayerState& p, net::NetworkClient* netc) {
         }
         ImGui::EndPopup();
       }
-      if (slot && ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
-        ImGui::BeginTooltip();
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.94f, 0.82f, 0.50f, 1.0f));
-        ImGui::TextUnformatted(prettyItemId(slot->itemId).c_str());
-        ImGui::PopStyleColor();
-        if (slot->quantity > 1) ImGui::Text("Qty: %s", fmtQty(slot->quantity).c_str());
-        ImGui::EndTooltip();
+      if (slot && ImGui::IsItemHovered()) {
+        // Top-left context info
+        if (hover) {
+          hover->kind     = UiHoverState::Kind::InventoryItem;
+          hover->itemName = prettyItemId(slot->itemId);
+        }
+        // ImGui tooltip (item details)
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
+          ImGui::BeginTooltip();
+          ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.94f, 0.82f, 0.50f, 1.0f));
+          ImGui::TextUnformatted(prettyItemId(slot->itemId).c_str());
+          ImGui::PopStyleColor();
+          if (slot->quantity > 1) ImGui::Text("Qty: %s", fmtQty(slot->quantity).c_str());
+          ImGui::EndTooltip();
+        }
       }
       ImGui::PopID();
       if (c + 1 < kInventoryCols) ImGui::SameLine(0.0f, kPad);
@@ -338,7 +351,8 @@ void drawSkillsTab(const shared::PlayerState& p) {
 }
 
 // ---- Equipment tab (internal) -----------------------------------------------
-void drawEquipmentTab(const shared::PlayerState& p, net::NetworkClient* netc) {
+void drawEquipmentTab(const shared::PlayerState& p, net::NetworkClient* netc,
+                      UiHoverState* hover) {
   constexpr float kCell = 52.0f;
   constexpr float kPad  =  3.0f;
 
@@ -360,7 +374,12 @@ void drawEquipmentTab(const shared::PlayerState& p, net::NetworkClient* netc) {
         ImGui::PushID(m->slotId);
 
         if (slot) {
-          drawSlot(idbuf, slot, ImVec2(kCell, kCell));
+          const bool clicked = drawSlot(idbuf, slot, ImVec2(kCell, kCell));
+
+          // Left-click: unequip immediately.
+          if (clicked && netc)
+            netc->sendUnequipItem(m->slotId);
+
           if (netc && ImGui::BeginPopupContextItem("##eq_ctx")) {
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.94f, 0.82f, 0.50f, 1.0f));
             ImGui::TextUnformatted(prettyItemId(slot->itemId).c_str());
@@ -370,17 +389,29 @@ void drawEquipmentTab(const shared::PlayerState& p, net::NetworkClient* netc) {
             if (ImGui::Selectable("Examine")) netc->sendExamine(slot->itemId);
             ImGui::EndPopup();
           }
-          if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
-            ImGui::BeginTooltip();
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.94f, 0.82f, 0.50f, 1.0f));
-            ImGui::Text("%s", prettyItemId(slot->itemId).c_str());
-            ImGui::PopStyleColor();
-            ImGui::TextDisabled("(%s slot)", m->label);
-            ImGui::EndTooltip();
+          if (ImGui::IsItemHovered()) {
+            // Top-left context info
+            if (hover) {
+              hover->kind     = UiHoverState::Kind::EquipSlot;
+              hover->itemName = prettyItemId(slot->itemId);
+            }
+            // ImGui tooltip
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_DelayShort)) {
+              ImGui::BeginTooltip();
+              ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.94f, 0.82f, 0.50f, 1.0f));
+              ImGui::Text("%s", prettyItemId(slot->itemId).c_str());
+              ImGui::PopStyleColor();
+              ImGui::TextDisabled("(%s slot)", m->label);
+              ImGui::EndTooltip();
+            }
           }
         } else {
           // Empty slot — show letter placeholder
           drawEmptyEquipSlot(m->label, ImVec2(kCell, kCell));
+          if (ImGui::IsItemHovered() && hover) {
+            hover->kind      = UiHoverState::Kind::EmptyEquipSlot;
+            hover->slotLabel = m->label;
+          }
         }
         ImGui::PopID();
       } else {
@@ -396,7 +427,8 @@ void drawEquipmentTab(const shared::PlayerState& p, net::NetworkClient* netc) {
 
 // ---- Public: HUD panel ------------------------------------------------------
 
-void drawHudPanel(const shared::PlayerState& p, net::NetworkClient* net) {
+void drawHudPanel(const shared::PlayerState& p, net::NetworkClient* net,
+                  UiHoverState* hover) {
   const ImGuiIO& io = ImGui::GetIO();
   constexpr float kW      = 232.0f;
   // Skills tab now uses cards — needs a bit more height than before.
@@ -416,7 +448,7 @@ void drawHudPanel(const shared::PlayerState& p, net::NetworkClient* net) {
 
   if (ImGui::BeginTabBar("##tabs")) {
     if (ImGui::BeginTabItem("Inventory")) {
-      drawInventoryTab(p, net);
+      drawInventoryTab(p, net, hover);
       ImGui::EndTabItem();
     }
     if (ImGui::BeginTabItem("Skills")) {
@@ -424,7 +456,7 @@ void drawHudPanel(const shared::PlayerState& p, net::NetworkClient* net) {
       ImGui::EndTabItem();
     }
     if (ImGui::BeginTabItem("Equipment")) {
-      drawEquipmentTab(p, net);
+      drawEquipmentTab(p, net, hover);
       ImGui::EndTabItem();
     }
     ImGui::EndTabBar();

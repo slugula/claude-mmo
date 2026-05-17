@@ -106,6 +106,7 @@ private:
   // frame so 90-degree turns don't pop.
   float                                    smoothedPlayerYaw_ = 0.0f;
   bool                                     smoothedYawValid_  = false;
+  ui::UiHoverState                         uiHover_;
   ui::ChatLog                              chatLog_;
   ui::WorldOverlays                        overlays_;
   bool                                     loginAnnounced_ = false;

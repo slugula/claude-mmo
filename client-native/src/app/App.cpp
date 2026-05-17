@@ -82,6 +82,27 @@ float tileWorldY(const shared::WorldMapFile& map, int tx, int ty) {
   return (SW + SE + NW + NE) * 0.25f;
 }
 
+// Standard slab-method ray-vs-AABB test.
+// Returns the t at which the ray first enters the box, or -1 if no hit.
+// Rays that start inside the box return the exit t (also positive).
+float rayVsAABB(glm::vec3 ro, glm::vec3 rd, glm::vec3 bMin, glm::vec3 bMax) {
+  float tMin = 1e-4f, tMax = FLT_MAX;
+  for (int i = 0; i < 3; ++i) {
+    if (std::abs(rd[i]) < 1e-8f) {
+      if (ro[i] < bMin[i] || ro[i] > bMax[i]) return -1.0f;
+      continue;
+    }
+    const float invD = 1.0f / rd[i];
+    float t0 = (bMin[i] - ro[i]) * invD;
+    float t1 = (bMax[i] - ro[i]) * invD;
+    if (t0 > t1) std::swap(t0, t1);
+    tMin = std::max(tMin, t0);
+    tMax = std::min(tMax, t1);
+    if (tMax < tMin) return -1.0f;
+  }
+  return tMin;
+}
+
 std::filesystem::path resolveFromExe(const char* relative) {
   wchar_t buf[MAX_PATH] = {};
   const DWORD n = GetModuleFileNameW(nullptr, buf, MAX_PATH);
@@ -398,74 +419,102 @@ void App::renderFrame() {
     hoveredTile_ = input::pickTile(rayOrigin, rayDir, map_.vertexHeights,
                                    terrainTileW_, terrainTileH_);
 
-    // ---- Obstacle ray-pick (secondary pass) ----------------------------------
-    // The terrain heightfield pick finds where the ray hits the ground. When
-    // the cursor is over a raised obstacle (tree canopy, rock top) but the ray
-    // hits an adjacent tile, this pass tests the ray against each obstacle's
-    // bounding cylinder and overrides the result when it's closer.
-    //
-    // Key correctness detail: we test BOTH roots of the quadratic (t1=entry,
-    // t2=exit). For steep camera angles the ray often enters the infinite
-    // cylinder above the top cap (t1 Y-rejected) but exits through the side
-    // within the valid height range (t2 accepted). Skipping t2 was the
-    // original bug that made this pass appear to do nothing.
+    // ---- Obstacle + entity ray-pick (secondary pass) -------------------------
+    // The terrain heightfield gives us a ground hit. This pass tests the ray
+    // against geometry-derived AABBs (inflated ×1.2 from their center) for
+    // all interactables, overriding the result when an AABB hit is closer.
+    // All bounds are in model space (origin = tile center, Y=0 = ground);
+    // we translate to world space and inflate before testing.
     {
       float bestT = hoveredTile_.hit ? hoveredTile_.rayT : FLT_MAX;
-      int bestTx = -1, bestTy = -1;
+      int   bestTx = -1, bestTy = -1;
 
+      // Helper: inflate a model-space AABB ×scale from its centre, then
+      // translate it to world space at (wx, wy, wz).
+      auto worldAABB = [](glm::vec3 lMin, glm::vec3 lMax, float scale,
+                          float wx, float wy, float wz,
+                          glm::vec3& outMin, glm::vec3& outMax) {
+        const glm::vec3 lCentre  = (lMin + lMax) * 0.5f;
+        const glm::vec3 halfExt  = (lMax - lMin) * 0.5f * scale;
+        const glm::vec3 wCentre  = glm::vec3(wx, wy, wz) + lCentre;
+        outMin = wCentre - halfExt;
+        outMax = wCentre + halfExt;
+      };
+
+      // ---- Obstacles (trees / rocks / chests) --------------------------------
       for (int oty = 0; oty < terrainTileH_; ++oty) {
         for (int otx = 0; otx < terrainTileW_; ++otx) {
           const auto obs = map_.tiles[oty][otx].obstacle;
           if (obs == shared::ObstacleType::none) continue;
 
-          const float cx    = static_cast<float>(otx);
-          const float cz    = static_cast<float>(oty);
           const float baseY = tileWorldY(map_, otx, oty);
 
-          float r, h;
+          // Model-space AABB (centred on tile, base at Y=0).
+          glm::vec3 lMin, lMax;
           if (obs == shared::ObstacleType::tree) {
-            r = 0.55f;  // slightly wider than the 1-tile visual footprint
-            h = 4.0f;   // a little above kScaleY=3.5 to cover canopy rounding
-          } else {
-            r = 0.40f;
-            h = 0.80f;
-          }
-
-          const float dx = rayOrigin.x - cx;
-          const float dz = rayOrigin.z - cz;
-          const float a  = rayDir.x * rayDir.x + rayDir.z * rayDir.z;
-
-          float tHit = -1.0f;
-
-          if (a < 1e-6f) {
-            // Nearly vertical ray — check XZ footprint, intersect top cap.
-            if (dx * dx + dz * dz > r * r) continue;
-            if (std::abs(rayDir.y) < 1e-7f) continue;
-            const float tCap = (baseY + h - rayOrigin.y) / rayDir.y;
-            if (tCap > 1e-4f) tHit = tCap;
-          } else {
-            const float b    = 2.0f * (dx * rayDir.x + dz * rayDir.z);
-            const float c    = dx * dx + dz * dz - r * r;
-            const float disc = b * b - 4.0f * a * c;
-            if (disc < 0.0f) continue;
-
-            const float sqD = std::sqrt(disc);
-            const float inv2a = 1.0f / (2.0f * a);
-            // Test both roots; take the nearest one whose Y falls in [baseY, baseY+h].
-            for (float ti : { (-b - sqD) * inv2a, (-b + sqD) * inv2a }) {
-              if (ti <= 1e-4f) continue;
-              const float hitY = rayOrigin.y + ti * rayDir.y;
-              if (hitY < baseY || hitY > baseY + h) continue;
-              tHit = ti;
-              break;  // roots are ordered; smallest valid wins
+            if (obstacles_.treeModelLoaded()) {
+              lMin = obstacles_.treeGltfAABBMin();
+              lMax = obstacles_.treeGltfAABBMax();
+            } else {
+              lMin = glm::vec3(-0.45f,  0.00f, -0.45f);
+              lMax = glm::vec3( 0.45f,  1.60f,  0.45f);
             }
+          } else if (obs == shared::ObstacleType::rock) {
+            lMin = glm::vec3(-0.28f,  0.00f, -0.24f);
+            lMax = glm::vec3( 0.28f,  0.36f,  0.24f);
+          } else {  // chest
+            lMin = glm::vec3(-0.28f,  0.00f, -0.28f);
+            lMax = glm::vec3( 0.28f,  0.56f,  0.28f);
           }
 
-          if (tHit > 0.0f && tHit < bestT) {
-            bestT  = tHit;
+          glm::vec3 wMin, wMax;
+          worldAABB(lMin, lMax, 1.2f,
+                    static_cast<float>(otx), baseY, static_cast<float>(oty),
+                    wMin, wMax);
+
+          const float t = rayVsAABB(rayOrigin, rayDir, wMin, wMax);
+          if (t > 0.0f && t < bestT) {
+            bestT  = t;
             bestTx = otx;
             bestTy = oty;
           }
+        }
+      }
+
+      // ---- NPCs --------------------------------------------------------------
+      for (const auto& npc : npcs_) {
+        if (npc.dying) continue;
+        const float baseY = tileWorldY(map_, npc.tileX, npc.tileY);
+        // Humanoid AABB: ±0.18 XZ, 0..1.0 Y (body + head).
+        glm::vec3 wMin, wMax;
+        worldAABB(glm::vec3(-0.18f, 0.0f, -0.18f),
+                  glm::vec3( 0.18f, 1.0f,  0.18f), 1.2f,
+                  static_cast<float>(npc.tileX), baseY,
+                  static_cast<float>(npc.tileY), wMin, wMax);
+
+        const float t = rayVsAABB(rayOrigin, rayDir, wMin, wMax);
+        if (t > 0.0f && t < bestT) {
+          bestT  = t;
+          bestTx = npc.tileX;
+          bestTy = npc.tileY;
+        }
+      }
+
+      // ---- Dropped items -----------------------------------------------------
+      for (const auto& item : droppedItems_) {
+        const float baseY = tileWorldY(map_, item.tileX, item.tileY);
+        // Small flat cylinder approximated as AABB: ±0.20 XZ, 0..0.20 Y.
+        glm::vec3 wMin, wMax;
+        worldAABB(glm::vec3(-0.20f, 0.0f, -0.20f),
+                  glm::vec3( 0.20f, 0.20f,  0.20f), 1.2f,
+                  static_cast<float>(item.tileX), baseY,
+                  static_cast<float>(item.tileY), wMin, wMax);
+
+        const float t = rayVsAABB(rayOrigin, rayDir, wMin, wMax);
+        if (t > 0.0f && t < bestT) {
+          bestT  = t;
+          bestTx = item.tileX;
+          bestTy = item.tileY;
         }
       }
 
@@ -771,7 +820,9 @@ void App::renderFrame() {
   }
 
   if (connected && currLocalPlayer_) {
-    ui::drawHudPanel  (*currLocalPlayer_, &network_);
+    // Reset UI hover state before panels write to it.
+    uiHover_ = ui::UiHoverState{};
+    ui::drawHudPanel  (*currLocalPlayer_, &network_, &uiHover_);
     ui::drawBankPanel (*currLocalPlayer_, &network_, &bankOpen_);
     chatLog_.draw     (&network_);
 
@@ -780,8 +831,11 @@ void App::renderFrame() {
         currLocalPlayer_, npcs_,
         [this](int tx, int ty) { return tileWorldY(map_, tx, ty); });
 
-    // ---- Context info (top-left) — shows action for hovered tile ----------
-    if (hoveredTile_.hit) {
+    // ---- Context info (top-left) — world hover OR UI panel hover ----------
+    const bool uiOwned = ImGui::IsWindowHovered(ImGuiHoveredFlags_AnyWindow);
+
+    if (hoveredTile_.hit && !uiOwned) {
+      // World hover: show verb + subject for the tile under the cursor.
       const int tx = hoveredTile_.tileX;
       const int ty = hoveredTile_.tileY;
       const char* verb    = "Walk here";
@@ -815,14 +869,43 @@ void App::renderFrame() {
       }
       // Draw top-left context info
       ImDrawList* dl = ImGui::GetForegroundDrawList();
-      char ctxBuf[128];
-      std::snprintf(ctxBuf, sizeof(ctxBuf), "%s %s", verb, subject);
-      dl->AddText(ImVec2(12.0f, 12.0f),
-                  IM_COL32(255, 255, 255, 255), verb);
+      dl->AddText(ImVec2(12.0f, 12.0f), IM_COL32(255, 255, 255, 255), verb);
       if (subject[0] != '\0') {
         const ImVec2 verbSize = ImGui::CalcTextSize(verb);
         dl->AddText(ImVec2(12.0f + verbSize.x + 4.0f, 12.0f),
                     IM_COL32(255, 180, 50, 255), subject);
+      }
+    } else if (uiHover_.kind != ui::UiHoverState::Kind::None) {
+      // UI panel hover: show action context for inventory/equipment slots.
+      const char* verb    = "";
+      const char* subject = "";
+      switch (uiHover_.kind) {
+        case ui::UiHoverState::Kind::InventoryItem:
+          verb    = "Equip";
+          subject = uiHover_.itemName.c_str();
+          break;
+        case ui::UiHoverState::Kind::EquipSlot:
+          verb    = "Remove";
+          subject = uiHover_.itemName.c_str();
+          break;
+        case ui::UiHoverState::Kind::EmptyEquipSlot:
+          verb    = "";
+          subject = uiHover_.slotLabel.c_str();
+          break;
+        default: break;
+      }
+      if (verb[0] != '\0' || subject[0] != '\0') {
+        ImDrawList* dl = ImGui::GetForegroundDrawList();
+        if (verb[0] != '\0') {
+          dl->AddText(ImVec2(12.0f, 12.0f), IM_COL32(255, 255, 255, 255), verb);
+          if (subject[0] != '\0') {
+            const ImVec2 verbSize = ImGui::CalcTextSize(verb);
+            dl->AddText(ImVec2(12.0f + verbSize.x + 4.0f, 12.0f),
+                        IM_COL32(255, 180, 50, 255), subject);
+          }
+        } else {
+          dl->AddText(ImVec2(12.0f, 12.0f), IM_COL32(255, 180, 50, 255), subject);
+        }
       }
     }
 

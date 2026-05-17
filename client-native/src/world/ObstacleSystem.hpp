@@ -7,6 +7,7 @@
 #include <glm/glm.hpp>
 
 #include <cstdint>
+#include <filesystem>
 #include <vector>
 
 namespace world {
@@ -26,6 +27,11 @@ public:
   // One-time GL setup — uploads the three static kit meshes. Call after the
   // GL context is current.
   void initGL();
+
+  // Load a glTF tree model to replace the procedural trunk+canopy. The model
+  // geometry is pre-scaled to fill a 2×2-tile footprint. Non-fatal on failure
+  // (falls back to the procedural kit). Should be called after initGL().
+  bool loadTreeModel(const std::filesystem::path& path);
 
   // Walk the map's tiles, collect tree and rock instances (position +
   // rotation), and re-upload the instance VBOs. Cheap — runs in microseconds
@@ -53,6 +59,12 @@ public:
 
   std::size_t treeCount() const { return treeCount_; }
   std::size_t rockCount() const { return rockCount_; }
+
+  // Axis-aligned bounding box of the gltf tree model in world space (after
+  // applying kScaleXZ/kScaleY). Valid only when treeModelLoaded() is true.
+  bool        treeModelLoaded()   const { return treeModelLoaded_; }
+  glm::vec3   treeGltfAABBMin()   const { return treeGltfAABBMin_; }
+  glm::vec3   treeGltfAABBMax()   const { return treeGltfAABBMax_; }
 
 private:
   // Per-kit static-geometry handles + per-kit instance VAO that combines
@@ -84,6 +96,18 @@ private:
   Kit    outlineTrunk_;   // VAOs bound to outlineInstanceVbo_
   Kit    outlineCanopy_;
   Kit    outlineRock_;
+
+  // Optional glTF tree model (replaces procedural trunk+canopy when loaded).
+  // Each instance sits at the centre of a 2×2 tile block.
+  Kit    treeTrunkGltf_;
+  Kit    treeCanopyGltf_;
+  GLuint treeGltfInstanceVbo_    = 0;
+  Kit    outlineTreeTrunkGltf_;
+  Kit    outlineTreeCanopyGltf_;
+  GLuint outlineTreeGltfInstanceVbo_ = 0;
+  bool      treeModelLoaded_    = false;
+  glm::vec3 treeGltfAABBMin_   = glm::vec3(-0.45f, 0.0f, -0.45f);  // fallback = procedural bounds
+  glm::vec3 treeGltfAABBMax_   = glm::vec3( 0.45f, 1.6f,  0.45f);
 
   std::size_t treeCount_ = 0;
   std::size_t rockCount_ = 0;

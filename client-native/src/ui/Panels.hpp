@@ -10,8 +10,19 @@ namespace net { class NetworkClient; }
 
 namespace ui {
 
+// Hover state exported by the HUD panel each frame. Written by drawHudPanel
+// and read by App to render the top-left context info when the cursor is over
+// a UI panel (overrides world-hover context when the HUD owns the mouse).
+struct UiHoverState {
+  enum class Kind { None, InventoryItem, EquipSlot, EmptyEquipSlot } kind = Kind::None;
+  std::string itemName;   // e.g. "Bronze sword"
+  std::string slotLabel;  // e.g. "Head"
+};
+
 // Right-side HUD: fixed window containing Inventory / Skills / Equipment tabs.
-void drawHudPanel  (const shared::PlayerState& p, net::NetworkClient* net);
+// Writes hover info to *hover each frame (caller must clear to None beforehand).
+void drawHudPanel  (const shared::PlayerState& p, net::NetworkClient* net,
+                    UiHoverState* hover = nullptr);
 
 // Bank panel — centred modal.  `open` is owned by the caller.
 void drawBankPanel (const shared::PlayerState& p, net::NetworkClient* net,
