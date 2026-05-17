@@ -50,6 +50,7 @@ private:
   // ---- Frame rendering
   void renderFrame(float dt);
   void render3DViewport(float dt);
+  void draw3DViewportWindow();   // ImGui window that hosts the FBO image + 3D interaction
   void drawToolbar();
   void drawProperties();
   void drawGridView();
@@ -57,9 +58,14 @@ private:
   void drawMenuBar();
 
   // ---- Editing
-  void applyToolAt(int tx, int ty, float dt);
+  void applyToolAt(int tx, int ty, float dt,
+                   bool& dirtyTerrain, bool& dirtyObstacles, bool& dirtyMinimap);
   void applyBrush(int cx, int cy, float dt);  // dispatches to applyToolAt for each tile in brush
   int  clampTile(int v, int max) const;
+
+  // ---- Blocked-tile 3D overlay
+  void initBlockedOverlay();
+  void rebuildBlockedOverlay();
 
   // ---- Terrain incremental update
   // Rebuild vertex colours for the tile range [x0..x1) [y0..y1) and
@@ -100,7 +106,6 @@ private:
   render::Shader  terrainShader_;
   render::Shader  wireframeShader_;
   render::Shader  obstacleShader_;
-  render::Shader  outlineShader_;
   render::Shader  shadowInstancedShader_;
   render::ShadowMap shadowMap_;
   render::Mesh    terrainMesh_;
@@ -119,6 +124,12 @@ private:
   GLuint hoverVao_ = 0;
   GLuint hoverVbo_ = 0;
 
+  // Blocked-tile X overlay (3D view).
+  GLuint blockedVao_       = 0;
+  GLuint blockedVbo_       = 0;
+  int    blockedLineCount_ = 0;  // # of line segment vertices (4 per tile)
+  bool   blockedGLInited_  = false;
+
   // ---- Map state
   shared::WorldMapFile          map_;
   std::vector<shared::NpcSpawn> npcSpawns_;
@@ -126,6 +137,7 @@ private:
 
   // ---- Editor state
   EditorTool    activeTool_     = EditorTool::PaintTerrain;
+  EditorTool    prevTool_       = EditorTool::PaintTerrain;
   BrushState    brush_;
   int           hoveredTileX_   = -1;
   int           hoveredTileY_   = -1;
@@ -139,10 +151,13 @@ private:
   // Active terrain colour (PaintTerrain tool)
   float paletteR_ = 0.49f, paletteG_ = 0.78f, paletteB_ = 0.31f;
 
-  // Overlays (2D grid view)
-  bool showHeightOverlay_     = false;
-  bool showWalkabilityOverlay_= false;
-  bool showGridmapOverlay_    = false;
+  // Overlays (2D grid view / 3D view)
+  bool showHeightOverlay_         = false;
+  bool showWalkabilityOverlay_    = false;
+  bool showGridmapOverlay_        = false;
+  // True when overlay was auto-enabled by tool selection (so it auto-disables on tool change)
+  bool overlayHeightAuto_         = false;
+  bool overlayWalkabilityAuto_    = false;
 
   // 2D grid view pan + zoom
   float gridOffX_  = 0.0f;
