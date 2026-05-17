@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-**Project Reverie** — a browser-based MMO heavily inspired by Old School RuneScape. Long-term goal: surpass OSRS by overcoming its technical limitations with modern technology. Server-authoritative at **200ms ticks** (vs OSRS's 600ms limit).
+**Snook Online** — a browser-based MMO heavily inspired by Old School RuneScape. Long-term goal: surpass OSRS by overcoming its technical limitations with modern technology. Server-authoritative at **200ms ticks** (vs OSRS's 600ms limit).
 
 For how OSRS systems work, use https://oldschool.runescape.wiki as the reference.
 Feature documentation lives in `docs/Features/`.

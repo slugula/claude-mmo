@@ -34,7 +34,7 @@ namespace {
 constexpr int   kInitialWidth  = 1440;
 constexpr int   kInitialHeight = 900;
 constexpr int   kMsaaSamples   = 4;
-constexpr const char* kTitle             = "OSRS Level Editor";
+constexpr const char* kTitle             = "Snook Editor";
 constexpr const char* kTerrainVertPath   = "shaders/terrain.vert";
 constexpr const char* kTerrainFragPath   = "shaders/terrain.frag";
 constexpr const char* kWireframeVertPath = "shaders/wireframe.vert";
@@ -436,7 +436,7 @@ void EditorApp::render3DViewport(float dt) {
     entities_.render(obstacleShader_);
   }
 
-  // ---- Hover outline (yellow quad in 3D) ------------------------------
+  // ---- Hover outline (yellow) ---------------------------------------
   if (hoveredTileX_ >= 0) {
     updateHoverMesh(hoveredTileX_, hoveredTileY_, brush_.size, brush_.size);
     wireframeShader_.use();
@@ -444,7 +444,10 @@ void EditorApp::render3DViewport(float dt) {
     wireframeShader_.setVec4("u_color",   glm::vec4(1.0f, 0.85f, 0.10f, 1.0f));
     glDepthMask(GL_FALSE);
     glBindVertexArray(hoverVao_);
-    glDrawArrays(GL_LINE_LOOP, 0, 4);
+    if (hoverIsRound_)
+      glDrawArrays(GL_LINES,     0, static_cast<GLsizei>(hoverVertCount_));
+    else
+      glDrawArrays(GL_LINE_LOOP, 0, 4);
     glBindVertexArray(0);
     glDepthMask(GL_TRUE);
   }
@@ -481,22 +484,6 @@ void EditorApp::drawMenuBar() {
       glfwSetWindowShouldClose(window_.handle(), GLFW_TRUE);
     ImGui::EndMenu();
   }
-  if (ImGui::BeginMenu("Map")) {
-    if (ImGui::MenuItem("Resize...")) { resizeW_ = map_.width; resizeH_ = map_.height; showResizeDialog_ = true; }
-    ImGui::EndMenu();
-  }
-  if (ImGui::BeginMenu("View")) {
-    if (ImGui::MenuItem("Height Overlay",      nullptr, &showHeightOverlay_))
-      overlayHeightAuto_ = false;  // user took manual control
-    if (ImGui::MenuItem("Walkability Overlay", nullptr, &showWalkabilityOverlay_))
-      overlayWalkabilityAuto_ = false;
-    ImGui::MenuItem("Gridmap Overlay",         nullptr, &showGridmapOverlay_);
-    ImGui::Separator();
-    ImGui::MenuItem("Palette Quantisation",    nullptr, &palette_);
-    ImGui::MenuItem("Lighting",                nullptr, &lightingEnabled_);
-    ImGui::MenuItem("Shadows",                 nullptr, &shadowsEnabled_);
-    ImGui::EndMenu();
-  }
   if (ImGui::BeginMenu("Edit")) {
     if (ImGui::MenuItem("Undo", "Ctrl+Z", false, undo_.canUndo())) {
       const auto& s = undo_.undo(); map_ = s.map; npcSpawns_ = s.npcs;
@@ -506,6 +493,22 @@ void EditorApp::drawMenuBar() {
       const auto& s = undo_.redo(); map_ = s.map; npcSpawns_ = s.npcs;
       rebuildTerrainGL(); rebuildObstacles(); minimap_.rebuild(map_, npcSpawns_);
     }
+    ImGui::EndMenu();
+  }
+  if (ImGui::BeginMenu("Map")) {
+    if (ImGui::MenuItem("Resize...")) { resizeW_ = map_.width; resizeH_ = map_.height; showResizeDialog_ = true; }
+    ImGui::EndMenu();
+  }
+  if (ImGui::BeginMenu("View")) {
+    if (ImGui::MenuItem("Height Overlay",      nullptr, &showHeightOverlay_))
+      overlayHeightAuto_ = false;
+    if (ImGui::MenuItem("Walkability Overlay", nullptr, &showWalkabilityOverlay_))
+      overlayWalkabilityAuto_ = false;
+    ImGui::MenuItem("Gridmap Overlay",         nullptr, &showGridmapOverlay_);
+    ImGui::Separator();
+    ImGui::MenuItem("Palette Quantisation",    nullptr, &palette_);
+    ImGui::MenuItem("Lighting",                nullptr, &lightingEnabled_);
+    ImGui::MenuItem("Shadows",                 nullptr, &shadowsEnabled_);
     ImGui::EndMenu();
   }
 }
@@ -525,7 +528,7 @@ void EditorApp::drawToolbar() {
   toolBtn("Paint",     EditorTool::PaintTerrain);
   toolBtn("Raise",     EditorTool::SculptRaise);
   toolBtn("Lower",     EditorTool::SculptLower);
-  toolBtn("Obstacle",  EditorTool::PlaceObstacle);
+  toolBtn("Objects",   EditorTool::PlaceObstacle);
   toolBtn("NPC",       EditorTool::PlaceNPC);
   toolBtn("Spawn",     EditorTool::PlaceSpawn);
   toolBtn("Walkable",  EditorTool::PaintWalkable);
@@ -590,7 +593,7 @@ void EditorApp::drawProperties() {
     }
   }
   else if (activeTool_ == EditorTool::PlaceObstacle) {
-    ImGui::TextDisabled("Obstacle type");
+    ImGui::TextDisabled("Object type");
     auto obstBtn = [&](const char* label, shared::ObstacleType t) {
       const bool a = (obstacleSubtype_ == t);
       if (a) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f, 0.34f, 0.10f, 1.0f));
@@ -1146,7 +1149,9 @@ void EditorApp::initHoverMesh() {
   destroyHoverMesh();
   glCreateVertexArrays(1, &hoverVao_);
   glCreateBuffers(1, &hoverVbo_);
-  glNamedBufferStorage(hoverVbo_, sizeof(float) * 3 * 4, nullptr, GL_DYNAMIC_STORAGE_BIT);
+  // Large enough for a 64×64 round brush: π×32² ≈ 3217 tiles × 8 verts × 3 floats
+  constexpr GLsizeiptr kHoverBufBytes = static_cast<GLsizeiptr>(3300 * 8 * 3 * sizeof(float));
+  glNamedBufferStorage(hoverVbo_, kHoverBufBytes, nullptr, GL_DYNAMIC_STORAGE_BIT);
   glVertexArrayVertexBuffer(hoverVao_, 0, hoverVbo_, 0, sizeof(float) * 3);
   glEnableVertexArrayAttrib(hoverVao_, 0);
   glVertexArrayAttribFormat(hoverVao_, 0, 3, GL_FLOAT, GL_FALSE, 0);
@@ -1158,17 +1163,10 @@ void EditorApp::destroyHoverMesh() {
   if (hoverVao_) { glDeleteVertexArrays(1, &hoverVao_); hoverVao_ = 0; }
 }
 
-void EditorApp::updateHoverMesh(int tx, int ty, int szX, int szY) {
+void EditorApp::updateHoverMesh(int cx, int cy, int szX, int szY) {
   const int W = map_.width, H = map_.height;
   const auto& vh = map_.vertexHeights;
   if (W <= 0 || H <= 0 || vh.empty()) return;
-
-  // Center the brush around (tx,ty)
-  const int half = szX / 2;
-  const int bx0 = std::clamp(tx - half,      0, W - 1);
-  const int by0 = std::clamp(ty - half,      0, H - 1);
-  const int bx1 = std::clamp(tx - half + szX - 1, 0, W - 1);
-  const int by1 = std::clamp(ty - half + szY - 1, 0, H - 1);
 
   auto safeVH = [&](int row, int col) -> float {
     row = std::clamp(row, 0, H);
@@ -1176,18 +1174,65 @@ void EditorApp::updateHoverMesh(int tx, int ty, int szX, int szY) {
     return vh[static_cast<std::size_t>(row * (W + 1) + col)] * shared::kMaxTerrainH;
   };
 
-  const float hSW = safeVH(H - by0,      bx0);
-  const float hSE = safeVH(H - by0,      bx1 + 1);
-  const float hNE = safeVH(H - by1 - 1,  bx1 + 1);
-  const float hNW = safeVH(H - by1 - 1,  bx0);
-
-  const float verts[12] = {
-    bx0 - 0.5f, hSW + 0.05f, by0 - 0.5f,
-    bx1 + 0.5f, hSE + 0.05f, by0 - 0.5f,
-    bx1 + 0.5f, hNE + 0.05f, by1 + 0.5f,
-    bx0 - 0.5f, hNW + 0.05f, by1 + 0.5f,
+  // Inline helper: add a GL_LINES quad outline for one tile into a float vector.
+  // Each edge = 2 verts = 6 floats → 4 edges = 8 verts = 24 floats per tile.
+  auto pushTileLines = [&](std::vector<float>& buf, int tx, int ty) {
+    if (tx < 0 || ty < 0 || tx >= W || ty >= H) return;
+    const float x0 = tx - 0.5f, x1 = static_cast<float>(tx) + 0.5f;
+    const float z0 = ty - 0.5f, z1 = static_cast<float>(ty) + 0.5f;
+    const float hSW = safeVH(H - ty,      tx)     + 0.05f;
+    const float hSE = safeVH(H - ty,      tx + 1) + 0.05f;
+    const float hNE = safeVH(H - ty - 1,  tx + 1) + 0.05f;
+    const float hNW = safeVH(H - ty - 1,  tx)     + 0.05f;
+    // Bottom edge SW→SE
+    buf.insert(buf.end(), { x0, hSW, z0,  x1, hSE, z0 });
+    // Right edge SE→NE
+    buf.insert(buf.end(), { x1, hSE, z0,  x1, hNE, z1 });
+    // Top edge NE→NW
+    buf.insert(buf.end(), { x1, hNE, z1,  x0, hNW, z1 });
+    // Left edge NW→SW
+    buf.insert(buf.end(), { x0, hNW, z1,  x0, hSW, z0 });
   };
-  glNamedBufferSubData(hoverVbo_, 0, sizeof(verts), verts);
+
+  const bool isRound = (brush_.shape == BrushShape::Round) && (szX > 1);
+  hoverIsRound_ = isRound;
+
+  if (!isRound) {
+    // Square: single bounding-box LINE_LOOP (4 verts)
+    const int half = szX / 2;
+    const int bx0 = std::clamp(cx - half,           0, W - 1);
+    const int by0 = std::clamp(cy - half,           0, H - 1);
+    const int bx1 = std::clamp(cx - half + szX - 1, 0, W - 1);
+    const int by1 = std::clamp(cy - half + szY - 1, 0, H - 1);
+
+    const float verts[12] = {
+      bx0 - 0.5f, safeVH(H - by0,     bx0)     + 0.05f, by0 - 0.5f,
+      bx1 + 0.5f, safeVH(H - by0,     bx1 + 1) + 0.05f, by0 - 0.5f,
+      bx1 + 0.5f, safeVH(H - by1 - 1, bx1 + 1) + 0.05f, by1 + 0.5f,
+      bx0 - 0.5f, safeVH(H - by1 - 1, bx0)     + 0.05f, by1 + 0.5f,
+    };
+    hoverVertCount_ = 4;
+    glNamedBufferSubData(hoverVbo_, 0, sizeof(verts), verts);
+  } else {
+    // Round: per-tile GL_LINES outlines for every tile in the brush mask
+    const int half   = szX / 2;
+    const float r    = static_cast<float>(half);
+    std::vector<float> buf;
+    buf.reserve(static_cast<std::size_t>(szX * szY * 24));
+    for (int dy = -half; dy <= half; ++dy) {
+      for (int dx = -half; dx <= half; ++dx) {
+        const float d = std::sqrt(static_cast<float>(dx * dx + dy * dy));
+        if (d > r + 0.5f) continue;
+        pushTileLines(buf, cx + dx, cy + dy);
+      }
+    }
+    hoverVertCount_ = static_cast<int>(buf.size() / 3);
+    if (hoverVertCount_ > 0) {
+      glNamedBufferSubData(hoverVbo_, 0,
+                           static_cast<GLsizeiptr>(buf.size() * sizeof(float)),
+                           buf.data());
+    }
+  }
 }
 
 // -----------------------------------------------------------------------

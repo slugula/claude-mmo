@@ -121,8 +121,10 @@ private:
   world::TerrainMeshData terrainData_;
 
   // Hover indicator.
-  GLuint hoverVao_ = 0;
-  GLuint hoverVbo_ = 0;
+  GLuint hoverVao_       = 0;
+  GLuint hoverVbo_       = 0;
+  int    hoverVertCount_ = 4;   // vertices currently stored (4 = square LINE_LOOP, N*8 = round GL_LINES)
+  bool   hoverIsRound_   = false;
 
   // Blocked-tile X overlay (3D view).
   GLuint blockedVao_       = 0;
