@@ -44,6 +44,10 @@ public:
   std::function<void(int button, int action, int mods)>       onMouseButton;
   // Scroll wheel — yoffset is the primary axis (positive = scroll up).
   std::function<void(double xoffset, double yoffset)>         onScroll;
+  // Keyboard key press/release.
+  std::function<void(int key, int action, int mods)>          onKey;
+  // Unicode character input (for text entry).
+  std::function<void(unsigned int codepoint)>                 onChar;
 
 private:
   GLFWwindow* window_   = nullptr;
@@ -52,6 +56,7 @@ private:
 
   static void framebufferSizeCallback(GLFWwindow* w, int width, int height);
   static void keyCallback(GLFWwindow* w, int key, int scancode, int action, int mods);
+  static void charCallback(GLFWwindow* w, unsigned int codepoint);
   static void mouseButtonCallback(GLFWwindow* w, int button, int action, int mods);
   static void scrollCallback(GLFWwindow* w, double xoffset, double yoffset);
 };

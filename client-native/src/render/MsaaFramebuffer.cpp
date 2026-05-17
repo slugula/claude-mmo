@@ -41,8 +41,8 @@ void MsaaFramebuffer::resize(int width, int height) {
 
   glGenRenderbuffers(1, &depthRboMs_);
   glBindRenderbuffer(GL_RENDERBUFFER, depthRboMs_);
-  glRenderbufferStorageMultisample(GL_RENDERBUFFER, samples_, GL_DEPTH_COMPONENT24, width_, height_);
-  glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, depthRboMs_);
+  glRenderbufferStorageMultisample(GL_RENDERBUFFER, samples_, GL_DEPTH24_STENCIL8, width_, height_);
+  glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, depthRboMs_);
 
   if (glCheckFramebufferStatus(GL_FRAMEBUFFER) != GL_FRAMEBUFFER_COMPLETE) {
     std::fprintf(stderr, "[MsaaFramebuffer] multisampled FBO incomplete\n");

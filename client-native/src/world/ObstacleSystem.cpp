@@ -173,8 +173,8 @@ ObstacleSystem::~ObstacleSystem() {
 }
 
 void ObstacleSystem::destroy() {
-  for (Kit* k : {&trunk_, &canopy_, &rock_,
-                 &outlineTrunk_, &outlineCanopy_, &outlineRock_,
+  for (Kit* k : {&trunk_, &canopy_, &rock_, &fence_,
+                 &outlineTrunk_, &outlineCanopy_, &outlineRock_, &outlineFence_,
                  &treeTrunkGltf_, &treeCanopyGltf_,
                  &outlineTreeTrunkGltf_, &outlineTreeCanopyGltf_}) {
     if (k->vao)          glDeleteVertexArrays(1, &k->vao);
@@ -183,15 +183,16 @@ void ObstacleSystem::destroy() {
     if (k->vboPositions) glDeleteBuffers(1, &k->vboPositions);
     *k = {};
   }
-  if (treeInstanceVbo_)          glDeleteBuffers(1, &treeInstanceVbo_);
-  if (rockInstanceVbo_)          glDeleteBuffers(1, &rockInstanceVbo_);
-  if (outlineInstanceVbo_)       glDeleteBuffers(1, &outlineInstanceVbo_);
-  if (treeGltfInstanceVbo_)      glDeleteBuffers(1, &treeGltfInstanceVbo_);
+  if (treeInstanceVbo_)            glDeleteBuffers(1, &treeInstanceVbo_);
+  if (rockInstanceVbo_)            glDeleteBuffers(1, &rockInstanceVbo_);
+  if (fenceInstanceVbo_)           glDeleteBuffers(1, &fenceInstanceVbo_);
+  if (outlineInstanceVbo_)         glDeleteBuffers(1, &outlineInstanceVbo_);
+  if (treeGltfInstanceVbo_)        glDeleteBuffers(1, &treeGltfInstanceVbo_);
   if (outlineTreeGltfInstanceVbo_) glDeleteBuffers(1, &outlineTreeGltfInstanceVbo_);
-  treeInstanceVbo_ = rockInstanceVbo_ = outlineInstanceVbo_ = 0;
+  treeInstanceVbo_ = rockInstanceVbo_ = fenceInstanceVbo_ = outlineInstanceVbo_ = 0;
   treeGltfInstanceVbo_ = outlineTreeGltfInstanceVbo_ = 0;
   treeModelLoaded_ = false;
-  treeCount_ = rockCount_ = 0;
+  treeCount_ = rockCount_ = fenceCount_ = 0;
 }
 
 void ObstacleSystem::uploadKitMesh(Kit& kit,
@@ -245,9 +246,11 @@ void ObstacleSystem::initGL() {
   // the map regenerates without recreating the buffer.
   glCreateBuffers(1, &treeInstanceVbo_);
   glCreateBuffers(1, &rockInstanceVbo_);
-  // 4 KiB upper-bound = 256 instances per kind. Map regenerates if exceeded.
-  glNamedBufferStorage(treeInstanceVbo_, sizeof(Instance) * 4096, nullptr, GL_DYNAMIC_STORAGE_BIT);
-  glNamedBufferStorage(rockInstanceVbo_, sizeof(Instance) * 4096, nullptr, GL_DYNAMIC_STORAGE_BIT);
+  glCreateBuffers(1, &fenceInstanceVbo_);
+  // 4096-instance upper-bound per kind.
+  glNamedBufferStorage(treeInstanceVbo_,  sizeof(Instance) * 4096, nullptr, GL_DYNAMIC_STORAGE_BIT);
+  glNamedBufferStorage(rockInstanceVbo_,  sizeof(Instance) * 4096, nullptr, GL_DYNAMIC_STORAGE_BIT);
+  glNamedBufferStorage(fenceInstanceVbo_, sizeof(Instance) * 4096, nullptr, GL_DYNAMIC_STORAGE_BIT);
 
   // ---- Kit meshes -----------------------------------------------------
   // Tree trunk — slim cylinder, 6 sides, 1.0 unit tall.
@@ -265,6 +268,13 @@ void ObstacleSystem::initGL() {
   uploadKitMesh(rock_, rockMesh.positions, rockMesh.normals, rockMesh.indices, rockInstanceVbo_);
   rock_.color = glm::vec3(0.39f, 0.27f, 0.15f);  // medium brown
 
+  // Fence — thin horizontal plank (walkable=false, blocksRanged=false).
+  // hx=0.5 (full tile width), hy=0.125 (half-height → total 0.25 units tall),
+  // hz=0.05 (very thin in Z so it reads as a plank, not a wall).
+  const Mesh fenceMesh  = makeBox(0.48f, 0.125f, 0.05f);
+  uploadKitMesh(fence_, fenceMesh.positions, fenceMesh.normals, fenceMesh.indices, fenceInstanceVbo_);
+  fence_.color = glm::vec3(0.36f, 0.22f, 0.08f);  // warm wood-brown
+
   // ---- Outline single-instance resources ----------------------------------
   // A separate instance VBO holding exactly 1 instance, used to draw outline
   // shells for the hovered obstacle. Separate VAOs so they bind to this VBO.
@@ -274,63 +284,68 @@ void ObstacleSystem::initGL() {
   uploadKitMesh(outlineTrunk_,  trunkMesh.positions,  trunkMesh.normals,  trunkMesh.indices,  outlineInstanceVbo_);
   uploadKitMesh(outlineCanopy_, canopyMesh.positions, canopyMesh.normals, canopyMesh.indices, outlineInstanceVbo_);
   uploadKitMesh(outlineRock_,   rockMesh.positions,   rockMesh.normals,   rockMesh.indices,   outlineInstanceVbo_);
+  uploadKitMesh(outlineFence_,  fenceMesh.positions,  fenceMesh.normals,  fenceMesh.indices,  outlineInstanceVbo_);
 }
 
 void ObstacleSystem::rebuildFromMap(const shared::WorldMapFile& map) {
   std::vector<Instance> trees;
   std::vector<Instance> rocks;
+  std::vector<Instance> fences;
   trees.reserve(256);
   rocks.reserve(256);
+  fences.reserve(64);
 
   const int W = map.width;
   const int H = map.height;
   const auto& vh = map.vertexHeights;
   if (static_cast<int>(vh.size()) != (W + 1) * (H + 1)) return;
 
-  auto isTile = [&](int tx, int ty, shared::ObstacleType t) -> bool {
-    if (tx < 0 || ty < 0 || tx >= W || ty >= H) return false;
-    return map.tiles[ty][tx].obstacle == t;
-  };
-
   for (int ty = 0; ty < H; ++ty) {
     for (int tx = 0; tx < W; ++tx) {
       const auto& tile = map.tiles[ty][tx];
       if (tile.obstacle == shared::ObstacleType::none) continue;
 
+      const float y = tileCenterY(vh, W, H, tx, ty);
+
       if (tile.obstacle == shared::ObstacleType::tree) {
-        // One instance per tree tile, centred on the tile.
-        const float y = tileCenterY(vh, W, H, tx, ty);
-        Instance inst{ static_cast<float>(tx), y,
-                       static_cast<float>(ty),
-                       hashRotation(tx, ty) };
-        trees.push_back(inst);
+        trees.push_back({ static_cast<float>(tx), y,
+                          static_cast<float>(ty), hashRotation(tx, ty) });
       } else if (tile.obstacle == shared::ObstacleType::rock) {
-        const float y = tileCenterY(vh, W, H, tx, ty);
-        Instance inst{ static_cast<float>(tx), y, static_cast<float>(ty),
-                       hashRotation(tx, ty) };
-        rocks.push_back(inst);
+        rocks.push_back({ static_cast<float>(tx), y,
+                          static_cast<float>(ty), hashRotation(tx, ty) });
+      } else if (tile.obstacle == shared::ObstacleType::fence) {
+        fences.push_back({ static_cast<float>(tx), y,
+                           static_cast<float>(ty), hashRotation(tx, ty) });
       }
     }
   }
 
   // Clamp to the buffer capacity reserved in initGL.
-  if (trees.size() > 4096) trees.resize(4096);
-  if (rocks.size() > 4096) rocks.resize(4096);
+  if (trees.size()  > 4096) trees.resize(4096);
+  if (rocks.size()  > 4096) rocks.resize(4096);
+  if (fences.size() > 4096) fences.resize(4096);
 
-  const auto treeBytesz = static_cast<GLsizeiptr>(trees.size() * sizeof(Instance));
-  glNamedBufferSubData(treeInstanceVbo_, 0, treeBytesz, trees.data());
-  // The glTF VAOs read from treeGltfInstanceVbo_ (a separate buffer bound at
-  // load time). Keep it in sync so gltF trees render at the correct positions.
-  if (treeModelLoaded_ && treeGltfInstanceVbo_)
+  const auto treeBytesz  = static_cast<GLsizeiptr>(trees.size()  * sizeof(Instance));
+  const auto fenceBytesz = static_cast<GLsizeiptr>(fences.size() * sizeof(Instance));
+
+  if (treeBytesz > 0)
+    glNamedBufferSubData(treeInstanceVbo_, 0, treeBytesz, trees.data());
+  // The glTF VAOs read from treeGltfInstanceVbo_; keep it in sync.
+  if (treeModelLoaded_ && treeGltfInstanceVbo_ && treeBytesz > 0)
     glNamedBufferSubData(treeGltfInstanceVbo_, 0, treeBytesz, trees.data());
-  glNamedBufferSubData(rockInstanceVbo_, 0,
-                       static_cast<GLsizeiptr>(rocks.size() * sizeof(Instance)),
-                       rocks.data());
+  if (!rocks.empty())
+    glNamedBufferSubData(rockInstanceVbo_, 0,
+                         static_cast<GLsizeiptr>(rocks.size() * sizeof(Instance)),
+                         rocks.data());
+  if (fenceBytesz > 0)
+    glNamedBufferSubData(fenceInstanceVbo_, 0, fenceBytesz, fences.data());
 
-  treeCount_ = trees.size();
-  rockCount_ = rocks.size();
+  treeCount_  = trees.size();
+  rockCount_  = rocks.size();
+  fenceCount_ = fences.size();
 
-  std::fprintf(stdout, "[ObstacleSystem] %zu trees, %zu rocks\n", treeCount_, rockCount_);
+  std::fprintf(stdout, "[ObstacleSystem] %zu trees, %zu rocks, %zu fences\n",
+               treeCount_, rockCount_, fenceCount_);
 }
 
 void ObstacleSystem::render(render::Shader& obstacleShader) {
@@ -367,6 +382,12 @@ void ObstacleSystem::render(render::Shader& obstacleShader) {
     glDrawElementsInstanced(GL_TRIANGLES, rock_.indexCount, GL_UNSIGNED_INT,
                             nullptr, static_cast<GLsizei>(rockCount_));
   }
+  if (fenceCount_ > 0) {
+    obstacleShader.setVec3("u_color", fence_.color);
+    glBindVertexArray(fence_.vao);
+    glDrawElementsInstanced(GL_TRIANGLES, fence_.indexCount, GL_UNSIGNED_INT,
+                            nullptr, static_cast<GLsizei>(fenceCount_));
+  }
   glBindVertexArray(0);
 }
 
@@ -397,6 +418,11 @@ void ObstacleSystem::renderDepth(render::Shader& /*depthShader*/) {
     glDrawElementsInstanced(GL_TRIANGLES, rock_.indexCount, GL_UNSIGNED_INT,
                             nullptr, static_cast<GLsizei>(rockCount_));
   }
+  if (fenceCount_ > 0) {
+    glBindVertexArray(fence_.vao);
+    glDrawElementsInstanced(GL_TRIANGLES, fence_.indexCount, GL_UNSIGNED_INT,
+                            nullptr, static_cast<GLsizei>(fenceCount_));
+  }
   glBindVertexArray(0);
 }
 
@@ -405,13 +431,15 @@ bool ObstacleSystem::renderOutlineAt(render::Shader& outlineShader,
                                      int tileX, int tileY) {
   if (tileY < 0 || tileY >= map.height || tileX < 0 || tileX >= map.width) return false;
   const auto obs = map.tiles[tileY][tileX].obstacle;
-  if (obs != shared::ObstacleType::tree && obs != shared::ObstacleType::rock) return false;
+  if (obs == shared::ObstacleType::none ||
+      obs == shared::ObstacleType::fishing_spot) return false;
 
   const auto& vh = map.vertexHeights;
   if (static_cast<int>(vh.size()) != (map.width + 1) * (map.height + 1)) return false;
 
   const float cy = tileCenterY(vh, map.width, map.height, tileX, tileY);
-  const bool  isTree = (obs == shared::ObstacleType::tree);
+  const bool  isTree  = (obs == shared::ObstacleType::tree);
+  const bool  isFence = (obs == shared::ObstacleType::fence);
 
   // Upload the single-instance data into the appropriate outline VBO.
   // Instance position must match what rebuildFromMap uploaded:
@@ -448,7 +476,12 @@ bool ObstacleSystem::renderOutlineAt(render::Shader& outlineShader,
         glDrawElementsInstanced(GL_TRIANGLES, outlineCanopy_.indexCount,
                                 GL_UNSIGNED_INT, nullptr, 1);
       }
+    } else if (isFence) {
+      glBindVertexArray(outlineFence_.vao);
+      glDrawElementsInstanced(GL_TRIANGLES, outlineFence_.indexCount,
+                              GL_UNSIGNED_INT, nullptr, 1);
     } else {
+      // rock or chest — both use the rock Kit shape
       glBindVertexArray(outlineRock_.vao);
       glDrawElementsInstanced(GL_TRIANGLES, outlineRock_.indexCount,
                               GL_UNSIGNED_INT, nullptr, 1);

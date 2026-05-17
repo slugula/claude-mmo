@@ -261,6 +261,49 @@ void SkinnedMesh::render(render::Shader& shader, const glm::mat4& modelMatrix) {
   glBindVertexArray(0);
 }
 
+int SkinnedMesh::findClipIndex(const std::string& clipName) const {
+  for (size_t i = 0; i < model_.animations.size(); ++i) {
+    if (model_.animations[i].name == clipName) return static_cast<int>(i);
+  }
+  return -1;
+}
+
+void SkinnedMesh::renderAs(render::Shader& shader, const glm::mat4& modelMatrix,
+                           int clipIndex, float clipTime) {
+  if (primitives_.empty()) return;
+
+  // Temporarily override internal clip state, evaluate, render, restore.
+  const int    savedIndex = activeClipIndex_;
+  const float  savedTime  = clipTime_;
+  activeClipIndex_ = clipIndex;
+  // Wrap clip time to loop the animation.
+  if (clipIndex >= 0 && clipIndex < static_cast<int>(model_.animations.size())) {
+    const float dur = model_.animations[clipIndex].duration;
+    if (dur > 0.0f && clipTime > dur) {
+      clipTime -= dur * std::floor(clipTime / dur);
+    }
+  }
+  clipTime_ = clipTime;
+
+  evaluatePose();
+
+  // Restore immediately so the primary owner's state isn't corrupted.
+  activeClipIndex_ = savedIndex;
+  clipTime_        = savedTime;
+
+  shader.setMat4("u_model", modelMatrix);
+  const GLint loc = glGetUniformLocation(shader.id(), "u_jointMatrices");
+  if (loc >= 0) {
+    const int count = std::min(static_cast<int>(jointMatrices_.size()), kMaxJoints);
+    glUniformMatrix4fv(loc, count, GL_FALSE, glm::value_ptr(jointMatrices_[0]));
+  }
+  for (const auto& p : primitives_) {
+    glBindVertexArray(p.vao);
+    glDrawElements(GL_TRIANGLES, p.indexCount, GL_UNSIGNED_INT, nullptr);
+  }
+  glBindVertexArray(0);
+}
+
 const std::string* SkinnedMesh::animationNameAt(int idx) const {
   if (idx < 0 || idx >= static_cast<int>(model_.animations.size())) return nullptr;
   return &model_.animations[idx].name;

@@ -8,6 +8,7 @@
 // TODO(post-phase-11): replace these declarations with the output of a
 // TypeScript -> C++ codegen script.
 
+#include <array>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -30,7 +31,7 @@ enum class TileType {
 };
 
 enum class ObstacleType {
-  tree, rock, chest, fishing_spot, none,
+  tree, rock, chest, fishing_spot, fence, none,
 };
 
 // ---- TileData ------------------------------------------------------------
@@ -46,13 +47,25 @@ struct TileData {
   float        height       = 0.0f;
 };
 
-// ---- In-memory map (produced by MapGenerator) ----------------------------
+// ---- NPC spawn descriptor (used by the level editor + server) ------------
+
+struct NpcSpawn {
+  std::string kind;      // "chicken", "shopkeeper"
+  int         tileX = 0;
+  int         tileY = 0;
+};
+
+// ---- In-memory map (produced by MapGenerator or loaded from JSON) --------
 
 struct WorldMapFile {
   int                                width  = 0;
   int                                height = 0;
   std::vector<std::vector<TileData>> tiles;
   std::vector<float>                 vertexHeights;
+  // Editor-authored fields (present in saved maps; default-constructed when
+  // the map is generated procedurally by the client).
+  std::array<int, 2>                 spawnPoint  = {32, 32};
+  std::vector<NpcSpawn>              npcSpawns;
 };
 
 // =====================================================================

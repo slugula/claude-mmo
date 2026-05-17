@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.25)
 
 project(osrs-prototype-client
   LANGUAGES CXX C
-  DESCRIPTION "Native OpenGL 4.6 client for the OSRS-inspired MMO prototype"
+  DESCRIPTION "Native OpenGL 4.6 client + level editor for the OSRS-inspired MMO prototype"
 )
 
 set(CMAKE_CXX_STANDARD 20)
@@ -23,23 +23,21 @@ find_path(CGLTF_INCLUDE_DIR    cgltf.h     REQUIRED)
 # miniaudio ships the same way — header only.
 find_path(MINIAUDIO_INCLUDE_DIR miniaudio.h REQUIRED)
 
-# ---- Main executable --------------------------------------------------------
+# ---- Shared rendering / world / camera static library ----------------------
+#
+# Both client-native and level-editor link this. It contains everything that
+# does NOT depend on networking (ixwebsocket) or the game client UI.
 
-add_executable(client-native
-  src/main.cpp
-  src/app/App.cpp
+add_library(game_core STATIC
   src/app/Window.cpp
   src/audio/AudioEngine.cpp
   src/camera/GameCamera.cpp
   src/input/Picker.cpp
-  src/net/NetworkClient.cpp
   src/render/GlDebug.cpp
   src/render/Mesh.cpp
   src/render/MsaaFramebuffer.cpp
   src/render/Shader.cpp
   src/render/ShadowMap.cpp
-  src/ui/Panels.cpp
-  src/ui/WorldOverlays.cpp
   src/world/EntityRenderer.cpp
   src/world/GltfLoader.cpp
   src/world/MapGenerator.cpp
@@ -48,19 +46,40 @@ add_executable(client-native
   src/world/TerrainBuilder.cpp
 )
 
-target_include_directories(client-native PRIVATE
+target_include_directories(game_core PUBLIC
   src
   ${CGLTF_INCLUDE_DIR}
   ${MINIAUDIO_INCLUDE_DIR}
 )
 
-target_link_libraries(client-native PRIVATE
+target_link_libraries(game_core PUBLIC
   glfw
   glad::glad
   glm::glm
   glaze::glaze
-  ixwebsocket::ixwebsocket
   imgui::imgui
+)
+
+if (MSVC)
+  target_compile_options(game_core PRIVATE
+    /W4 /permissive- /Zc:preprocessor
+    $<$<CONFIG:Release>:/O2>
+  )
+endif()
+
+# ---- Game client executable ------------------------------------------------
+
+add_executable(client-native
+  src/main.cpp
+  src/app/App.cpp
+  src/net/NetworkClient.cpp
+  src/ui/Panels.cpp
+  src/ui/WorldOverlays.cpp
+)
+
+target_link_libraries(client-native PRIVATE
+  game_core
+  ixwebsocket::ixwebsocket
 )
 
 # ixwebsocket pulls in mbedtls for TLS; mbedtls's entropy_poll on Windows uses
@@ -80,13 +99,6 @@ if (MSVC)
   )
 endif()
 
-# ---- Copy shaders + assets next to the exe -------------------------------
-#
-# Map files are NOT copied: the world is generated procedurally in-process
-# (see src/world/MapGenerator.cpp). Map I/O is deferred until after Phase 11.
-# `assets/` holds player.glb (and future models) — copied so the exe can
-# load relative to its own directory regardless of CWD.
-
 add_custom_command(TARGET client-native POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:client-native>/shaders
   COMMAND ${CMAKE_COMMAND} -E copy_directory
@@ -96,5 +108,38 @@ add_custom_command(TARGET client-native POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E copy_directory
     ${CMAKE_CURRENT_SOURCE_DIR}/assets
     $<TARGET_FILE_DIR:client-native>/assets
-  COMMENT "Copying shaders + assets to build output"
+  COMMENT "Copying shaders + assets to client-native build output"
+)
+
+# ---- Level editor executable -----------------------------------------------
+
+add_executable(level-editor
+  src/editor/main.cpp
+  src/editor/EditorApp.cpp
+  src/editor/MinimapRenderer.cpp
+  src/editor/UndoStack.cpp
+)
+
+target_link_libraries(level-editor PRIVATE game_core)
+
+if (MSVC)
+  target_compile_options(level-editor PRIVATE
+    /W4 /permissive- /Zc:preprocessor
+    $<$<CONFIG:Release>:/O2>
+  )
+  set_target_properties(level-editor PROPERTIES
+    VS_DEBUGGER_WORKING_DIRECTORY "$<TARGET_FILE_DIR:level-editor>"
+  )
+endif()
+
+add_custom_command(TARGET level-editor POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:level-editor>/shaders
+  COMMAND ${CMAKE_COMMAND} -E copy_directory
+    ${CMAKE_CURRENT_SOURCE_DIR}/shaders
+    $<TARGET_FILE_DIR:level-editor>/shaders
+  COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:level-editor>/assets
+  COMMAND ${CMAKE_COMMAND} -E copy_directory
+    ${CMAKE_CURRENT_SOURCE_DIR}/assets
+    $<TARGET_FILE_DIR:level-editor>/assets
+  COMMENT "Copying shaders + assets to level-editor build output"
 )

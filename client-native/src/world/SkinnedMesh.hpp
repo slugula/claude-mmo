@@ -56,6 +56,15 @@ public:
   // are set by the caller; we only set u_model + u_jointMatrices here.
   void render(render::Shader& shader, const glm::mat4& modelMatrix);
 
+  // Render with an externally-managed clip state — does NOT modify the
+  // internal activeClip_/clipTime_. Used for remote players that each need
+  // independent animation state without owning a separate SkinnedMesh.
+  void renderAs(render::Shader& shader, const glm::mat4& modelMatrix,
+                int clipIndex, float clipTime);
+
+  // Lookup a clip index by name. Returns -1 if not found.
+  int findClipIndex(const std::string& clipName) const;
+
   bool isLoaded()              const { return !primitives_.empty(); }
   const std::string& clipName() const { return activeClip_; }
   int  jointCount()            const { return static_cast<int>(model_.joints.size()); }

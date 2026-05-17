@@ -57,8 +57,9 @@ public:
                        const shared::WorldMapFile& map,
                        int tileX, int tileY);
 
-  std::size_t treeCount() const { return treeCount_; }
-  std::size_t rockCount() const { return rockCount_; }
+  std::size_t treeCount()  const { return treeCount_;  }
+  std::size_t rockCount()  const { return rockCount_;  }
+  std::size_t fenceCount() const { return fenceCount_; }
 
   // Axis-aligned bounding box of the gltf tree model in world space (after
   // applying kScaleXZ/kScaleY). Valid only when treeModelLoaded() is true.
@@ -88,14 +89,17 @@ private:
   Kit trunk_;
   Kit canopy_;
   Kit rock_;
+  Kit fence_;
 
-  GLuint treeInstanceVbo_ = 0;  // shared between trunk and canopy VAOs
-  GLuint rockInstanceVbo_ = 0;
+  GLuint treeInstanceVbo_  = 0;  // shared between trunk and canopy VAOs
+  GLuint rockInstanceVbo_  = 0;
+  GLuint fenceInstanceVbo_ = 0;
   // Single-instance VBO for outline rendering of one obstacle at a time.
   GLuint outlineInstanceVbo_ = 0;
   Kit    outlineTrunk_;   // VAOs bound to outlineInstanceVbo_
   Kit    outlineCanopy_;
   Kit    outlineRock_;
+  Kit    outlineFence_;
 
   // Optional glTF tree model (replaces procedural trunk+canopy when loaded).
   // Each instance sits at the centre of a 2×2 tile block.
@@ -109,8 +113,9 @@ private:
   glm::vec3 treeGltfAABBMin_   = glm::vec3(-0.45f, 0.0f, -0.45f);  // fallback = procedural bounds
   glm::vec3 treeGltfAABBMax_   = glm::vec3( 0.45f, 1.6f,  0.45f);
 
-  std::size_t treeCount_ = 0;
-  std::size_t rockCount_ = 0;
+  std::size_t treeCount_  = 0;
+  std::size_t rockCount_  = 0;
+  std::size_t fenceCount_ = 0;
 };
 
 }  // namespace world
