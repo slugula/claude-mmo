@@ -5,6 +5,8 @@
 
 #include "world/WaterRenderer.hpp"
 
+#include <algorithm>
+#include <cmath>
 #include <cstdio>
 
 namespace world {
@@ -27,6 +29,36 @@ static GLuint makeFlatNormalMap() {
   glTextureParameteri(tex, GL_TEXTURE_WRAP_S, GL_REPEAT);
   glTextureParameteri(tex, GL_TEXTURE_WRAP_T, GL_REPEAT);
   glTextureParameteri(tex, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTextureParameteri(tex, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  return tex;
+}
+
+// ---------------------------------------------------------------------------
+// Procedural fallback caustic texture — 64×64 single-channel sin-interference
+// pattern, similar to the procedural shader formula but baked to a texture so
+// the GPU code stays identical whether a real caustic image is loaded or not.
+// ---------------------------------------------------------------------------
+static GLuint makeFallbackCausticTex() {
+  constexpr int SZ = 64;
+  unsigned char data[SZ * SZ];
+  for (int y = 0; y < SZ; ++y) {
+    for (int x = 0; x < SZ; ++x) {
+      const float fx = static_cast<float>(x) / SZ;
+      const float fy = static_cast<float>(y) / SZ;
+      const float c1 = std::abs(std::sin(fx * 3.14159f * 8.0f + fy * 3.14159f * 4.8f));
+      const float c2 = std::abs(std::sin(fx * 3.14159f * 5.2f - fy * 3.14159f * 7.8f));
+      const float v  = std::pow(c1 * c2, 1.8f);
+      data[y * SZ + x] = static_cast<unsigned char>(std::min(v, 1.0f) * 255.0f);
+    }
+  }
+  GLuint tex = 0;
+  glCreateTextures(GL_TEXTURE_2D, 1, &tex);
+  glTextureStorage2D(tex, 4, GL_R8, SZ, SZ);
+  glTextureSubImage2D(tex, 0, 0, 0, SZ, SZ, GL_RED, GL_UNSIGNED_BYTE, data);
+  glGenerateTextureMipmap(tex);
+  glTextureParameteri(tex, GL_TEXTURE_WRAP_S, GL_REPEAT);
+  glTextureParameteri(tex, GL_TEXTURE_WRAP_T, GL_REPEAT);
+  glTextureParameteri(tex, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
   glTextureParameteri(tex, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
   return tex;
 }
@@ -63,13 +95,45 @@ bool WaterRenderer::init(const std::string& vertPath,
     normalMapTex_ = makeFlatNormalMap();
   }
 
+  // Caustic texture starts as the procedural fallback; caller can upgrade it
+  // later via loadCausticMap().
+  causticTex_ = makeFallbackCausticTex();
+
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+bool WaterRenderer::loadCausticMap(const std::string& path) {
+  int w = 0, h = 0, ch = 0;
+  stbi_set_flip_vertically_on_load(0);
+  unsigned char* pixels = stbi_load(path.c_str(), &w, &h, &ch, 1);
+  if (!pixels || w <= 0 || h <= 0) {
+    std::fprintf(stderr, "[WaterRenderer] caustic map load failed: %s\n", path.c_str());
+    return false;
+  }
+  if (causticTex_) { glDeleteTextures(1, &causticTex_); causticTex_ = 0; }
+  const int mips = 1 + static_cast<int>(std::log2(static_cast<float>(std::max(w, h))));
+  glCreateTextures(GL_TEXTURE_2D, 1, &causticTex_);
+  glTextureStorage2D(causticTex_, mips, GL_R8, w, h);
+  glTextureSubImage2D(causticTex_, 0, 0, 0, w, h, GL_RED, GL_UNSIGNED_BYTE, pixels);
+  glGenerateTextureMipmap(causticTex_);
+  glTextureParameteri(causticTex_, GL_TEXTURE_WRAP_S, GL_REPEAT);
+  glTextureParameteri(causticTex_, GL_TEXTURE_WRAP_T, GL_REPEAT);
+  glTextureParameteri(causticTex_, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+  glTextureParameteri(causticTex_, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  stbi_image_free(pixels);
+  hasCausticMap_ = true;
+  std::fprintf(stderr, "[WaterRenderer] loaded caustic map %s (%dx%d)\n",
+               path.c_str(), w, h);
   return true;
 }
 
 // ---------------------------------------------------------------------------
 void WaterRenderer::destroy() {
   mesh_.destroy();
+  if (causticTex_)   { glDeleteTextures(1, &causticTex_);   causticTex_   = 0; }
   if (normalMapTex_) { glDeleteTextures(1, &normalMapTex_); normalMapTex_ = 0; }
+  hasCausticMap_ = false;
 }
 
 // ---------------------------------------------------------------------------
@@ -111,12 +175,15 @@ void WaterRenderer::render(float time,
   shader_.setVec3 ("uFoamColor",        u.foamColor);
 
   // Textures
-  shader_.setInt("uNormalMap",  0);
-  shader_.setInt("uSceneColor", 1);
-  shader_.setInt("uSceneDepth", 2);
+  shader_.setInt  ("uNormalMap",      0);
+  shader_.setInt  ("uSceneColor",     1);
+  shader_.setInt  ("uSceneDepth",     2);
+  shader_.setInt  ("uCausticMap",     3);
+  shader_.setFloat("uUseCausticMap",  hasCausticMap_ ? 1.0f : 0.0f);
   glBindTextureUnit(0, normalMapTex_);
   glBindTextureUnit(1, sceneColorTex);
   glBindTextureUnit(2, sceneDepthTex);
+  glBindTextureUnit(3, causticTex_);
 
   mesh_.draw();
 }

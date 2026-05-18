@@ -20,8 +20,8 @@ struct WaterUniforms {
   float     waveSpeed       = 0.40f;
   float     waveHeight      = 0.08f;
   float     normalStrength  = 0.60f;
-  float     reflectStrength = 0.50f;
-  float     causticIntensity= 0.30f;
+  float     reflectStrength = 0.60f;
+  float     causticIntensity= 0.00f;
   float     foamDepth       = 0.50f;  // world-unit depth range for intersection foam
   // ---- Advanced ----
   float     waveScale       = 2.00f;
@@ -32,7 +32,7 @@ struct WaterUniforms {
   float     foamScale       = 8.00f;
   float     parallaxDepth   = 0.04f;
   // waterOffset is in world units; also used by EditorApp banking.
-  float     waterOffset     = 0.15f;
+  float     waterOffset     = 0.00f;
 };
 
 // Owns the water shader, normal-map GL texture, and WaterMesh.
@@ -55,6 +55,10 @@ public:
             const std::string& normalMapPath);
   void destroy();
 
+  // Load (or reload) a caustic texture from a PNG file.
+  // Returns true on success. Falls back to the procedural caustic on failure.
+  bool loadCausticMap(const std::string& path);
+
   void rebuild(const shared::WorldMapFile& map, float waterOffset);
 
   // Render water on top of the already-drawn scene.
@@ -74,7 +78,9 @@ public:
 private:
   WaterMesh      mesh_;
   render::Shader shader_;
-  GLuint         normalMapTex_ = 0;
+  GLuint         normalMapTex_  = 0;
+  GLuint         causticTex_    = 0;
+  bool           hasCausticMap_ = false;  // true once a file has been loaded
 };
 
 }  // namespace world

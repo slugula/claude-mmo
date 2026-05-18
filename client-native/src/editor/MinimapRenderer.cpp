@@ -105,6 +105,15 @@ void MinimapRenderer::rebuild(const shared::WorldMapFile& map,
     }
   }
 
+  // ---- Water tiles (blue squares, drawn over terrain) ----------------------
+  for (const auto& wt : map.waterTiles) {
+    if (wt.tileX < 0 || wt.tileY < 0 ||
+        wt.tileX >= map.width || wt.tileY >= map.height) continue;
+    const int px = wt.tileX * kPxPerTile;
+    const int py = wt.tileY * kPxPerTile;
+    fillRect(px, py, kPxPerTile, kPxPerTile, 38, 102, 204);
+  }
+
   // ---- NPC markers (2×2 pixel dot in the centre of the tile block) --------
   for (const auto& npc : npcs) {
     const int px = npc.tileX * kPxPerTile + kPxPerTile / 2 - 1;

@@ -644,6 +644,23 @@ void EditorApp::drawWaterSettings() {
     // When waterOffset changes, rebuild water mesh (water Y changes)
     if (u.waterOffset != prevOff)
       waterRenderer_.rebuild(map_, u.waterOffset);
+
+    ImGui::Separator();
+    ImGui::TextDisabled("Caustic texture");
+    if (ImGui::Button("Load Caustic Map...", ImVec2(-1, 0))) {
+      const std::wstring wpath = winOpenDialog();
+      if (!wpath.empty()) {
+        // Convert wide path to narrow UTF-8 string for stbi_load
+        const int sz = WideCharToMultiByte(CP_UTF8, 0, wpath.c_str(), -1,
+                                           nullptr, 0, nullptr, nullptr);
+        std::string path(static_cast<std::size_t>(sz), '\0');
+        WideCharToMultiByte(CP_UTF8, 0, wpath.c_str(), -1,
+                            path.data(), sz, nullptr, nullptr);
+        waterRenderer_.loadCausticMap(path);
+      }
+    }
+    ImGui::TextDisabled("(PNG, scrolls in two");
+    ImGui::TextDisabled(" directions for anim)");
   }
 }
 

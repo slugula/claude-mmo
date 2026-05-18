@@ -8,6 +8,7 @@ in vec4  vClipPos;
 uniform sampler2D uNormalMap;   // unit 0
 uniform sampler2D uSceneColor;  // unit 1 — resolved FBO before water pass
 uniform sampler2D uSceneDepth;  // unit 2 — resolved depth before water pass (for foam)
+uniform sampler2D uCausticMap;  // unit 3 — caustic texture (or procedural fallback)
 
 uniform float uTime;
 uniform float uWaveSpeed;
@@ -17,6 +18,7 @@ uniform float uReflectStrength;
 uniform float uCausticIntensity;
 uniform float uCausticScale;
 uniform float uCausticSpeed;
+uniform float uUseCausticMap;   // 1.0 = sample uCausticMap, 0.0 = procedural
 uniform float uFoamDepth;    // world units — intersection zone where foam appears
 uniform float uFoamSpeed;
 uniform float uFoamScale;
@@ -28,14 +30,26 @@ uniform vec3  uFoamColor;
 out vec4 fragColor;
 
 // ---------------------------------------------------------------------------
-// Procedural caustics: interference of two sine waves
+// Caustics: texture-based (when uCausticMap loaded) or procedural fallback.
+// Both animate by scrolling two UV sets in different directions.
 // ---------------------------------------------------------------------------
 float causticPattern(vec2 uv, float t) {
-    vec2 d1 = vec2(0.8, 0.6);
-    vec2 d2 = vec2(-0.5, 0.9);
-    float c1 = abs(sin(dot(uv * uCausticScale + t * uCausticSpeed, d1)));
-    float c2 = abs(sin(dot(uv * uCausticScale * 1.3 - t * uCausticSpeed * 0.7, d2)));
-    return pow(c1 * c2, 2.0) * uCausticIntensity;
+    vec2 cuv1 = uv * uCausticScale + t * uCausticSpeed * vec2( 0.8,  0.6);
+    vec2 cuv2 = uv * uCausticScale * 1.3 - t * uCausticSpeed * vec2(-0.5,  0.9) * 0.7;
+    float c1, c2;
+    if (uUseCausticMap > 0.5) {
+        // Sample the user-supplied caustic image at two scrolling UVs
+        c1 = texture(uCausticMap, cuv1).r;
+        c2 = texture(uCausticMap, cuv2).r;
+        return pow(c1 * c2, 1.5) * uCausticIntensity;
+    } else {
+        // Procedural: abs(sin) interference
+        vec2 d1 = vec2(0.8, 0.6);
+        vec2 d2 = vec2(-0.5, 0.9);
+        c1 = abs(sin(dot(cuv1, d1)));
+        c2 = abs(sin(dot(cuv2, d2)));
+        return pow(c1 * c2, 2.0) * uCausticIntensity;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -92,6 +106,11 @@ void main() {
     // Sample the pre-water terrain depth at this screen pixel (unperturbed UV).
     // Linearise both depths and compute the world-space gap. Where the terrain
     // surface is within uFoamDepth units of the water surface, draw foam.
+    //
+    // The depth gap alone is insufficient: when waterOffset=0 the carved floor
+    // sits at the same Y as the water surface, so depth≈0 everywhere and foam
+    // floods the whole body. Multiplying by smoothstep(shore_weight) gates foam
+    // to boundary tiles only (shore_weight=0 in open water → no foam there).
     float sceneD  = texture(uSceneDepth, screenUV).r;
     float waterD  = gl_FragCoord.z;
     float sceneL  = linearDepth(sceneD);
@@ -100,6 +119,8 @@ void main() {
     float foamFactor = (depthGap > 0.0)
                      ? (1.0 - smoothstep(0.0, uFoamDepth, depthGap))
                      : 0.0;
+    // Gate to the shoreline: open-water tiles (vShoreWeight≈0) get no foam.
+    foamFactor *= smoothstep(0.0, 0.35, vShoreWeight);
     float foam = foamFactor * foamNoise(vUV, uTime);
     waterColor = mix(waterColor, uFoamColor, foam);
 
