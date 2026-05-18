@@ -309,4 +309,9 @@ const std::string* SkinnedMesh::animationNameAt(int idx) const {
   return &model_.animations[idx].name;
 }
 
+float SkinnedMesh::clipDuration(int idx, float fallback) const {
+  if (idx < 0 || idx >= static_cast<int>(model_.animations.size())) return fallback;
+  return model_.animations[idx].duration;
+}
+
 }  // namespace world

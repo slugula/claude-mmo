@@ -108,7 +108,7 @@ struct SkillState {
 struct PlayerState {
   int                                          tileX          = 0;
   int                                          tileY          = 0;
-  std::string                                  facing;          // "north" / "south" / "east" / "west"
+  std::string                                  facing;          // cardinal + intercardinal: "north" / "north_east" / "east" / ... / "north_west"
   std::vector<GridPosition>                    path;
   int                                          destinationX   = 0;
   int                                          destinationY   = 0;
@@ -129,6 +129,9 @@ struct PlayerState {
   // value rises monotonically when the server validates an attack / chop.
   int                                          lastAttackTick  = -999;
   int                                          lastChopTick    = -999;
+  // Non-empty while the server has a pending pick-up queued for this player.
+  // Transitions from non-empty → empty indicate a completed pickup.
+  std::string                                  pickupItemId;
 };
 
 // Partial NPCState — enough to render at the right place + face.

@@ -112,6 +112,15 @@ private:
     int   clipIndex = -1;   // index into playerModel_ animations
     float clipTime  = 0.0f;
     float yaw       = 0.0f; // smoothed yaw
+    // One-shot animation override (mirrors local oneShotClip_ / oneShotEndsAt_).
+    // While oneShotEndsAt is in the future, the one-shot clip overrides clipForPlayer.
+    std::string                           oneShotClip;
+    std::chrono::steady_clock::time_point oneShotEndsAt{};
+    // Tick stamps to detect per-tick action events for this remote player.
+    int   seenAttackTick   = -999;
+    int   seenChopTick     = -999;
+    int   seenHitTick      = -999;
+    bool  prevPickupActive = false;  // was pickupItemId non-empty last tick?
   };
   std::unordered_map<std::string, shared::PlayerState> prevRemotePlayers_;
   std::unordered_map<std::string, shared::PlayerState> currRemotePlayers_;
@@ -135,9 +144,10 @@ private:
   // Phase 5e — one-shot player animations. While `oneShotEndsAt_` is in
   // the future, clipForPlayer returns `oneShotClip_` regardless of the
   // movement state. Triggered when lastAttackTick / lastChopTick rises.
-  int                                      seenAttackTick_ = -999;
-  int                                      seenChopTick_   = -999;
-  int                                      seenHitTick_    = -999;
+  int                                      seenAttackTick_    = -999;
+  int                                      seenChopTick_      = -999;
+  int                                      seenHitTick_       = -999;
+  bool                                     prevPickupActive_  = false; // was pickupItemId non-empty last tick?
   // Per-equip-slot snapshot for detecting equip/unequip events vs the
   // previous PlayerState. Key = equip slot id, value = itemId; missing
   // entries are unequipped.

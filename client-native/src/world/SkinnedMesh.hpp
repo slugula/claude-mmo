@@ -71,6 +71,8 @@ public:
   int  animationCount()        const { return static_cast<int>(model_.animations.size()); }
   // Returns nullptr if outside the range.
   const std::string* animationNameAt(int idx) const;
+  // Duration of clip at `idx` in seconds. Returns `fallback` if idx is invalid.
+  float clipDuration(int idx, float fallback = 0.6f) const;
 
 private:
   struct PrimitiveGl {

@@ -139,11 +139,21 @@ float facingToYaw(const std::string& facing) {
   return 0.0f;
 }
 
-// Choose the animation clip name for a given player's current state.
+// Choose the base animation clip for a player's current movement state.
+// One-shot overrides (attack, hit, pickup) are applied by the caller on top.
 const char* clipForPlayer(const shared::PlayerState* p) {
   if (!p) return "Idle_Loop";
   if (p->dying)        return "Death01";
   if (p->path.empty()) return "Idle_Loop";
+
+  // Single remaining step that is purely cardinal (orthogonal) → Walk_Loop.
+  // This covers both "click one tile away" and "the last step of a longer
+  // diagonal path that ends with a cardinal tile".
+  if (p->path.size() == 1) {
+    const int dx = p->path[0].x - p->tileX;
+    const int dy = p->path[0].y - p->tileY;
+    if (dx == 0 || dy == 0) return "Walk_Loop";
+  }
   return "Sprint_Loop";
 }
 }  // namespace
@@ -811,19 +821,21 @@ void App::renderFrame() {
       const float yawK = 1.0f - std::exp(-dt / 0.08f);
       ra.yaw += delta * yawK;
 
-      // --- Independent animation ---
-      const char* desiredClip = clipForPlayer(&rp);
+      // --- Independent animation (one-shot override mirrors local player) ---
+      const auto nowAnim = std::chrono::steady_clock::now();
+      const char* desiredClip;
+      if (!ra.oneShotClip.empty() && nowAnim < ra.oneShotEndsAt) {
+        desiredClip = ra.oneShotClip.c_str();
+      } else {
+        if (!ra.oneShotClip.empty()) ra.oneShotClip.clear();
+        desiredClip = clipForPlayer(&rp);
+      }
       const int wantIdx = playerModel_.findClipIndex(desiredClip);
       if (wantIdx != ra.clipIndex) {
         ra.clipIndex = wantIdx;
         ra.clipTime  = 0.0f;
       }
       ra.clipTime += dt;
-      // Wrap clip time (get duration from model).
-      if (ra.clipIndex >= 0) {
-        const auto* animName = playerModel_.animationNameAt(ra.clipIndex);
-        (void)animName; // duration clamping handled inside renderAs's evaluatePose
-      }
 
       glm::mat4 rpModel = glm::translate(glm::mat4(1.0f), glm::vec3(fx, rpWorldY, fy));
       rpModel = glm::rotate(rpModel, ra.yaw, glm::vec3(0.0f, 1.0f, 0.0f));
@@ -1857,12 +1869,53 @@ void App::processNetworkMessages() {
       currNpcs_.clear();
       currNpcs_.reserve(npcs_.size());
       for (const auto& n : npcs_) currNpcs_.emplace(n.id, n);
-      // Remote player interpolation snapshots.
+      // Remote player interpolation snapshots + one-shot animation triggers.
       prevRemotePlayers_ = currRemotePlayers_;
       currRemotePlayers_.clear();
-      for (const auto& [id, ps] : st.players) {
-        if (id == network_.playerId()) continue;
-        currRemotePlayers_.emplace(id, ps);
+      {
+        const auto nowRem = std::chrono::steady_clock::now();
+        // Helper: compute one-shot deadline from clip name.
+        auto remDurMs = [&](const char* name) -> std::chrono::milliseconds {
+          const int idx = playerModel_.findClipIndex(name);
+          return std::chrono::milliseconds(
+            static_cast<int>(playerModel_.clipDuration(idx, 0.6f) * 1000.0f));
+        };
+
+        for (const auto& [id, ps] : st.players) {
+          if (id == network_.playerId()) continue;
+          currRemotePlayers_.emplace(id, ps);
+
+          auto& ra = remoteAnims_[id];
+          const auto prevIt = prevRemotePlayers_.find(id);
+
+          // Attack → Sword_Attack (lower priority).
+          if (ps.lastAttackTick > ra.seenAttackTick) {
+            ra.seenAttackTick = ps.lastAttackTick;
+            ra.oneShotClip    = "Sword_Attack";
+            ra.oneShotEndsAt  = nowRem + remDurMs("Sword_Attack");
+          }
+          // Chop → Sword_Attack (overwrites attack if both fire same tick).
+          if (ps.lastChopTick > ra.seenChopTick) {
+            ra.seenChopTick  = ps.lastChopTick;
+            ra.oneShotClip   = "Sword_Attack";
+            ra.oneShotEndsAt = nowRem + remDurMs("Sword_Attack");
+          }
+          // Hit → Hit_Chest (highest one-shot priority; overrides above).
+          if (ps.lastHitTick > ra.seenHitTick) {
+            ra.seenHitTick = ps.lastHitTick;
+            if (ps.lastHitDamage > 0) {
+              ra.oneShotClip   = "Hit_Chest";
+              ra.oneShotEndsAt = nowRem + remDurMs("Hit_Chest");
+            }
+          }
+          // Pickup completed: pickupItemId just cleared → PickUp_Table.
+          const bool pickupNow = !ps.pickupItemId.empty();
+          if (ra.prevPickupActive && !pickupNow && ra.oneShotClip.empty()) {
+            ra.oneShotClip   = "PickUp_Table";
+            ra.oneShotEndsAt = nowRem + remDurMs("PickUp_Table");
+          }
+          ra.prevPickupActive = pickupNow;
+        }
       }
       // Items don't move per tick — snap them.
       entities_.rebuildItems(droppedItems_, map_);
@@ -1893,25 +1946,42 @@ void App::processNetworkMessages() {
         // when the server-authoritative tick stamp moves forward, so
         // late state arrivals or rewinds can't double-fire the clip.
         const auto& cp = *currLocalPlayer_;
+        // Helper lambda: resolve clip duration (or fall back to 0.6 s).
+        auto oneShotDurMs = [&](const char* name) -> int {
+          const int idx = playerModel_.findClipIndex(name);
+          return static_cast<int>(playerModel_.clipDuration(idx, 0.6f) * 1000.0f);
+        };
+
+        // Attack — Sword_Attack, lower priority than hit.
         if (cp.lastAttackTick > seenAttackTick_) {
           seenAttackTick_ = cp.lastAttackTick;
           oneShotClip_    = "Sword_Attack";
-          oneShotEndsAt_  = lastTickTime_ + std::chrono::milliseconds(600);
+          oneShotEndsAt_  = lastTickTime_ + std::chrono::milliseconds(oneShotDurMs("Sword_Attack"));
           audio_.playStrike();
         }
+        // Woodcutting — also plays Sword_Attack (axe swing).
         if (cp.lastChopTick > seenChopTick_) {
-          seenChopTick_   = cp.lastChopTick;
-          oneShotClip_    = "Chop";  // SkinnedMesh falls back to current
-                                      // clip when the name isn't found, so
-                                      // missing asset isn't fatal.
-          oneShotEndsAt_  = lastTickTime_ + std::chrono::milliseconds(600);
+          seenChopTick_  = cp.lastChopTick;
+          oneShotClip_   = "Sword_Attack";
+          oneShotEndsAt_ = lastTickTime_ + std::chrono::milliseconds(oneShotDurMs("Sword_Attack"));
         }
-        // Hit splat / damage event: server bumps lastHitTick when something
-        // hits us.
+        // Hit / flinch — Hit_Chest overrides attack if both fire same tick.
         if (cp.lastHitTick > seenHitTick_) {
           seenHitTick_ = cp.lastHitTick;
-          if (cp.lastHitDamage > 0) audio_.playHit();
+          if (cp.lastHitDamage > 0) {
+            audio_.playHit();
+            oneShotClip_   = "Hit_Chest";
+            oneShotEndsAt_ = lastTickTime_ + std::chrono::milliseconds(oneShotDurMs("Hit_Chest"));
+          }
         }
+        // Pickup completed: pickupItemId just cleared → play PickUp_Table
+        // only if nothing else is already happening this tick.
+        const bool pickupActive = !cp.pickupItemId.empty();
+        if (prevPickupActive_ && !pickupActive && oneShotClip_.empty()) {
+          oneShotClip_   = "PickUp_Table";
+          oneShotEndsAt_ = lastTickTime_ + std::chrono::milliseconds(oneShotDurMs("PickUp_Table"));
+        }
+        prevPickupActive_ = pickupActive;
         // Equip / unequip detection: diff the new equipped map against the
         // last snapshot. New / changed entries -> equip; missing entries
         // -> unequip. First state primes the snapshot silently.
