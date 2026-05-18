@@ -757,6 +757,15 @@ void App::renderFrame() {
     }
   }
 
+  // ---- SSR snapshot — resolve BEFORE outlines so water doesn't reflect
+  //      tile/entity outlines (they're decorative UI, not world geometry).
+  if (!map_.waterTiles.empty() && waterRenderer_.valid()) {
+    msaa_->resolve();
+    msaa_->resolveDepth();
+    msaa_->bind();
+    glViewport(0, 0, fbW, fbH);
+  }
+
   // ---- Wireframe grid overlay ------------------------------------------------
   if (wireframe_) {
     wireframeShader_.use();
@@ -844,14 +853,10 @@ void App::renderFrame() {
     }
   }
 
-  // ---- Water pass (after all opaque geometry) --------------------------------
-  // Resolve colour for SSR and depth for foam, then draw water back into the
-  // MSAA FBO so it composites correctly with the rest of the scene.
+  // ---- Water pass (after all opaque geometry + outlines) --------------------
+  // SSR snapshot was already taken above (before outlines) so water reflects
+  // terrain/entities but NOT the hover/selection outlines.
   if (!map_.waterTiles.empty() && waterRenderer_.valid()) {
-    msaa_->resolve();       // colour snapshot for screen-space reflection
-    msaa_->resolveDepth();  // depth snapshot (currently unused but kept for foam)
-    msaa_->bind();
-    glViewport(0, 0, fbW, fbH);
     waterRenderer_.render(
         static_cast<float>(glfwGetTime()),
         viewProj,
@@ -883,10 +888,101 @@ void App::renderFrame() {
     ui::drawBankPanel (*currLocalPlayer_, &network_, &bankOpen_);
     chatLog_.draw     (&network_);
 
-    overlays_.drawWithHeight(
-        viewProj, fbW, fbH,
-        currLocalPlayer_, npcs_,
-        [this](int tx, int ty) { return tileWorldY(map_, tx, ty); });
+    // ---- Build overlay entries from per-frame interpolated positions -------
+    // All positions are lerped with the same tick alpha used for entity render,
+    // so health bars and chat bubbles track the animated models exactly.
+    {
+      const auto  nowOv  = std::chrono::steady_clock::now();
+      const auto  dtMsOv = std::chrono::duration_cast<std::chrono::milliseconds>(
+                               nowOv - lastTickTime_).count();
+      const float tickAlpha = std::clamp(
+          static_cast<float>(dtMsOv) / static_cast<float>(shared::kTickDurationMs),
+          0.0f, 1.0f);
+
+      // Chat-bubble alpha: visible for 50 ticks, fades over last 10
+      auto chatAlphaFor = [&](const std::string& msg, int msgTick) -> float {
+        if (msg.empty() || msgTick <= 0) return 0.0f;
+        const int age = currentTick_ - msgTick;
+        if (age < 0 || age > 50) return 0.0f;
+        return (age > 40) ? 1.0f - static_cast<float>(age - 40) / 10.0f : 1.0f;
+      };
+
+      // --- Local player entry ---
+      ui::WorldOverlays::OverlayEntry localEntry;
+      {
+        float lx = static_cast<float>(currLocalPlayer_->tileX);
+        float lz = static_cast<float>(currLocalPlayer_->tileY);
+        if (prevLocalPlayer_) {
+          lx = std::lerp(static_cast<float>(prevLocalPlayer_->tileX), lx, tickAlpha);
+          lz = std::lerp(static_cast<float>(prevLocalPlayer_->tileY), lz, tickAlpha);
+        }
+        const float ly = tileWorldY(map_,
+                                    static_cast<int>(std::round(lx)),
+                                    static_cast<int>(std::round(lz)));
+        localEntry.wx      = lx;
+        localEntry.wy      = ly;
+        localEntry.wz      = lz;
+        localEntry.hp      = currLocalPlayer_->hp;
+        localEntry.maxHp   = currLocalPlayer_->maxHp;
+        localEntry.showHpBar   = (currLocalPlayer_->maxHp > 0);
+        localEntry.chatMessage = currLocalPlayer_->chatMessage;
+        localEntry.chatAlpha   = chatAlphaFor(currLocalPlayer_->chatMessage,
+                                              currLocalPlayer_->chatMessageTick);
+      }
+
+      // --- NPC + remote player entries ---
+      std::vector<ui::WorldOverlays::OverlayEntry> entityEntries;
+      entityEntries.reserve(currNpcs_.size() + currRemotePlayers_.size());
+
+      for (const auto& [id, curr] : currNpcs_) {
+        if (curr.dying) continue;
+        float fx = static_cast<float>(curr.tileX);
+        float fz = static_cast<float>(curr.tileY);
+        auto pit = prevNpcs_.find(id);
+        if (pit != prevNpcs_.end()) {
+          fx = std::lerp(static_cast<float>(pit->second.tileX), fx, tickAlpha);
+          fz = std::lerp(static_cast<float>(pit->second.tileY), fz, tickAlpha);
+        }
+        const float fy = tileWorldY(map_,
+                                    static_cast<int>(std::round(fx)),
+                                    static_cast<int>(std::round(fz)));
+        ui::WorldOverlays::OverlayEntry e;
+        e.wx         = fx;
+        e.wy         = fy;
+        e.wz         = fz;
+        e.hp         = curr.hp;
+        e.maxHp      = curr.maxHp;
+        e.showHpBar  = (curr.maxHp > 0 && curr.hp < curr.maxHp);
+        // NPCState has no chatMessage field — NPCs don't chat.
+        entityEntries.push_back(std::move(e));
+      }
+
+      // Remote players: chat bubbles only (no HP bar shown for other players)
+      for (const auto& [id, rp] : currRemotePlayers_) {
+        if (rp.dying) continue;
+        const float ca = chatAlphaFor(rp.chatMessage, rp.chatMessageTick);
+        if (ca <= 0.0f) continue;
+        float fx = static_cast<float>(rp.tileX);
+        float fz = static_cast<float>(rp.tileY);
+        auto pit = prevRemotePlayers_.find(id);
+        if (pit != prevRemotePlayers_.end()) {
+          fx = std::lerp(static_cast<float>(pit->second.tileX), fx, tickAlpha);
+          fz = std::lerp(static_cast<float>(pit->second.tileY), fz, tickAlpha);
+        }
+        const float fy = tileWorldY(map_,
+                                    static_cast<int>(std::round(fx)),
+                                    static_cast<int>(std::round(fz)));
+        ui::WorldOverlays::OverlayEntry e;
+        e.wx          = fx;
+        e.wy          = fy;
+        e.wz          = fz;
+        e.chatMessage = rp.chatMessage;
+        e.chatAlpha   = ca;
+        entityEntries.push_back(std::move(e));
+      }
+
+      overlays_.draw(viewProj, fbW, fbH, &localEntry, entityEntries);
+    }
 
     // ---- Context info (top-left) — world hover OR UI panel hover ----------
     const bool uiOwned = ImGui::IsWindowHovered(ImGuiHoveredFlags_AnyWindow);
@@ -1015,38 +1111,6 @@ void App::renderFrame() {
       }
     }
 
-    // ---- Overhead chat bubbles — world-space text above chatting players ---
-    for (const auto& [id, p] : allPlayers_) {
-      if (p.chatMessage.empty() || p.chatMessageTick <= 0) continue;
-      // Only show if within the last 50 ticks (10 seconds at 200ms/tick)
-      const int age = currentTick_ - p.chatMessageTick;
-      if (age < 0 || age > 50) continue;
-      const float fadeStart = 40;  // start fading at tick 40
-      float alpha = 1.0f;
-      if (age > static_cast<int>(fadeStart)) {
-        alpha = 1.0f - static_cast<float>(age - static_cast<int>(fadeStart)) / 10.0f;
-      }
-      if (alpha <= 0.0f) continue;
-      const float yWorld = tileWorldY(map_, p.tileX, p.tileY);
-      glm::vec2 px;
-      if (!ui::worldToScreen(viewProj,
-              { static_cast<float>(p.tileX), yWorld + 2.6f,
-                static_cast<float>(p.tileY) },
-              fbW, fbH, &px)) continue;
-      ImDrawList* dl = ImGui::GetForegroundDrawList();
-      const ImVec2 textSize = ImGui::CalcTextSize(p.chatMessage.c_str());
-      const float padX = 4.0f, padY = 2.0f;
-      // Background
-      dl->AddRectFilled(
-          ImVec2(px.x - textSize.x * 0.5f - padX, px.y - textSize.y - padY),
-          ImVec2(px.x + textSize.x * 0.5f + padX, px.y + padY),
-          IM_COL32(0, 0, 0, static_cast<int>(140 * alpha)), 4.0f);
-      // Text
-      dl->AddText(
-          ImVec2(px.x - textSize.x * 0.5f, px.y - textSize.y),
-          IM_COL32(255, 255, 0, static_cast<int>(255 * alpha)),
-          p.chatMessage.c_str());
-    }
   }
 
   // ---- Click feedback marker (animated expanding circle) ------------------

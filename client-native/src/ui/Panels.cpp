@@ -314,18 +314,21 @@ void drawSkillsTab(const shared::PlayerState& p) {
     totalLevel += (it != p.skills.end()) ? it->second.level : 1;
   }
 
-  // 2-column card grid — matches production (5 skills: 2+2+1 rows)
-  // Card width matches inventory/equipment kCell (44px) for visual consistency.
+  // 2-column card grid — cards fill the available panel width with 4px side
+  // padding on each side so they breathe against the panel border.
   constexpr int   kCols    = 2;
-  constexpr float kCardW   = 44.0f;
   constexpr float kCardH   = 60.0f;
   constexpr float kIconSz  = 14.0f;
   constexpr float kPad     =  3.0f;
+  constexpr float kSidePad =  4.0f;
 
   const int   numSkills = static_cast<int>(kSkillOrder.size());
   const float avail     = ImGui::GetContentRegionAvail().x;
-  const float gridW     = kCols * kCardW + (kCols - 1) * kPad;
-  const float startX    = ImGui::GetCursorPosX() + std::max(0.0f, (avail - gridW) * 0.5f);
+  // Cards expand to fill the panel; minimum 44 px so they stay readable.
+  const float kCardW    = std::max(44.0f,
+                                   (avail - 2.0f * kSidePad - (kCols - 1) * kPad)
+                                   / static_cast<float>(kCols));
+  const float startX    = ImGui::GetCursorPosX() + kSidePad;
 
   ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(kPad, kPad));
 
