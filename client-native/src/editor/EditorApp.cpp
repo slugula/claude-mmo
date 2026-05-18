@@ -768,7 +768,7 @@ void EditorApp::drawProperties() {
   ImGui::Checkbox("Enable fog",      &fogEnabled_);
   ImGui::BeginDisabled(!fogEnabled_);
   ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##fogdens", &fogDensity_, 0.0f,  0.1f,  "Density:%.4f");
-  ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##fogstart",&fogStart_,   0.0f,  30.0f, "Start:%.1f");
+  ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##fogstart",&fogStart_,   0.0f,  120.0f, "Start:%.1f");
   ImGui::ColorEdit3("Fog color",     reinterpret_cast<float*>(&fogColor_));
   if (ImGui::SmallButton("Fog defaults")) {
     fogDensity_ = 0.015f; fogStart_ = 5.0f;

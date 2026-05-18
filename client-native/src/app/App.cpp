@@ -1418,7 +1418,7 @@ void App::renderFrame() {
     ImGui::Checkbox("Enable fog",      &fogEnabled_);
     ImGui::BeginDisabled(!fogEnabled_);
     ImGui::SliderFloat("Density",      &fogDensity_, 0.0f,  0.1f,  "%.4f");
-    ImGui::SliderFloat("Start dist",   &fogStart_,   0.0f,  30.0f, "%.1f");
+    ImGui::SliderFloat("Start dist",   &fogStart_,   0.0f,  120.0f, "%.1f");
     ImGui::ColorEdit3("Fog color",     reinterpret_cast<float*>(&fogColor_));
     if (ImGui::SmallButton("Fog defaults")) {
       fogDensity_ = 0.015f; fogStart_ = 5.0f;
