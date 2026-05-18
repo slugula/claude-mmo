@@ -1,4 +1,4 @@
-import type {
+﻿import type {
   PlayerState, NPCState, DroppedItemState, GameAction, WorldState, GridPosition, RespawnEntry, Direction,
   EquipSlot, ItemStack,
 } from '../shared/types';
@@ -169,6 +169,14 @@ export function processCombat(
     if (!def.isAttackable) {
       messages.push(`You can’t attack ${def.name}.`);
       continue;
+    }
+
+    // First-strike: stamp the NPC lastAttackTick to now so it cannot
+    // retaliate until a full attackSpeedTicks has elapsed, giving the
+    // player one free action before the enemy combat cycle begins.
+    const targetIdx = nextNPCs.findIndex(n => n.id === target.id);
+    if (targetIdx !== -1) {
+      nextNPCs[targetIdx] = { ...nextNPCs[targetIdx], lastAttackTick: tick };
     }
 
     // Determine combat style to decide engagement distance
