@@ -125,11 +125,17 @@ glm::vec3 followTargetForMap(int w, int h) {
 }
 
 // Server's PlayerState.facing -> Y-axis rotation in radians.
+// Camera convention: south = 0, east = +π/2, north = π, west = -π/2.
+// Diagonal directions sit at the 45-degree intercardinal angles.
 float facingToYaw(const std::string& facing) {
-  if (facing == "north") return 3.14159265f;
-  if (facing == "south") return 0.0f;
-  if (facing == "east")  return  1.57079632f;
-  if (facing == "west")  return -1.57079632f;
+  if (facing == "north")      return  3.14159265f;   // π
+  if (facing == "north_east") return  2.35619449f;   // 3π/4
+  if (facing == "east")       return  1.57079632f;   // π/2
+  if (facing == "south_east") return  0.78539816f;   // π/4
+  if (facing == "south")      return  0.0f;
+  if (facing == "south_west") return -0.78539816f;   // -π/4
+  if (facing == "west")       return -1.57079632f;   // -π/2
+  if (facing == "north_west") return -2.35619449f;   // -3π/4
   return 0.0f;
 }
 
@@ -736,10 +742,7 @@ void App::renderFrame() {
       if (curr.dying) continue;
       float fx = static_cast<float>(curr.tileX);
       float fy = static_cast<float>(curr.tileY);
-      float targetYaw = 0.0f;
-      if (curr.facing == "north") targetYaw = 3.14159265f;
-      else if (curr.facing == "east") targetYaw = 1.57079632f;
-      else if (curr.facing == "west") targetYaw = -1.57079632f;
+      const float targetYaw = facingToYaw(curr.facing);
       auto pit = prevNpcs_.find(id);
       if (pit != prevNpcs_.end()) {
         fx = std::lerp(static_cast<float>(pit->second.tileX), fx, alpha);

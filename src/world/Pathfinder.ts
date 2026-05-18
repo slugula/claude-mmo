@@ -10,16 +10,21 @@ interface Node {
   parent: Node | null;
 }
 
+// Chebyshev distance — correct admissible heuristic for 8-directional
+// movement where diagonal steps cost the same as cardinal steps.
 function heuristic(a: GridPosition, b: GridPosition): number {
-  return Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
+  return Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y));
 }
 
 function key(x: number, y: number): number {
   return x * 10000 + y;
 }
 
+// OSRS neighbour order: cardinals first (W, E, S, N), then diagonals (SW, SE, NW, NE).
+// Cardinals are preferred so the path hugs walls rather than taking wide arcs.
 const DIRS: [number, number][] = [
-  [0, -1], [0, 1], [-1, 0], [1, 0],
+  [-1,  0], [ 1,  0], [ 0,  1], [ 0, -1],   // W, E, S, N
+  [-1,  1], [ 1,  1], [-1, -1], [ 1, -1],   // SW, SE, NW, NE
 ];
 
 export function findPath(
@@ -59,6 +64,13 @@ export function findPath(
       if (!isWalkable(world, nx, ny)) continue;
       // Block movement between tiles whose average vertex height differs too much
       if (Math.abs(tileAvgHeight(world, current.x, current.y) - tileAvgHeight(world, nx, ny)) > HEIGHT_IMPASSABLE_DELTA) continue;
+      // Corner-clip prevention (OSRS rule): a diagonal step is blocked if either
+      // of the two intermediate cardinal tiles is impassable.  This stops the
+      // path from cutting through the corner of a wall or obstacle.
+      if (dx !== 0 && dy !== 0) {
+        if (!isWalkable(world, current.x + dx, current.y)) continue;
+        if (!isWalkable(world, current.x, current.y + dy)) continue;
+      }
 
       const g = current.g + 1;
       const existing = openMap.get(nk);

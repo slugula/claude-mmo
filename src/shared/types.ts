@@ -1,4 +1,6 @@
-export type Direction = 'north' | 'south' | 'east' | 'west';
+export type Direction =
+  | 'north' | 'north_east' | 'east' | 'south_east'
+  | 'south' | 'south_west' | 'west' | 'north_west';
 
 export interface GridPosition {
   x: number;

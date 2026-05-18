@@ -28,10 +28,16 @@ export function treeKey(x: number, y: number): string {
 function directionTo(
   fx: number, fy: number, tx: number, ty: number,
 ): Direction {
-  const dx = tx - fx;
-  const dy = ty - fy;
-  if (Math.abs(dx) >= Math.abs(dy)) return dx > 0 ? 'east' : 'west';
-  return dy > 0 ? 'south' : 'north';
+  const dx = Math.sign(tx - fx);
+  const dy = Math.sign(ty - fy);
+  if (dx ===  1 && dy === -1) return 'north_east';
+  if (dx ===  1 && dy ===  1) return 'south_east';
+  if (dx === -1 && dy ===  1) return 'south_west';
+  if (dx === -1 && dy === -1) return 'north_west';
+  if (dx ===  1) return 'east';
+  if (dx === -1) return 'west';
+  if (dy === -1) return 'north';
+  return 'south';
 }
 
 function is4Adjacent(ax: number, ay: number, bx: number, by: number): boolean {

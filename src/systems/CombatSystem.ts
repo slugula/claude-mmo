@@ -109,10 +109,16 @@ function is4Adjacent(a: GridPosition, b: GridPosition): boolean {
 }
 
 function directionTo(from: GridPosition, to: GridPosition): Direction {
-  const dx = to.x - from.x;
-  const dy = to.y - from.y;
-  if (Math.abs(dx) >= Math.abs(dy)) return dx > 0 ? 'east' : 'west';
-  return dy > 0 ? 'south' : 'north';
+  const dx = Math.sign(to.x - from.x);
+  const dy = Math.sign(to.y - from.y);
+  if (dx ===  1 && dy === -1) return 'north_east';
+  if (dx ===  1 && dy ===  1) return 'south_east';
+  if (dx === -1 && dy ===  1) return 'south_west';
+  if (dx === -1 && dy === -1) return 'north_west';
+  if (dx ===  1) return 'east';
+  if (dx === -1) return 'west';
+  if (dy === -1) return 'north';
+  return 'south';
 }
 
 export function processCombat(
