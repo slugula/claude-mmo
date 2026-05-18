@@ -4,8 +4,9 @@
 // obstacle.frag so the player and the obstacles read in the same palette
 // discipline as the terrain. Could be a shared include if GLSL had any.
 
-in  vec3 v_normal;
-out vec4 fragColor;
+in  vec3  v_normal;
+in  float vLinearDepth;
+out vec4  fragColor;
 
 uniform vec3  u_color;
 uniform vec3  u_lightDir;
@@ -14,6 +15,10 @@ uniform float u_paletteEnabled;
 uniform float u_ambient;
 uniform float u_diffuse;
 uniform float u_lightingEnabled;
+uniform float u_fogEnabled;       // 0 = off, 1 = on
+uniform vec3  u_fogColor;
+uniform float u_fogDensity;       // e.g. 0.015
+uniform float u_fogStart;         // world-units from camera before fog kicks in
 
 vec3 rgb2hsl(vec3 c) {
     float maxC = max(max(c.r, c.g), c.b);
@@ -62,4 +67,10 @@ void main() {
     vec3 quantized = hsl2rgb(snapped);
 
     fragColor = vec4(mix(rgb, quantized, u_paletteEnabled), 1.0);
+
+    // Exponential distance fog.
+    float dist      = max(0.0, vLinearDepth - u_fogStart);
+    float fogFactor = clamp(exp(-u_fogDensity * dist), 0.0, 1.0);
+    fogFactor       = mix(1.0, fogFactor, u_fogEnabled);
+    fragColor.rgb   = mix(u_fogColor, fragColor.rgb, fogFactor);
 }

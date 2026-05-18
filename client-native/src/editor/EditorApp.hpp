@@ -1,5 +1,6 @@
 #pragma once
 
+#include "app/Settings.hpp"
 #include "app/Window.hpp"
 #include "camera/GameCamera.hpp"
 #include "editor/EditorPalette.hpp"
@@ -106,6 +107,10 @@ private:
   // Water settings UI block (called from drawProperties).
   void drawWaterSettings();
 
+  // ---- Settings persistence
+  void saveSettings();
+  void loadSettings();
+
   // ---- GL / window
   app::Window                                    window_;
   std::unique_ptr<render::MsaaFramebuffer>       viewport3dFbo_;
@@ -192,6 +197,15 @@ private:
 
   // ImGui
   bool imguiInited_ = false;
+
+  // Fog
+  bool      fogEnabled_  = false;
+  float     fogDensity_  = 0.015f;
+  float     fogStart_    = 5.0f;
+  glm::vec3 fogColor_    = {0.58f, 0.67f, 0.78f};
+  // AO
+  bool      aoEnabled_   = true;
+  float     aoStrength_  = 0.50f;
 
   // Lighting (passed to terrain/obstacle shaders)
   float sunYawDeg_   = 200.0f;

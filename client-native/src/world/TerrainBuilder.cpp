@@ -82,7 +82,26 @@ TerrainMeshData buildTerrainMesh(const shared::WorldMapFile& map) {
       mesh.colors[v * 4 + 0] = r;
       mesh.colors[v * 4 + 1] = g;
       mesh.colors[v * 4 + 2] = b;
-      mesh.colors[v * 4 + 3] = 1.0f;
+
+      // ---- AO: concavity darkening packed into color alpha ----------------
+      // Sum the excess height of all 8 neighbor vertices above this one.
+      // Normalize by (8 * kMaxTerrainH * 0.35) so that a vertex fully
+      // surrounded by max-height neighbors gets AO ≈ 1.0.
+      float aoSum = 0.0f;
+      for (int dr : {-1, 0, 1}) {
+        for (int dc : {-1, 0, 1}) {
+          if (dr == 0 && dc == 0) continue;
+          int nr = row + dr, nc = col + dc;
+          nr = std::clamp(nr, 0, H);
+          nc = std::clamp(nc, 0, W);
+          float nh = computeCornerHeight(vh, W, H, nc, nr);
+          float diff = nh - y;
+          if (diff > 0.0f) aoSum += diff;
+        }
+      }
+      const float aoNorm   = 8.0f * static_cast<float>(shared::kMaxTerrainH) * 0.35f;
+      const float aoFactor = std::clamp(aoSum / aoNorm, 0.0f, 1.0f);
+      mesh.colors[v * 4 + 3] = aoFactor;
 
       // ---- Normal via central difference on the height field ---------------
       //

@@ -340,6 +340,32 @@ bool App::init() {
   if (!audio_.init()) {
     std::fprintf(stderr, "[App] audio init failed — proceeding without sound\n");
   }
+
+  // Load persisted settings if present.
+  {
+    AppSettings s;
+    if (::loadSettings(s, resolveFromExe("settings.cfg"))) {
+      fogEnabled_  = s.fogEnabled;   fogDensity_ = s.fogDensity;
+      fogStart_    = s.fogStart;     fogColor_   = {s.fogR, s.fogG, s.fogB};
+      aoEnabled_   = s.aoEnabled;    aoStrength_ = s.aoStrength;
+      lightingEnabled_ = s.lightingEnabled;
+      sunYawDeg_ = s.sunYawDeg;  sunPitchDeg_ = s.sunPitchDeg;
+      ambient_   = s.ambient;    diffuse_     = s.diffuse;
+      shadowsEnabled_  = s.shadowsEnabled;
+      shadowDarkness_  = s.shadowDarkness;
+      shadowBias_      = s.shadowBias;
+      shadowHalfExtent_= s.shadowHalfExtent;
+      palette_     = s.palette;
+      paletteHues_ = s.paletteHues;
+      paletteSats_ = s.paletteSats;
+      paletteLums_ = s.paletteLums;
+      outlineRadius_    = s.outlineRadius;
+      outlineDepthBias_ = s.outlineDepthBias;
+      outlineColor_   = {s.outlineColorR, s.outlineColorG, s.outlineColorB, s.outlineColorA};
+      hoverTileColor_ = {s.hoverTileR,    s.hoverTileG,    s.hoverTileB,    s.hoverTileA};
+    }
+  }
+
   lastFrameTime_ = std::chrono::steady_clock::now();
   return true;
 }
@@ -626,6 +652,12 @@ void App::renderFrame() {
   terrainShader_.setFloat("u_ambient",         ambient_);
   terrainShader_.setFloat("u_diffuse",         diffuse_);
   terrainShader_.setFloat("u_lightingEnabled", lightingEnabled_ ? 1.0f : 0.0f);
+  terrainShader_.setFloat("u_fogEnabled",  fogEnabled_  ? 1.0f : 0.0f);
+  terrainShader_.setVec3 ("u_fogColor",    fogColor_);
+  terrainShader_.setFloat("u_fogDensity",  fogDensity_);
+  terrainShader_.setFloat("u_fogStart",    fogStart_);
+  terrainShader_.setFloat("u_aoEnabled",   aoEnabled_   ? 1.0f : 0.0f);
+  terrainShader_.setFloat("u_aoStrength",  aoStrength_);
   terrainMesh_.draw();
 
   // ---- Hover tile outline — drawn immediately after terrain, BEFORE obstacles
@@ -655,6 +687,10 @@ void App::renderFrame() {
   obstacleShader_.setFloat("u_ambient",         ambient_);
   obstacleShader_.setFloat("u_diffuse",         diffuse_);
   obstacleShader_.setFloat("u_lightingEnabled", lightingEnabled_ ? 1.0f : 0.0f);
+  obstacleShader_.setFloat("u_fogEnabled", fogEnabled_  ? 1.0f : 0.0f);
+  obstacleShader_.setVec3 ("u_fogColor",   fogColor_);
+  obstacleShader_.setFloat("u_fogDensity", fogDensity_);
+  obstacleShader_.setFloat("u_fogStart",   fogStart_);
   obstacles_.render(obstacleShader_);
 
   // ---- Detect connection-status transitions for chat-log + state reset -----
@@ -741,6 +777,10 @@ void App::renderFrame() {
     skinnedShader_.setFloat("u_ambient",        ambient_);
     skinnedShader_.setFloat("u_diffuse",        diffuse_);
     skinnedShader_.setFloat("u_lightingEnabled", lightingEnabled_ ? 1.0f : 0.0f);
+    skinnedShader_.setFloat("u_fogEnabled", fogEnabled_  ? 1.0f : 0.0f);
+    skinnedShader_.setVec3 ("u_fogColor",   fogColor_);
+    skinnedShader_.setFloat("u_fogDensity", fogDensity_);
+    skinnedShader_.setFloat("u_fogStart",   fogStart_);
     constexpr glm::vec3 kRemoteColor{0.50f, 0.38f, 0.28f};
     skinnedShader_.setVec3 ("u_color", kRemoteColor);
 
@@ -1320,6 +1360,33 @@ void App::renderFrame() {
     }
 
     ImGui::Separator();
+    ImGui::TextUnformatted("Fog");
+    ImGui::Checkbox("Enable fog",      &fogEnabled_);
+    ImGui::BeginDisabled(!fogEnabled_);
+    ImGui::SliderFloat("Density",      &fogDensity_, 0.0f,  0.1f,  "%.4f");
+    ImGui::SliderFloat("Start dist",   &fogStart_,   0.0f,  30.0f, "%.1f");
+    ImGui::ColorEdit3("Fog color",     reinterpret_cast<float*>(&fogColor_));
+    if (ImGui::SmallButton("Fog defaults")) {
+      fogDensity_ = 0.015f; fogStart_ = 5.0f;
+      fogColor_ = {0.58f, 0.67f, 0.78f};
+    }
+    ImGui::EndDisabled();
+
+    ImGui::Separator();
+    ImGui::TextUnformatted("Ambient Occlusion");
+    ImGui::Checkbox("Enable AO",       &aoEnabled_);
+    ImGui::BeginDisabled(!aoEnabled_);
+    ImGui::SliderFloat("AO strength",  &aoStrength_, 0.0f,  1.0f,  "%.2f");
+    if (ImGui::SmallButton("AO defaults")) { aoStrength_ = 0.50f; }
+    ImGui::EndDisabled();
+    if (aoEnabled_) ImGui::TextDisabled("AO baked into terrain mesh — regen to update");
+
+    ImGui::Separator();
+    if (ImGui::Button("Save as default")) saveSettings();
+    ImGui::SameLine();
+    ImGui::TextDisabled("Writes settings.cfg next to exe");
+
+    ImGui::Separator();
     ImGui::TextUnformatted("Network (Phase 4)");
     const auto status = network_.status();
     const char* statusText = "Disconnected";
@@ -1734,6 +1801,10 @@ void App::renderPlayer(const glm::mat4& viewProj, float dt) {
   skinnedShader_.setFloat("u_ambient",         ambient_);
   skinnedShader_.setFloat("u_diffuse",         diffuse_);
   skinnedShader_.setFloat("u_lightingEnabled", lightingEnabled_ ? 1.0f : 0.0f);
+  skinnedShader_.setFloat("u_fogEnabled", fogEnabled_  ? 1.0f : 0.0f);
+  skinnedShader_.setVec3 ("u_fogColor",   fogColor_);
+  skinnedShader_.setFloat("u_fogDensity", fogDensity_);
+  skinnedShader_.setFloat("u_fogStart",   fogStart_);
   skinnedShader_.setVec3 ("u_color",           kPlayerColor);
   playerModel_.render(skinnedShader_, modelMatrix);
 }
@@ -2025,6 +2096,32 @@ bool App::drawLoginUi() {
 // =====================================================================
 // PlayerJoinModal — name picker for new accounts
 // =====================================================================
+
+void App::saveSettings() {
+  AppSettings s;
+  s.fogEnabled   = fogEnabled_;   s.fogDensity = fogDensity_;
+  s.fogStart     = fogStart_;     s.fogR = fogColor_.r; s.fogG = fogColor_.g; s.fogB = fogColor_.b;
+  s.aoEnabled    = aoEnabled_;    s.aoStrength = aoStrength_;
+  s.lightingEnabled = lightingEnabled_;
+  s.sunYawDeg = sunYawDeg_; s.sunPitchDeg = sunPitchDeg_;
+  s.ambient   = ambient_;   s.diffuse     = diffuse_;
+  s.shadowsEnabled   = shadowsEnabled_;
+  s.shadowDarkness   = shadowDarkness_;
+  s.shadowBias       = shadowBias_;
+  s.shadowHalfExtent = shadowHalfExtent_;
+  s.palette     = palette_;
+  s.paletteHues = paletteHues_; s.paletteSats = paletteSats_; s.paletteLums = paletteLums_;
+  s.outlineRadius    = outlineRadius_;    s.outlineDepthBias = outlineDepthBias_;
+  s.outlineColorR    = outlineColor_.r;   s.outlineColorG = outlineColor_.g;
+  s.outlineColorB    = outlineColor_.b;   s.outlineColorA = outlineColor_.a;
+  s.hoverTileR = hoverTileColor_.r; s.hoverTileG = hoverTileColor_.g;
+  s.hoverTileB = hoverTileColor_.b; s.hoverTileA = hoverTileColor_.a;
+  ::saveSettings(s, resolveFromExe("settings.cfg"));
+}
+
+void App::loadSettings() {
+  // (called from init; exposed as member for future use)
+}
 
 void App::drawJoinModal() {
   // Dim the background so the modal draws attention.

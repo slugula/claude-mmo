@@ -159,6 +159,25 @@ bool EditorApp::init() {
   initBlockedOverlay();
   initImGui();
 
+  // Load persisted settings if present.
+  {
+    AppSettings s;
+    if (::loadSettings(s, resolveFromExe("settings.cfg"))) {
+      fogEnabled_  = s.fogEnabled;   fogDensity_ = s.fogDensity;
+      fogStart_    = s.fogStart;     fogColor_   = {s.fogR, s.fogG, s.fogB};
+      aoEnabled_   = s.aoEnabled;    aoStrength_ = s.aoStrength;
+      lightingEnabled_ = s.lightingEnabled;
+      sunYawDeg_ = s.sunYawDeg;  sunPitchDeg_ = s.sunPitchDeg;
+      ambient_   = s.ambient;    diffuse_     = s.diffuse;
+      shadowsEnabled_  = s.shadowsEnabled;
+      shadowHalfExtent_= s.shadowHalfExtent;
+      palette_     = s.palette;
+      paletteHues_ = s.paletteHues;
+      paletteSats_ = s.paletteSats;
+      paletteLums_ = s.paletteLums;
+    }
+  }
+
   lastFrameTime_ = std::chrono::steady_clock::now();
   return true;
 }
@@ -424,6 +443,12 @@ void EditorApp::render3DViewport(float dt) {
   terrainShader_.setFloat("u_ambient",         ambient_);
   terrainShader_.setFloat("u_diffuse",         diffuse_);
   terrainShader_.setFloat("u_lightingEnabled", lightingEnabled_ ? 1.0f : 0.0f);
+  terrainShader_.setFloat("u_fogEnabled",  fogEnabled_  ? 1.0f : 0.0f);
+  terrainShader_.setVec3 ("u_fogColor",    fogColor_);
+  terrainShader_.setFloat("u_fogDensity",  fogDensity_);
+  terrainShader_.setFloat("u_fogStart",    fogStart_);
+  terrainShader_.setFloat("u_aoEnabled",   aoEnabled_   ? 1.0f : 0.0f);
+  terrainShader_.setFloat("u_aoStrength",  aoStrength_);
   terrainMesh_.draw();
 
   // Obstacles
@@ -437,6 +462,10 @@ void EditorApp::render3DViewport(float dt) {
   obstacleShader_.setFloat("u_ambient",        ambient_);
   obstacleShader_.setFloat("u_diffuse",        diffuse_);
   obstacleShader_.setFloat("u_lightingEnabled",lightingEnabled_ ? 1.0f : 0.0f);
+  obstacleShader_.setFloat("u_fogEnabled", fogEnabled_  ? 1.0f : 0.0f);
+  obstacleShader_.setVec3 ("u_fogColor",   fogColor_);
+  obstacleShader_.setFloat("u_fogDensity", fogDensity_);
+  obstacleShader_.setFloat("u_fogStart",   fogStart_);
   obstacles_.render(obstacleShader_);
 
   // NPC stand-ins
@@ -733,6 +762,33 @@ void EditorApp::drawProperties() {
   ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##pitch", &sunPitchDeg_, 10.0f,  90.0f, "Pitch:%.0f");
   ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##amb",   &ambient_,      0.0f,   1.0f, "Amb:%.2f");
   ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##diff",  &diffuse_,      0.0f,   1.0f, "Diff:%.2f");
+
+  ImGui::Separator();
+  ImGui::TextDisabled("Fog");
+  ImGui::Checkbox("Enable fog",      &fogEnabled_);
+  ImGui::BeginDisabled(!fogEnabled_);
+  ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##fogdens", &fogDensity_, 0.0f,  0.1f,  "Density:%.4f");
+  ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##fogstart",&fogStart_,   0.0f,  30.0f, "Start:%.1f");
+  ImGui::ColorEdit3("Fog color",     reinterpret_cast<float*>(&fogColor_));
+  if (ImGui::SmallButton("Fog defaults")) {
+    fogDensity_ = 0.015f; fogStart_ = 5.0f;
+    fogColor_ = {0.58f, 0.67f, 0.78f};
+  }
+  ImGui::EndDisabled();
+
+  ImGui::Separator();
+  ImGui::TextDisabled("Ambient Occlusion");
+  ImGui::Checkbox("Enable AO",       &aoEnabled_);
+  ImGui::BeginDisabled(!aoEnabled_);
+  ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##aostr",  &aoStrength_, 0.0f, 1.0f, "Strength:%.2f");
+  if (ImGui::SmallButton("AO defaults")) { aoStrength_ = 0.50f; }
+  ImGui::EndDisabled();
+  if (aoEnabled_) ImGui::TextDisabled("AO baked — rebuild to update");
+
+  ImGui::Separator();
+  if (ImGui::Button("Save as default")) saveSettings();
+  ImGui::SameLine();
+  ImGui::TextDisabled("settings.cfg");
 
   ImGui::Separator();
   if (currentFilePath_.empty())
@@ -1551,6 +1607,27 @@ std::wstring EditorApp::winSaveDialog() {
   ofn.Flags       = OFN_OVERWRITEPROMPT | OFN_NOCHANGEDIR;
   ofn.lpstrDefExt = L"json";
   return GetSaveFileNameW(&ofn) ? buf : std::wstring{};
+}
+
+// -----------------------------------------------------------------------
+void EditorApp::saveSettings() {
+  AppSettings s;
+  s.fogEnabled   = fogEnabled_;   s.fogDensity = fogDensity_;
+  s.fogStart     = fogStart_;     s.fogR = fogColor_.r; s.fogG = fogColor_.g; s.fogB = fogColor_.b;
+  s.aoEnabled    = aoEnabled_;    s.aoStrength = aoStrength_;
+  s.lightingEnabled = lightingEnabled_;
+  s.sunYawDeg = sunYawDeg_; s.sunPitchDeg = sunPitchDeg_;
+  s.ambient   = ambient_;   s.diffuse     = diffuse_;
+  s.shadowsEnabled   = shadowsEnabled_;
+  s.shadowHalfExtent = shadowHalfExtent_;
+  s.palette     = palette_;
+  s.paletteHues = paletteHues_; s.paletteSats = paletteSats_; s.paletteLums = paletteLums_;
+  // Outline fields are client-only; write defaults so the file is valid.
+  ::saveSettings(s, resolveFromExe("settings.cfg"));
+}
+
+void EditorApp::loadSettings() {
+  // (called from init; exposed as member for future use)
 }
 
 // -----------------------------------------------------------------------

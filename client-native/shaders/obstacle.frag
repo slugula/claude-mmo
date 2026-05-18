@@ -5,8 +5,9 @@
 // palette discipline. Phase 6 will replace this stand-in lighting with the
 // real baked-vertex + shadow-map setup.
 
-in  vec3 v_normal;
-out vec4 fragColor;
+in  vec3  v_normal;
+in  float vLinearDepth;
+out vec4  fragColor;
 
 uniform vec3  u_color;            // base RGB color for this obstacle type
 uniform vec3  u_lightDir;         // unit vector from sun -> surface (i.e. light direction)
@@ -15,6 +16,10 @@ uniform float u_paletteEnabled;   // 0 = bypass quantize, 1 = quantize
 uniform float u_ambient;          // 0..1
 uniform float u_diffuse;          // 0..1
 uniform float u_lightingEnabled;  // 0 = flat base color, 1 = lit
+uniform float u_fogEnabled;       // 0 = off, 1 = on
+uniform vec3  u_fogColor;
+uniform float u_fogDensity;       // e.g. 0.015
+uniform float u_fogStart;         // world-units from camera before fog kicks in
 
 // ---- HSL <-> RGB --------------------------------------------------------
 
@@ -67,4 +72,10 @@ void main() {
     vec3 quantized = hsl2rgb(snapped);
 
     fragColor = vec4(mix(rgb, quantized, u_paletteEnabled), 1.0);
+
+    // Exponential distance fog.
+    float dist      = max(0.0, vLinearDepth - u_fogStart);
+    float fogFactor = clamp(exp(-u_fogDensity * dist), 0.0, 1.0);
+    fogFactor       = mix(1.0, fogFactor, u_fogEnabled);
+    fragColor.rgb   = mix(u_fogColor, fragColor.rgb, fogFactor);
 }

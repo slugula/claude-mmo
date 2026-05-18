@@ -16,7 +16,8 @@ layout(location = 3) in float a_instanceRotY;
 
 uniform mat4 u_viewProj;
 
-out vec3 v_normal;
+out vec3  v_normal;
+out float vLinearDepth;
 
 mat3 rotY(float angle) {
     float c = cos(angle);
@@ -31,4 +32,5 @@ void main() {
     vec3 worldPos = R * a_position + a_instancePos;
     v_normal      = R * a_normal;
     gl_Position   = u_viewProj * vec4(worldPos, 1.0);
+    vLinearDepth  = gl_Position.w;
 }

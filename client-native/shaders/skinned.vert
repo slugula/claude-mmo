@@ -20,7 +20,8 @@ uniform mat4 u_viewProj;
 uniform mat4 u_model;
 uniform mat4 u_jointMatrices[80];
 
-out vec3 v_normal;
+out vec3  v_normal;
+out float vLinearDepth;
 
 void main() {
     mat4 skin =
@@ -37,5 +38,6 @@ void main() {
     // has non-uniform scales we'd switch to transpose(inverse(...)).
     v_normal = mat3(u_model) * mat3(skin) * a_normal;
 
-    gl_Position = u_viewProj * worldPos;
+    gl_Position  = u_viewProj * worldPos;
+    vLinearDepth = gl_Position.w;
 }

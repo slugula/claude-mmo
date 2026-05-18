@@ -1,5 +1,6 @@
 #pragma once
 
+#include "app/Settings.hpp"
 #include "app/Window.hpp"
 #include "audio/AudioEngine.hpp"
 #include "camera/GameCamera.hpp"
@@ -54,6 +55,8 @@ private:
   void processNetworkMessages();
   void drawWorldContextMenu();
   void exportWorldMap();
+  void saveSettings();
+  void loadSettings();
 
   // Allocate / reallocate the R8 mask texture + FBO used by the screen-space
   // outline composite. Called on init and on every window resize.
@@ -183,6 +186,15 @@ private:
   float     outlineDepthBias_ = 0.002f;
   glm::vec4 outlineColor_     = {0.0f, 0.9f, 0.9f, 0.95f};
   glm::vec4 hoverTileColor_   = {1.0f, 0.85f, 0.10f, 1.0f};
+
+  // Fog
+  bool                                     fogEnabled_  = false;
+  float                                    fogDensity_  = 0.015f;
+  float                                    fogStart_    = 5.0f;
+  glm::vec3                                fogColor_    = {0.58f, 0.67f, 0.78f};
+  // AO
+  bool                                     aoEnabled_   = true;
+  float                                    aoStrength_  = 0.50f;
 
   // Phase 7 — HSL palette quantization (per-fragment).
   bool                                     palette_         = true;

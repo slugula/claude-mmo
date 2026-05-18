@@ -13,10 +13,11 @@
 // a grass patch stays clearly green at every lightness step, instead of
 // drifting through olive/yellow as it would in an RGB posterize.
 
-in  vec4 v_color;
-in  vec3 v_normal;
-in  vec4 v_shadowPos;
-out vec4 fragColor;
+in  vec4  v_color;
+in  vec3  v_normal;
+in  vec4  v_shadowPos;
+in  float vLinearDepth;
+out vec4  fragColor;
 
 uniform vec3      u_paletteLevels;    // (hue_levels, sat_levels, lum_levels)
 uniform float     u_paletteEnabled;   // 0 = bypass quantize, 1 = quantize
@@ -28,6 +29,12 @@ uniform sampler2D u_shadowMap;
 uniform float     u_shadowsEnabled;   // 0 = ignore shadowmap, 1 = sample
 uniform float     u_shadowDarkness;   // 0..1, how dark a fully-shadowed pixel gets (1 = full ambient only)
 uniform float     u_shadowBias;       // depth bias to suppress acne (e.g. 0.0015)
+uniform float     u_fogEnabled;       // 0 = off, 1 = on
+uniform vec3      u_fogColor;
+uniform float     u_fogDensity;       // e.g. 0.015
+uniform float     u_fogStart;         // world-units from camera before fog kicks in
+uniform float     u_aoEnabled;        // 0 = off, 1 = on
+uniform float     u_aoStrength;       // 0..1, default 0.5
 
 // ---- HSL <-> RGB --------------------------------------------------------
 
@@ -96,6 +103,11 @@ float sampleShadow(vec4 shadowPos) {
 void main() {
     vec3 rgb = v_color.rgb;
 
+    // Ambient Occlusion — darkens concave areas. AO is packed into v_color.a.
+    float ao    = v_color.a;
+    float aoMul = 1.0 - ao * u_aoStrength * u_aoEnabled;
+    rgb *= aoMul;
+
     // Phase 6 — Lambert directional lighting. u_lightDir points from the sun
     // toward the world, so the surface-incident vector is -u_lightDir.
     vec3  N     = normalize(v_normal);
@@ -116,5 +128,11 @@ void main() {
     vec3 quantized = hsl2rgb(snapped);
 
     // u_paletteEnabled is a linear mix so the toggle has zero branches.
-    fragColor = vec4(mix(rgb, quantized, u_paletteEnabled), v_color.a);
+    fragColor = vec4(mix(rgb, quantized, u_paletteEnabled), 1.0);
+
+    // Exponential distance fog.
+    float dist      = max(0.0, vLinearDepth - u_fogStart);
+    float fogFactor = clamp(exp(-u_fogDensity * dist), 0.0, 1.0);
+    fogFactor       = mix(1.0, fogFactor, u_fogEnabled);
+    fragColor.rgb   = mix(u_fogColor, fragColor.rgb, fogFactor);
 }
