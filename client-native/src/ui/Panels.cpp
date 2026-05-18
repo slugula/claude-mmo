@@ -728,22 +728,30 @@ void ChatLog::draw(net::NetworkClient* netc) {
   if (netc) {
     // Auto-focus: if a printable character was typed and no other widget is
     // active, redirect keyboard input to the chat field immediately.
-    // Pre-seed the buffer with the triggering character so it appears in the
-    // field on the same frame instead of requiring a second keypress.
+    // We store the triggering character and inject it via the InputText
+    // CallbackAlways hook — this avoids the "select-all on first focus" issue
+    // that would replace the char if we pre-seeded the external buffer.
     if (!ImGui::IsAnyItemActive() && io.InputQueueCharacters.Size > 0) {
       const ImWchar ch = io.InputQueueCharacters[0];
-      if (ch >= 32 && ch < 127) {
-        const int len = static_cast<int>(std::strlen(inputBuf_));
-        if (len + 1 < static_cast<int>(sizeof(inputBuf_))) {
-          inputBuf_[len]     = static_cast<char>(ch);
-          inputBuf_[len + 1] = '\0';
-        }
-      }
+      if (ch >= 32 && ch < 127)
+        pendingAutoFocusChar_ = static_cast<char>(ch);
       ImGui::SetKeyboardFocusHere(0);
     }
     ImGui::SetNextItemWidth(-FLT_MIN);
+    // Callback: inject pending char once the widget is active so it appears
+    // immediately without triggering a select-all.
+    auto chatCallback = [](ImGuiInputTextCallbackData* data) -> int {
+      char* pending = static_cast<char*>(data->UserData);
+      if (*pending != '\0') {
+        data->InsertChars(data->CursorPos, pending, pending + 1);
+        *pending = '\0';
+      }
+      return 0;
+    };
     if (ImGui::InputText("##chat_in", inputBuf_, sizeof(inputBuf_),
-                         ImGuiInputTextFlags_EnterReturnsTrue)) {
+                         ImGuiInputTextFlags_EnterReturnsTrue |
+                         ImGuiInputTextFlags_CallbackAlways,
+                         chatCallback, &pendingAutoFocusChar_)) {
       if (inputBuf_[0] != '\0') {
         netc->sendChat(inputBuf_);
       }

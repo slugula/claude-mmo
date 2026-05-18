@@ -49,7 +49,10 @@ private:
   static constexpr std::size_t kMax = 200;
   std::deque<Entry>                        entries_;
   std::unordered_map<std::string, int>     seenChatTick_;
-  char                                     inputBuf_[256] = {};
+  char                                     inputBuf_[256]         = {};
+  // Char to inject on the next InputText callback tick when auto-focus fires,
+  // so the triggering keypress appears immediately without being swallowed.
+  char                                     pendingAutoFocusChar_   = 0;
 };
 
 }  // namespace ui
