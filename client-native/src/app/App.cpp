@@ -628,6 +628,21 @@ void App::renderFrame() {
   terrainShader_.setFloat("u_lightingEnabled", lightingEnabled_ ? 1.0f : 0.0f);
   terrainMesh_.draw();
 
+  // ---- Hover tile outline — drawn immediately after terrain, BEFORE obstacles
+  //      and NPCs, so that taller geometry (trees, rocks, NPCs) naturally
+  //      overwrites these pixels in color and depth.  This guarantees the tile
+  //      square is occluded by objects at all camera distances without relying
+  //      on depth-buffer precision for tiny world-space offsets.
+  if (hoveredTile_.hit) {
+    wireframeShader_.use();
+    wireframeShader_.setMat4("u_viewProj", viewProj);
+    wireframeShader_.setVec4("u_color",    hoverTileColor_);
+    // depthMask ON — we want subsequent obstacle/NPC draws to overwrite us.
+    glBindVertexArray(hoverVao_);
+    glDrawArrays(GL_LINE_LOOP, 0, 4);
+    glBindVertexArray(0);
+  }
+
   // ---- Obstacles (instanced) -------------------------------------------------
   obstacleShader_.use();
   obstacleShader_.setMat4 ("u_viewProj",       viewProj);
@@ -811,18 +826,6 @@ void App::renderFrame() {
     wireframeShader_.setVec4("u_color",    glm::vec4(1.0f, 1.0f, 1.0f, 1.0f));
     glDepthMask(GL_FALSE);
     terrainMesh_.drawLines();
-    glDepthMask(GL_TRUE);
-  }
-
-  // ---- Hover tile outline (yellow) ------------------------------------------
-  if (hoveredTile_.hit) {
-    wireframeShader_.use();
-    wireframeShader_.setMat4("u_viewProj", viewProj);
-    wireframeShader_.setVec4("u_color",    hoverTileColor_);
-    glDepthMask(GL_FALSE);
-    glBindVertexArray(hoverVao_);
-    glDrawArrays(GL_LINE_LOOP, 0, 4);
-    glBindVertexArray(0);
     glDepthMask(GL_TRUE);
   }
 
