@@ -15,6 +15,7 @@
 #include "world/EntityRenderer.hpp"
 #include "world/ObstacleSystem.hpp"
 #include "world/SkinnedMesh.hpp"
+#include "world/WaterRenderer.hpp"
 
 #include <glad/glad.h>
 
@@ -69,6 +70,8 @@ private:
   render::ShadowMap                        shadowMap_;
   render::Mesh                             terrainMesh_;
   world::ObstacleSystem                    obstacles_;
+  world::WaterRenderer                     waterRenderer_;
+  world::WaterUniforms                     waterUniforms_;
   world::SkinnedMesh                       playerModel_;
   world::EntityRenderer                    entities_;
   camera::GameCamera                       camera_;

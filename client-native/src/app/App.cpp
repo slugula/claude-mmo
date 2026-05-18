@@ -49,6 +49,10 @@ constexpr const char* kShadowInstVertPath= "shaders/shadow_instanced.vert";
 constexpr const char* kShadowFragPath    = "shaders/shadow.frag";
 constexpr const char* kPlayerModelPath   = "assets/models/player.glb";
 constexpr const char* kTreeModelPath     = "assets/models/tree.gltf";
+constexpr const char* kWaterVertPath     = "shaders/water.vert";
+constexpr const char* kWaterFragPath     = "shaders/water.frag";
+constexpr const char* kWaterNormalPath   = "assets/water_normal.png";
+constexpr const char* kWorldMapPath      = "worldMap.json";
 constexpr int         kShadowMapSize     = 2048;
 
 constexpr glm::vec3 kPlayerColor  { 0.62f, 0.45f, 0.30f};  // skin tone, modulated by Lambert
@@ -278,6 +282,13 @@ bool App::init() {
     return false;
   }
 
+  // Water renderer — non-fatal if shaders are missing
+  if (!waterRenderer_.init(resolveFromExe(kWaterVertPath).string(),
+                           resolveFromExe(kWaterFragPath).string(),
+                           resolveFromExe(kWaterNormalPath).string())) {
+    std::fprintf(stderr, "[App] water renderer init failed — water will not render\n");
+  }
+
   obstacles_.initGL();
   if (!obstacles_.loadTreeModel(resolveFromExe(kTreeModelPath))) {
     std::fprintf(stderr, "[App] tree model load failed — using procedural trees\n");
@@ -319,7 +330,18 @@ int App::run() {
 }
 
 void App::generateAndBuildTerrain() {
-  map_ = world::generateMap(kMapWidth, kMapHeight, mapSeed_, noiseFreq_, noiseAmp_);
+  // Try to load a saved map from worldMap.json (level editor output).
+  // If found, it provides terrain, obstacles, water tiles, and spawn data.
+  // If not found, fall back to procedural generation (no water).
+  const auto mapPath = resolveFromExe(kWorldMapPath);
+  if (!shared::loadWorldMap(mapPath, map_)) {
+    map_ = world::generateMap(kMapWidth, kMapHeight, mapSeed_, noiseFreq_, noiseAmp_);
+    std::fprintf(stdout, "[App] no worldMap.json found — using procedural map\n");
+  } else {
+    std::fprintf(stdout, "[App] loaded worldMap.json (%dx%d, %zu water tiles)\n",
+                 map_.width, map_.height, map_.waterTiles.size());
+  }
+
   const auto data = world::buildTerrainMesh(map_);
   terrainMesh_.upload(data.positions, data.colors,
                       data.triangleIndices, data.lineIndices,
@@ -330,6 +352,10 @@ void App::generateAndBuildTerrain() {
   hoveredTile_    = {};  // hover stale after regenerate
 
   obstacles_.rebuildFromMap(map_);
+
+  // Rebuild water mesh from loaded/generated map.
+  if (waterRenderer_.valid())
+    waterRenderer_.rebuild(map_, waterUniforms_.waterOffset);
 
   std::fprintf(stdout, "[App] terrain mesh: %d x %d tiles, %zu verts, %zu tri-idx, %zu line-idx\n",
                data.width, data.height,
@@ -801,6 +827,22 @@ void App::renderFrame() {
       glBindVertexArray(0);
       glDepthMask(GL_TRUE);
     }
+  }
+
+  // ---- Water pass (after all opaque geometry) --------------------------------
+  // Resolve colour for SSR and depth for foam, then draw water back into the
+  // MSAA FBO so it composites correctly with the rest of the scene.
+  if (!map_.waterTiles.empty() && waterRenderer_.valid()) {
+    msaa_->resolve();       // colour snapshot for screen-space reflection
+    msaa_->resolveDepth();  // depth snapshot (currently unused but kept for foam)
+    msaa_->bind();
+    glViewport(0, 0, fbW, fbH);
+    waterRenderer_.render(
+        static_cast<float>(glfwGetTime()),
+        viewProj,
+        msaa_->resolveColorTexture(),
+        msaa_->resolveDepthTexture(),
+        waterUniforms_);
   }
 
   // ---- Resolve to single-sample + blit to window ----------------------------
