@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-**Snook Online** — a browser-based MMO heavily inspired by Old School RuneScape. Long-term goal: surpass OSRS by overcoming its technical limitations with modern technology. Server-authoritative at **200ms ticks** (vs OSRS's 600ms limit).
+**Project Reverie** — a server-authoritative MMO heavily inspired by Old School RuneScape. Long-term goal: surpass OSRS by overcoming its technical limitations with modern technology. Server-authoritative at **200ms ticks** (vs OSRS's 600ms limit).
 
 For how OSRS systems work, use https://oldschool.runescape.wiki as the reference.
 Feature documentation lives in `docs/Features/`.
@@ -10,8 +10,6 @@ Feature documentation lives in `docs/Features/`.
 ---
 
 ## Dev Commands
-
-**Client (Vite, hot-reload):** `npm run dev`
 
 **Server (tsx watch, auto-restart):** `npm run server`
 
@@ -21,54 +19,86 @@ Feature documentation lives in `docs/Features/`.
 ```
 "C:\Program Files\nodejs\node.exe" ".\node_modules\typescript\bin\tsc" --noEmit
 ```
-`npx` is not in PATH on this machine — always use the full node path above. Run after every change.
+`npx` is not in PATH on this machine — always use the full node path above. Run after every server-side change.
 
-**Build:** `npm run build`
-
-**Native client / level editor (PowerShell):**
+**Native client build (PowerShell):**
 ```powershell
-# Level editor only
-& "C:\Program Files\Microsoft Visual Studio\18\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe" --build "client-native\build" --config Release --target level-editor
-
-# Game client only
+# Game client
 & "C:\Program Files\Microsoft Visual Studio\18\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe" --build "client-native\build" --config Release --target client-native
 
-# Both
+# Both client + level editor
 & "C:\Program Files\Microsoft Visual Studio\18\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe" --build "client-native\build" --config Release
 ```
-Output: `client-native\build\Release\level-editor.exe` and `client-native\build\Release\client-native.exe`
+Output: `client-native\build\Release\client-native.exe`
 
-No test suite. TypeScript type-checking is the primary correctness gate.
+No test suite. TypeScript type-checking is the primary correctness gate for server code.
 
 ---
 
 ## Local Dev Setup
 
-Two processes run side by side. PostgreSQL (Docker) must be up before starting the server.
+Two processes: PostgreSQL (Docker) + Node server. The native client binary connects directly.
 
 **Server defaults** (no `.env` file needed locally — values are hard-coded as fallbacks):
 - `DATABASE_URL` → `postgresql://postgres:dev@localhost:5432/mmo`
 - `JWT_SECRET` → `dev-secret-change-in-production`
 - `PORT` → `8080`
 
-**Client defaults** (override via `.env.local`):
-- `VITE_AUTH_URL` → `http://localhost:8080/auth`
-- `VITE_WS_URL` → `ws://localhost:8080`
-
 ---
 
 ## Tech Stack
 
-- **Babylon.js v7** — 3D rendering, left-handed coordinate system
-- **TypeScript + Vite** — client; no framework, vanilla DOM for UI
-- **Node.js + Express + `ws`** — game server; HTTP and WebSocket share one port (`server/index.ts`)
+### Client — Native C++ / OpenGL 4.6
+- **C++20** with CMake ≥ 3.25 + vcpkg (manifest mode)
+- **GLFW 3** — window + input
+- **GLAD** (GL 4.6 Core) — GL loader
+- **GLM** — math
+- **Dear ImGui** (docking branch) — all in-game UI
+- **cgltf** — glTF model loading (player.glb, tree.gltf)
+- **miniaudio** — procedural audio synthesis
+- **IXWebSocket** — WebSocket client (mbedtls/bcrypt for TLS)
+- **glaze** — JSON parsing (server state messages)
+
+### Server — Node.js / TypeScript
+- **Node.js + Express + `ws`** — HTTP and WebSocket share one port (`server/index.ts`)
 - **PostgreSQL + `pg`** — player account persistence
 - **JWT + bcryptjs** — authentication
-- **Web Audio API** — procedural audio synthesis, no audio files
 
 ---
 
-## Architecture: Two Separate Processes
+## Repository Layout
+
+```
+client-native/          ← Native C++/OpenGL client (the only client)
+  CMakeLists.txt
+  CMakePresets.json
+  vcpkg.json
+  src/                  ← C++ source (app, render, world, ui, audio, net, camera, input)
+  shaders/              ← GLSL shaders
+  assets/               ← models, maps
+  build/                ← CMake build output (gitignored)
+
+server/                 ← Node.js/TypeScript authoritative game server (UNCHANGED)
+  index.ts
+  GameLoop.ts
+  auth/router.ts
+  db/
+
+src/shared/             ← TypeScript schema source of truth (types.ts, constants.ts)
+src/editor/             ← Level editor (deferred — browser-based, revisit later)
+
+tools/                  ← Utility scripts
+scripts/                ← Build/export helpers
+docs/                   ← Feature documentation
+public/                 ← Assets served to the server or used by tooling
+```
+
+The browser client (`src/audio`, `src/engine`, `src/ui`, etc.) has been removed.
+`npm run dev` no longer exists. `client-native.exe` is the only game client.
+
+---
+
+## Server Architecture
 
 ### Server (`server/`)
 The authoritative game world. Runs `GameLoop` which calls `processTick()` every 200ms.
@@ -90,17 +120,6 @@ server/db/schema.sql          ← players table (UUID PK, username, password_has
 - `4001` — auth required / invalid token
 - `4002` — duplicate session (account already connected)
 
-### Client (`src/`)
-Rendering and input only — no game logic authority. Receives `ServerStatePatch` every 200ms and interpolates at 60fps.
-
-```
-src/shared/types.ts         ← Single source of truth for ALL types and the GameAction union
-src/engine/GameEngine.ts    ← Wires scene, camera, input, network, UI; owns render loop
-src/engine/TickSystem.ts    ← Pure processTick() — called server-side by GameLoop
-src/engine/InputManager.ts  ← Pointer/keyboard → actions enqueued then sent via NetworkClient
-src/engine/NetworkClient.ts ← WebSocket wrapper; connect/sendActions/onInit/onState/onClose
-```
-
 ---
 
 ## Core Architecture: Pure State Machine
@@ -119,118 +138,45 @@ src/engine/NetworkClient.ts ← WebSocket wrapper; connect/sendActions/onInit/on
 
 **Order matters.** Movement runs after Combat: MOVE_TO cancels combat. Woodcutting runs last because tree health is global.
 
-### Render Loop (60fps) — Client-Side
+---
 
-Interpolates between `prevState` and `currentState` using:
-```ts
-alpha = (now - lastServerTickTime) / TICK_DURATION_MS  // 0..1
-```
+## Schema Source of Truth
 
-**Per-tick event detection** inside the 60fps loop:
-```ts
-if (this.currentState.tick > this.lastHitTick) {
-  this.lastHitTick = this.currentState.tick;
-  // compare prevState vs currentState — fires exactly once per server tick
-}
-```
-Used for hitsplats, sounds, equip/unequip detection, chop animations.
+`src/shared/types.ts` and `src/shared/constants.ts` are the **canonical** definitions for all game types, actions, and constants.
 
-### Action Dispatch Flow
-
-```
-User gesture
-  → InputManager.enqueue(action)
-  → dispatch() → NetworkClient.sendActions() → WebSocket → server
-  → GameLoop.enqueueActions() → processTick() at next 200ms tick
-  → ServerStatePatch broadcast (interest-filtered per client)
-  → NetworkClient.onState() → GameEngine updates prevState/currentState
-  → GameUI.update(state) refreshes DOM panels
-```
-
-The `dispatch` function is created in `GameEngine` and threaded into `InputManager` and all UI components.
+The native client's `client-native/src/shared/SharedTypes.hpp` is a **hand-written C++ mirror** of these files. When adding new fields to the TypeScript types, also update the C++ mirror and the glaze JSON meta in `SharedTypesJson.hpp`.
 
 ---
 
-## UI Architecture
+## Native Client — Key Files
 
-All UI is **DOM overlay** (`position: fixed`) over the canvas. No Babylon.js GUI.
-
-- **`src/ui/LoginUI.ts`** — login/register screen shown before WS connects; `showWithError(msg)` re-shows with error pre-filled
-- **`src/ui/GameUI.ts`** — root UI; owns the tab bar (Inv | Skills | Equip)
-- **`src/ui/ChatLog.ts`** — singleton; yellow = system (`ChatLog.log()`), white = player chat (`ChatLog.chat()`)
-- **`src/ui/OverheadChat.ts`** — floating chat bubble, driven by `player.chatMessage` / `player.chatMessageTick`
-- **`src/ui/HitSplatManager.ts`** — DOM hit splats, world-projected each frame
-- **`src/ui/HealthBarManager.ts`** — DOM health bars above NPCs, world-projected each frame
-- **`src/ui/ItemTooltip.ts`** — singleton tooltip on inventory/equipment hover
-
-**World→screen projection** (all DOM overlays use this):
-```ts
-Vector3.Project(
-  new Vector3(worldX, worldY, worldZ),
-  Matrix.Identity(),
-  scene.getTransformMatrix(),
-  scene.activeCamera!.viewport.toGlobal(engine.getRenderWidth(), engine.getRenderHeight())
-)
-```
-
-For overlays that follow the player, use `this.player.worldPosition` (interpolated mesh position), not `player.tileX / player.tileY`.
-
----
-
-## Babylon.js Conventions
-
-### Coordinate System
-Left-handed. Tile `(x, y)` → `Vector3(x, 0, y)`. Y is up. Player root at Y=0; overhead chat at Y=1.05.
-
-### Mesh Naming — Critical for Raycasting and HighlightLayer
-| Entity | Mesh name(s) |
+| Path | Role |
 |---|---|
-| Ground | `ground` |
-| Tree | `tree-trunk-{x}-{y}`, `tree-canopy-{x}-{y}` (InstancedMesh) |
-| Rock | `rock-{x}-{y}` (InstancedMesh) |
-| NPC | `npc-root-{id}` (no geometry, not pickable) + `npc-{id}` (hitbox) + visual children |
-| Dropped item | `item-{droppedItemId}` (root/hitbox) + visual children |
-| Player | root = `player-root`, **renderingGroupId = 1** (draws after world at group 0) |
-
-### InstancedMesh (Trees and Rocks)
-Trees and rocks use `InstancedMesh` for performance — one draw call per type. Source meshes are hidden at `y = -1000` with `isPickable = false`. **Each instance must explicitly set `isPickable = true`** after `createInstance()` — instances do not inherit the default `true` when the source has `isPickable = false`. Without this, clicks fall through to the ground tile and nothing is dispatched.
-
-`HighlightLayer` is incompatible with `InstancedMesh`. Invisible proxy `Mesh` objects (`hl-trunk`, `hl-canopy`, `hl-rock` in `GameEngine`) are repositioned over the hovered instance each frame to produce the glow.
-
-### HighlightLayer
-`hoverHighlight` adds meshes by name. Skip any mesh where `visibility < 0.01` or `getTotalVertices() === 0` to avoid Babylon errors.
-
----
-
-## Equipment Slot Layout
-
-5×3 CSS grid, human-shaped (`EquipmentUI.ts`):
-```
-[ —          head       —         ]
-[ —          neck       ammo      ]
-[ rightHand  body       leftHand  ]   ← Main Hand (right), Off-hand (left)
-[ —          legs       —         ]
-[ hands      feet       ring      ]
-```
-
----
-
-## Skill Icons
-
-Icons live in `public/icons/skills/{skillId}.png` (served at `/icons/skills/`). The `ICON_IDS` set in `SkillsUI.ts` controls which skills show an image vs a colored placeholder square. Add the PNG first, then add the skill ID to `ICON_IDS`.
-
----
-
-## Audio
-
-`src/audio/SoundEngine.ts` — fully procedural Web Audio API, no external files. `AudioContext` resumes on first `pointerdown`/`keydown` (browser autoplay policy). Methods: `playHit()`, `playStrike()`, `playEquip()`, `playUnequip()`. All triggered inside the tick-gate block in `GameEngine` by comparing `prevState` vs `currentState`.
+| `client-native/src/app/App.{hpp,cpp}` | Top-level: render loop, all system wiring |
+| `client-native/src/app/Window.{hpp,cpp}` | GLFW window + input callbacks |
+| `client-native/src/camera/GameCamera.{hpp,cpp}` | ArcRotate camera (middle-mouse, wheel zoom) |
+| `client-native/src/input/Picker.{hpp,cpp}` | Ray-vs-heightfield + cylinder obstacle picking |
+| `client-native/src/net/NetworkClient.{hpp,cpp}` | HTTP login + WebSocket + message queue |
+| `client-native/src/world/MapGenerator.{hpp,cpp}` | Procedural world (Perlin-FBM, 64×64) |
+| `client-native/src/world/TerrainBuilder.{hpp,cpp}` | Welded-corner mesh + Lambert-baked vertex colors |
+| `client-native/src/world/ObstacleSystem.{hpp,cpp}` | Trees (glTF 1×1) + rocks + fences, instanced + stencil outline |
+| `client-native/src/world/WaterRenderer.{hpp,cpp}` | Water plane + foam depth intersection |
+| `client-native/src/world/EntityRenderer.{hpp,cpp}` | Remote players, NPCs, dropped items |
+| `client-native/src/world/SkinnedMesh.{hpp,cpp}` | cgltf load + matrix-palette skinned player model |
+| `client-native/src/render/MsaaFramebuffer.{hpp,cpp}` | 4× MSAA FBO + depth resolve texture for water |
+| `client-native/src/render/ShadowMap.{hpp,cpp}` | Directional shadow map (PCF 3×3) |
+| `client-native/src/ui/Panels.{hpp,cpp}` | ImGui panels: HUD, Bank, ChatLog |
+| `client-native/src/ui/WorldOverlays.{hpp,cpp}` | Hit splats, health bars, overhead chat |
+| `client-native/src/audio/AudioEngine.{hpp,cpp}` | miniaudio synth: hit, strike, equip, unequip |
+| `client-native/src/shared/SharedTypes.hpp` | C++ mirror of `src/shared/types.ts` |
+| `client-native/src/shared/SharedTypesJson.hpp` | Glaze JSON metas for string-backed enums |
 
 ---
 
 ## Code Practices
 
-- **No mutation** — game systems return new state objects via spread (`{ ...player, field: value }`). Never mutate the input state.
-- **Types first** — add new actions to the `GameAction` discriminated union in `types.ts` before implementing. Add new player/NPC fields to their interfaces there too.
+- **Server: no mutation** — game systems return new state objects via spread (`{ ...player, field: value }`). Never mutate the input state.
+- **Types first** — add new actions to the `GameAction` discriminated union in `src/shared/types.ts` before implementing. Mirror changes in `SharedTypes.hpp`.
 - **System order matters** — do not reorder the five systems in `TickSystem.ts` without understanding the cascade.
-- **DOM menus** — context menus and slot menus are created fresh on each invocation and removed on dismiss. They are not persistent components.
-- **After changes** — check imports, type vs value exports, and missing wires; then run the TypeScript type-check. Use Claude in Chrome tools to check the browser console for runtime errors where possible.
+- **After server changes** — run the TypeScript type-check; check server console for runtime errors.
+- **After client changes** — rebuild `client-native` and run the exe; check the GL debug output in the console.

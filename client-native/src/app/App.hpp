@@ -81,6 +81,7 @@ private:
   // hovered tile.
   GLuint                                   hoverVao_     = 0;
   GLuint                                   hoverVbo_     = 0;
+  GLuint                                   hoverEbo_     = 0;  // 2-triangle index buffer for filled quad
 
   // Networking
   net::NetworkClient                       network_;

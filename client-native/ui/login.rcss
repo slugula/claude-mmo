@@ -1,0 +1,106 @@
+/* ============================================================
+   OSRS Prototype — Login UI Stylesheet
+   The document body acts as the full-screen flex host so that
+   no extra wrapper element is needed.
+   ============================================================ */
+
+/* Body = full-screen dark overlay */
+body {
+  font-family: Segoe UI;
+  font-size: 13dp;
+  color: #ffffff;
+  background-color: rgba(0, 0, 0, 0.80);
+}
+
+/* Centred dialog box.
+   RmlUi does not support transform, so we use calc() to offset by half the
+   box width/height from the 50% anchor point. */
+#login-box {
+  position: absolute;
+  left: calc(50% - 130dp);
+  top: calc(50% - 165dp);
+  width: 260dp;
+  background-color: #1a0d00;
+  border-width: 1dp;
+  border-color: #8b6c3e;
+  border-radius: 4dp;
+  padding: 24dp 28dp 20dp 28dp;
+}
+
+#login-logo {
+  display: block;
+  text-align: center;
+  font-size: 22dp;
+  font-weight: bold;
+  color: #ff981f;
+  margin-bottom: 6dp;
+}
+
+#login-subtitle {
+  display: block;
+  text-align: center;
+  font-size: 11dp;
+  font-weight: bold;
+  color: #c8a060;
+  margin-bottom: 18dp;
+}
+
+.form-group {
+  margin-bottom: 10dp;
+}
+
+.form-label {
+  display: block;
+  font-size: 10dp;
+  font-weight: bold;
+  color: #c8a060;
+  margin-bottom: 3dp;
+}
+
+.form-input {
+  width: 100%;
+  padding: 6dp 8dp;
+  background-color: #0d0600;
+  border-width: 1dp;
+  border-color: rgba(61, 32, 16, 0.70);
+  border-radius: 2dp;
+  color: #ffffff;
+  font-size: 13dp;
+}
+
+.form-input:focus {
+  border-color: #ff981f;
+}
+
+#login-submit {
+  width: 100%;
+  padding: 8dp 0dp;
+  margin-top: 12dp;
+  background-color: #3d2010;
+  border-width: 1dp;
+  border-color: #8b6c3e;
+  border-radius: 2dp;
+  color: #ff981f;
+  font-size: 13dp;
+  font-weight: bold;
+  text-align: center;
+}
+
+#login-submit:hover {
+  background-color: #5a3020;
+}
+
+#login-submit:active {
+  background-color: #2a1508;
+}
+
+.status {
+  margin-top: 8dp;
+  font-size: 11dp;
+  color: #c8a060;
+  text-align: center;
+}
+
+.status.error {
+  color: #ff4444;
+}

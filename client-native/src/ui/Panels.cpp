@@ -52,22 +52,18 @@ static int xpForLevel(int lvl) {
 }
 
 // ---- Skill / equip meta ----------------------------------------------------
-constexpr std::array<const char*, 9> kSkillOrder = {
-  "hitpoints", "attack", "strength", "defence",
-  "ranged",    "magic",  "prayer",   "woodcutting", "fishing",
+// Matches server's VISIBLE_SKILLS: hitpoints, defence, warrior, gunner, woodcutting
+constexpr std::array<const char*, 5> kSkillOrder = {
+  "hitpoints", "defence", "warrior", "gunner", "woodcutting",
 };
 
-// Skill icon placeholder colors (one per skill, OSRS-ish palette)
-constexpr std::array<ImU32, 9> kSkillColors = {
-  IM_COL32(220, 40, 40, 255),   // hitpoints — red
-  IM_COL32(200, 50, 50, 255),   // attack — red
-  IM_COL32(130, 80, 200, 255),  // strength — purple
-  IM_COL32(60, 120, 220, 255),  // defence — blue
-  IM_COL32(40, 180, 70, 255),   // ranged — green
-  IM_COL32(50, 50, 220, 255),   // magic — blue
-  IM_COL32(230, 200, 40, 255),  // prayer — yellow
-  IM_COL32(80, 50, 20, 255),    // woodcutting — brown
-  IM_COL32(40, 90, 200, 255),   // fishing — blue
+// Skill icon placeholder colors — matches production TS client palette
+constexpr std::array<ImU32, 5> kSkillColors = {
+  IM_COL32(220,  40,  40, 255),  // hitpoints  — red     (#e06060)
+  IM_COL32( 60, 120, 220, 255),  // defence    — blue    (#60a0e0)
+  IM_COL32(200, 136,  44, 255),  // warrior    — orange  (#d4882c)
+  IM_COL32(  0, 207, 255, 255),  // gunner     — cyan    (#00cfff)
+  IM_COL32( 80, 144,  64, 255),  // woodcutting — green  (#509040)
 };
 
 constexpr int kInventoryCols = 4;
@@ -135,6 +131,27 @@ const char* equipSlotForItem(const std::string& id) {
   if (id == "gold_ring")                              return "ring";
   if (id == "amulet")                                 return "neck";
   return "";
+}
+
+// ---- Equipment stat bonuses (mirrors src/data/items.json) -----------------
+struct ItemStats { int mAtk=0, mStr=0, mDef=0, rAtk=0, rStr=0, rDef=0; };
+ItemStats statsForItem(const std::string& id) {
+  if (id=="axe")               return { 4, 0, 0, 0, 0, 0};
+  if (id=="iron_axe")          return {-1, 0, 2, 0, 0, 0};
+  if (id=="pickaxe")           return { 6, 0, 1, 0, 0, 0};
+  if (id=="bronze_sword")      return { 6, 3, 0, 0, 0, 0};
+  if (id=="iron_sword")        return {10, 5, 0, 0, 0, 0};
+  if (id=="bronze_longsword")  return { 8, 7, 0, 0, 0, 0};
+  if (id=="basic_chaingun")    return { 0, 0, 0, 8, 4, 0};
+  if (id=="bronze_shield")     return { 0, 0, 5, 0, 0, 0};
+  if (id=="leather_helm")      return { 0, 0, 1, 0, 0, 0};
+  if (id=="bronze_helm")       return { 0, 0, 3, 0, 0, 0};
+  if (id=="leather_body")      return { 0, 0, 2, 0, 0, 0};
+  if (id=="leather_legs")      return { 0, 0, 1, 0, 0, 0};
+  if (id=="leather_gloves")    return { 0, 0, 1, 0, 0, 0};
+  if (id=="leather_boots")     return { 0, 0, 1, 0, 0, 0};
+  if (id=="amulet")            return { 0, 4, 0, 0, 0, 0};
+  return {};
 }
 
 // Returns true for cooked food items that can be eaten.
@@ -251,12 +268,13 @@ void drawInventoryTab(const shared::PlayerState& p, net::NetworkClient* netc,
         ImGui::TextUnformatted(prettyItemId(slot->itemId).c_str());
         ImGui::PopStyleColor();
         ImGui::Separator();
-        if (ImGui::Selectable("Equip"))   netc->sendEquipItem(idx);
-        if (ImGui::Selectable("Drop"))    netc->sendDropItem(idx);
-        if (ImGui::Selectable("Examine")) {
-          // No server-side description available yet — log item ID to chat.
-          netc->sendExamine(slot->itemId);
+        // Primary verb first (Wield / Wear / Eat) — only shown when applicable
+        const char* pverb = primaryInventoryVerb(slot->itemId);
+        if (pverb[0] != '\0') {
+          if (ImGui::Selectable(pverb)) netc->sendEquipItem(idx);
         }
+        if (ImGui::Selectable("Drop"))    netc->sendDropItem(idx);
+        if (ImGui::Selectable("Examine")) netc->sendExamine(slot->itemId);
         ImGui::EndPopup();
       }
       if (slot && ImGui::IsItemHovered()) {
@@ -290,8 +308,8 @@ void drawSkillsTab(const shared::PlayerState& p) {
     totalLevel += (it != p.skills.end()) ? it->second.level : 1;
   }
 
-  // 3-column card grid — each card shows icon placeholder, name, level, XP bar.
-  constexpr int   kCols    = 3;
+  // 2-column card grid — matches production (5 skills: 2+2+1 rows)
+  constexpr int   kCols    = 2;
   constexpr float kCardW   = 64.0f;
   constexpr float kCardH   = 60.0f;
   constexpr float kIconSz  = 22.0f;
@@ -392,7 +410,7 @@ void drawSkillsTab(const shared::PlayerState& p) {
 
   ImGui::Separator();
   ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.00f, 0.65f, 0.15f, 1.0f));
-  ImGui::Text("Total level: %d / %d", totalLevel, 99 * static_cast<int>(kSkillOrder.size()));
+  ImGui::Text("Total level: %d / %d", totalLevel, 99 * 5);
   ImGui::PopStyleColor();
 }
 
@@ -467,6 +485,25 @@ void drawEquipmentTab(const shared::PlayerState& p, net::NetworkClient* netc,
       if (col + 1 < 3) ImGui::SameLine(0.0f, kPad);
     }
   }
+
+  // ---- Aggregated equipment bonuses ----------------------------------------
+  ItemStats tot;
+  for (const auto& [slotKey, stack] : p.equipped) {
+    ItemStats s = statsForItem(stack.itemId);
+    tot.mAtk += s.mAtk; tot.mStr += s.mStr; tot.mDef += s.mDef;
+    tot.rAtk += s.rAtk; tot.rStr += s.rStr; tot.rDef += s.rDef;
+  }
+  ImGui::Separator();
+  constexpr ImVec4 kOrange {1.0f, 0.55f, 0.0f, 1.0f};
+  ImGui::PushStyleColor(ImGuiCol_Text, kOrange);
+  ImGui::TextUnformatted("Attack Bonuses");
+  ImGui::PopStyleColor();
+  ImGui::Text("Melee Atk:  %+d   Str: %+d", tot.mAtk, tot.mStr);
+  ImGui::Text("Ranged Atk: %+d   Str: %+d", tot.rAtk, tot.rStr);
+  ImGui::PushStyleColor(ImGuiCol_Text, kOrange);
+  ImGui::TextUnformatted("Defence Bonuses");
+  ImGui::PopStyleColor();
+  ImGui::Text("Melee Def:  %+d   Ranged: %+d", tot.mDef, tot.rDef);
 }
 
 }  // namespace
@@ -477,8 +514,8 @@ void drawHudPanel(const shared::PlayerState& p, net::NetworkClient* net,
                   UiHoverState* hover) {
   const ImGuiIO& io = ImGui::GetIO();
   constexpr float kW      = 232.0f;
-  // Skills tab now uses cards — needs a bit more height than before.
-  constexpr float kHudH   = 420.0f;
+  // Equipment tab has bonus stats panel; skills now 5 skills in 2 columns.
+  constexpr float kHudH   = 460.0f;
   constexpr float kPadX   = 12.0f;
   constexpr float kPadY   = 12.0f;
 
