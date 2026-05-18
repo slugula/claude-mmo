@@ -140,21 +140,39 @@ float facingToYaw(const std::string& facing) {
 }
 
 // Choose the base animation clip for a player's current movement state.
+// `prev` is the player state from the previous server tick (may be nullptr).
 // One-shot overrides (attack, hit, pickup) are applied by the caller on top.
-const char* clipForPlayer(const shared::PlayerState* p) {
+//
+// The path is consumed server-side before broadcast, so a single-tile move
+// arrives with path=[] and tileX/Y already at the destination.  We detect
+// that case by comparing curr vs prev positions rather than path length.
+const char* clipForPlayer(const shared::PlayerState* p,
+                          const shared::PlayerState* prev = nullptr) {
   if (!p) return "Idle_Loop";
-  if (p->dying)        return "Death01";
-  if (p->path.empty()) return "Idle_Loop";
+  if (p->dying) return "Death01";
 
-  // Single remaining step that is purely cardinal (orthogonal) → Walk_Loop.
-  // This covers both "click one tile away" and "the last step of a longer
-  // diagonal path that ends with a cardinal tile".
-  if (p->path.size() == 1) {
+  const bool hasPending = !p->path.empty();
+  const bool justMoved  = prev &&
+                          (prev->tileX != p->tileX || prev->tileY != p->tileY);
+
+  if (!hasPending && !justMoved) return "Idle_Loop";
+
+  // Helper: was the movement step diagonal?
+  auto isDiag = [](int dx, int dy) { return dx != 0 && dy != 0; };
+
+  if (hasPending) {
+    // More than one step remaining → Sprint.
+    if (p->path.size() > 1) return "Sprint_Loop";
+    // Exactly one step left: cardinal → Walk, diagonal → Sprint.
     const int dx = p->path[0].x - p->tileX;
     const int dy = p->path[0].y - p->tileY;
-    if (dx == 0 || dy == 0) return "Walk_Loop";
+    return isDiag(dx, dy) ? "Sprint_Loop" : "Walk_Loop";
   }
-  return "Sprint_Loop";
+
+  // No pending path but we moved this tick — drive from the delta.
+  const int dx = p->tileX - prev->tileX;
+  const int dy = p->tileY - prev->tileY;
+  return isDiag(dx, dy) ? "Sprint_Loop" : "Walk_Loop";
 }
 }  // namespace
 
@@ -828,7 +846,10 @@ void App::renderFrame() {
         desiredClip = ra.oneShotClip.c_str();
       } else {
         if (!ra.oneShotClip.empty()) ra.oneShotClip.clear();
-        desiredClip = clipForPlayer(&rp);
+        auto prevRpIt = prevRemotePlayers_.find(id);
+        const shared::PlayerState* prevRp =
+          prevRpIt != prevRemotePlayers_.end() ? &prevRpIt->second : nullptr;
+        desiredClip = clipForPlayer(&rp, prevRp);
       }
       const int wantIdx = playerModel_.findClipIndex(desiredClip);
       if (wantIdx != ra.clipIndex) {
@@ -1778,7 +1799,9 @@ void App::renderPlayer(const glm::mat4& viewProj, float dt) {
     desired = oneShotClip_.c_str();
   } else {
     if (!oneShotClip_.empty()) oneShotClip_.clear();
-    desired = clipForPlayer(&*currLocalPlayer_);
+    const shared::PlayerState* prevPtr =
+      prevLocalPlayer_.has_value() ? &*prevLocalPlayer_ : nullptr;
+    desired = clipForPlayer(&*currLocalPlayer_, prevPtr);
   }
   if (playerModel_.clipName() != desired) {
     playerModel_.setClip(desired);
