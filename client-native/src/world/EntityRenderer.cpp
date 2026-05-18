@@ -148,6 +148,10 @@ EntityRenderer::~EntityRenderer() {
 }
 
 void EntityRenderer::destroy() {
+  if (npcOutlineVao_)      glDeleteVertexArrays(1, &npcOutlineVao_);
+  if (itemOutlineVao_)     glDeleteVertexArrays(1, &itemOutlineVao_);
+  if (outlineInstanceVbo_) glDeleteBuffers(1, &outlineInstanceVbo_);
+  npcOutlineVao_ = itemOutlineVao_ = outlineInstanceVbo_ = 0;
   for (Kit* k : {&humanoid_, &itemBox_}) {
     if (k->vao)    glDeleteVertexArrays(1, &k->vao);
     if (k->ebo)    glDeleteBuffers(1, &k->ebo);
@@ -224,6 +228,12 @@ void EntityRenderer::initGL() {
   appendBox(box, /*hx*/0.15f, /*hy*/0.12f, /*hz*/0.15f, /*yOff*/0.05f);
   uploadKit(itemBox_, box.positions, box.normals, box.indices, itemInstanceVbo_);
   itemBox_.color = glm::vec3(0.66f, 0.58f, 0.24f);  // warm gold
+
+  // Single-instance VBO + per-kit outline VAOs for the 2-pass stencil outline.
+  glCreateBuffers(1, &outlineInstanceVbo_);
+  glNamedBufferStorage(outlineInstanceVbo_, sizeof(Instance), nullptr, GL_DYNAMIC_STORAGE_BIT);
+  npcOutlineVao_  = buildOutlineVao(humanoid_);
+  itemOutlineVao_ = buildOutlineVao(itemBox_);
 }
 
 void EntityRenderer::rebuildNpcs(const std::vector<shared::NPCState>& npcs,
@@ -303,6 +313,112 @@ void EntityRenderer::render(render::Shader& shader) {
                             nullptr, static_cast<GLsizei>(itemCount_));
   }
   glBindVertexArray(0);
+}
+
+// ---------------------------------------------------------------------------
+// Outline helpers
+// ---------------------------------------------------------------------------
+
+GLuint EntityRenderer::buildOutlineVao(const Kit& kit) const {
+  GLuint vao = 0;
+  glCreateVertexArrays(1, &vao);
+  // position (binding 0)
+  glVertexArrayVertexBuffer(vao, 0, kit.vboPos, 0, sizeof(float) * 3);
+  glEnableVertexArrayAttrib(vao, 0);
+  glVertexArrayAttribFormat(vao, 0, 3, GL_FLOAT, GL_FALSE, 0);
+  glVertexArrayAttribBinding(vao, 0, 0);
+  // normal (binding 1)
+  glVertexArrayVertexBuffer(vao, 1, kit.vboNrm, 0, sizeof(float) * 3);
+  glEnableVertexArrayAttrib(vao, 1);
+  glVertexArrayAttribFormat(vao, 1, 3, GL_FLOAT, GL_FALSE, 0);
+  glVertexArrayAttribBinding(vao, 1, 1);
+  // single instance — pos xyz (binding 2, divisor 1)
+  glVertexArrayVertexBuffer(vao, 2, outlineInstanceVbo_, 0, sizeof(Instance));
+  glVertexArrayBindingDivisor(vao, 2, 1);
+  glEnableVertexArrayAttrib(vao, 2);
+  glVertexArrayAttribFormat(vao, 2, 3, GL_FLOAT, GL_FALSE, offsetof(Instance, x));
+  glVertexArrayAttribBinding(vao, 2, 2);
+  // single instance — rotY (binding 2, offset 12)
+  glEnableVertexArrayAttrib(vao, 3);
+  glVertexArrayAttribFormat(vao, 3, 1, GL_FLOAT, GL_FALSE, offsetof(Instance, rotY));
+  glVertexArrayAttribBinding(vao, 3, 2);
+  // index buffer
+  glVertexArrayElementBuffer(vao, kit.ebo);
+  return vao;
+}
+
+void EntityRenderer::doOutline2Pass(render::Shader& shader,
+                                    GLuint   vao,
+                                    GLsizei  indexCount,
+                                    const glm::mat4& viewProj,
+                                    const Instance&  inst,
+                                    const glm::vec4& color,
+                                    float    outlineWidth) const {
+  // Upload the single instance we want to outline.
+  glNamedBufferSubData(outlineInstanceVbo_, 0, sizeof(Instance), &inst);
+
+  shader.use();
+  shader.setMat4("u_viewProj",     viewProj);
+  shader.setVec4("u_outlineColor", color);
+
+  // ---------- Save state -----------------------------------------------
+  GLboolean oldCullEn, oldDepthWr;
+  glGetBooleanv(GL_CULL_FACE,       &oldCullEn);
+  glGetBooleanv(GL_DEPTH_WRITEMASK, &oldDepthWr);
+  GLint oldCullFace;
+  glGetIntegerv(GL_CULL_FACE_MODE,  &oldCullFace);
+
+  // ---------- Pass 1: stamp stencil, no colour output -------------------
+  glEnable(GL_STENCIL_TEST);
+  glStencilMask(0xFF);
+  glClear(GL_STENCIL_BUFFER_BIT);
+  glStencilFunc(GL_ALWAYS, 1, 0xFF);
+  glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);
+  glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
+  glEnable(GL_CULL_FACE);
+  glCullFace(GL_BACK);
+  glDepthMask(GL_FALSE);
+
+  shader.setFloat("u_outlineWidth", 0.0f);
+  glBindVertexArray(vao);
+  glDrawElementsInstanced(GL_TRIANGLES, indexCount, GL_UNSIGNED_INT, nullptr, 1);
+
+  // ---------- Pass 2: only pixels NOT in stencil = outline ring ---------
+  glStencilFunc(GL_NOTEQUAL, 1, 0xFF);
+  glStencilOp(GL_KEEP, GL_KEEP, GL_KEEP);
+  glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+  glCullFace(GL_FRONT);  // back-shell only
+
+  shader.setFloat("u_outlineWidth", outlineWidth);
+  glDrawElementsInstanced(GL_TRIANGLES, indexCount, GL_UNSIGNED_INT, nullptr, 1);
+
+  glBindVertexArray(0);
+
+  // ---------- Restore state ---------------------------------------------
+  glCullFace(static_cast<GLenum>(oldCullFace));
+  if (!oldCullEn) glDisable(GL_CULL_FACE);
+  glDepthMask(oldDepthWr);
+  glStencilMask(0xFF);
+  glDisable(GL_STENCIL_TEST);
+  glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+}
+
+void EntityRenderer::renderNpcOutline(render::Shader& outlineShader,
+                                      const glm::mat4& viewProj,
+                                      const Instance&  inst,
+                                      const glm::vec4& color) const {
+  if (!npcOutlineVao_ || !outlineInstanceVbo_) return;
+  doOutline2Pass(outlineShader, npcOutlineVao_, humanoid_.indexCount,
+                 viewProj, inst, color, 0.07f);
+}
+
+void EntityRenderer::renderItemOutline(render::Shader& outlineShader,
+                                       const glm::mat4& viewProj,
+                                       const Instance&  inst,
+                                       const glm::vec4& color) const {
+  if (!itemOutlineVao_ || !outlineInstanceVbo_) return;
+  doOutline2Pass(outlineShader, itemOutlineVao_, itemBox_.indexCount,
+                 viewProj, inst, color, 0.12f);
 }
 
 }  // namespace world

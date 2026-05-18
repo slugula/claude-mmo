@@ -232,7 +232,13 @@ void drawInventoryTab(const shared::PlayerState& p, net::NetworkClient* netc,
   constexpr float kCell = 44.0f;
   constexpr float kPad  =  3.0f;
 
+  // Centre the 4-column grid in the available content width.
+  const float avail   = ImGui::GetContentRegionAvail().x;
+  const float gridW   = kInventoryCols * kCell + (kInventoryCols - 1) * kPad;
+  const float startX  = ImGui::GetCursorPosX() + std::max(0.0f, (avail - gridW) * 0.5f);
+
   for (int r = 0; r < kInventoryRows; ++r) {
+    ImGui::SetCursorPosX(startX);
     for (int c = 0; c < kInventoryCols; ++c) {
       const int idx = r * kInventoryCols + c;
       std::optional<shared::ItemStack> slot;
@@ -309,17 +315,24 @@ void drawSkillsTab(const shared::PlayerState& p) {
   }
 
   // 2-column card grid — matches production (5 skills: 2+2+1 rows)
+  // Card width matches inventory/equipment kCell (44px) for visual consistency.
   constexpr int   kCols    = 2;
-  constexpr float kCardW   = 64.0f;
+  constexpr float kCardW   = 44.0f;
   constexpr float kCardH   = 60.0f;
-  constexpr float kIconSz  = 22.0f;
+  constexpr float kIconSz  = 14.0f;
   constexpr float kPad     =  3.0f;
 
-  const int numSkills = static_cast<int>(kSkillOrder.size());
+  const int   numSkills = static_cast<int>(kSkillOrder.size());
+  const float avail     = ImGui::GetContentRegionAvail().x;
+  const float gridW     = kCols * kCardW + (kCols - 1) * kPad;
+  const float startX    = ImGui::GetCursorPosX() + std::max(0.0f, (avail - gridW) * 0.5f);
 
   ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(kPad, kPad));
 
   for (int i = 0; i < numSkills; ++i) {
+    // Start each row at the centred X position.
+    if (i % kCols == 0) ImGui::SetCursorPosX(startX);
+
     const char* skillId = kSkillOrder[i];
     auto it = p.skills.find(skillId);
     const int  lvl = (it != p.skills.end()) ? it->second.level : 1;
@@ -348,7 +361,11 @@ void drawSkillsTab(const shared::PlayerState& p) {
     ImGui::InvisibleButton("##card", ImVec2(kCardW, kCardH));
     const bool hovered = ImGui::IsItemHovered();
 
-    // Icon placeholder (colored square)
+    // Clip all custom drawing inside the card boundaries.
+    dl->PushClipRect(cardPos,
+                     ImVec2(cardPos.x + kCardW, cardPos.y + kCardH), true);
+
+    // Icon placeholder (colored square, centered)
     const float iconX = cardPos.x + (kCardW - kIconSz) * 0.5f;
     const float iconY = cardPos.y + 4.0f;
     dl->AddRectFilled(ImVec2(iconX, iconY),
@@ -358,7 +375,7 @@ void drawSkillsTab(const shared::PlayerState& p) {
                 ImVec2(iconX + kIconSz, iconY + kIconSz),
                 IM_COL32(0, 0, 0, 160));
 
-    // Skill name (abbreviated to fit)
+    // Skill name (centered, clipped to card width)
     const std::string name = prettyItemId(skillId);
     ImVec2 nameSz = ImGui::CalcTextSize(name.c_str());
     dl->AddText(ImVec2(cardPos.x + (kCardW - nameSz.x) * 0.5f,
@@ -385,6 +402,8 @@ void drawSkillsTab(const shared::PlayerState& p) {
     dl->AddRectFilled(ImVec2(barX0, barY), ImVec2(barX0 + barW * progress, barY + 4.0f),
                       IM_COL32(40, 180, 50, 230));
 
+    dl->PopClipRect();
+
     // Hover tooltip
     if (hovered) {
       ImGui::BeginTooltip();
@@ -408,7 +427,9 @@ void drawSkillsTab(const shared::PlayerState& p) {
 
   ImGui::PopStyleVar();  // ItemSpacing
 
-  ImGui::Separator();
+  // Spacing before total level (no Separator to avoid the horizontal rule
+  // artifact that spans the full panel width in incomplete rows).
+  ImGui::Dummy(ImVec2(0.0f, 4.0f));
   ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.00f, 0.65f, 0.15f, 1.0f));
   ImGui::Text("Total level: %d / %d", totalLevel, 99 * 5);
   ImGui::PopStyleColor();
@@ -417,10 +438,17 @@ void drawSkillsTab(const shared::PlayerState& p) {
 // ---- Equipment tab (internal) -----------------------------------------------
 void drawEquipmentTab(const shared::PlayerState& p, net::NetworkClient* netc,
                       UiHoverState* hover) {
-  constexpr float kCell = 52.0f;
-  constexpr float kPad  =  3.0f;
+  constexpr float kCell  = 44.0f;   // matches inventory + skill card width
+  constexpr float kPad   =  3.0f;
+  constexpr int   kGridCols = 3;
+
+  // Centre the 3-column grid in the available content width.
+  const float avail  = ImGui::GetContentRegionAvail().x;
+  const float gridW  = kGridCols * kCell + (kGridCols - 1) * kPad;
+  const float startX = ImGui::GetCursorPosX() + std::max(0.0f, (avail - gridW) * 0.5f);
 
   for (int row = 0; row < 5; ++row) {
+    ImGui::SetCursorPosX(startX);
     for (int col = 0; col < 3; ++col) {
       const EquipCell* m = nullptr;
       for (const auto& e : kEquipGrid) {
@@ -700,7 +728,17 @@ void ChatLog::draw(net::NetworkClient* netc) {
   if (netc) {
     // Auto-focus: if a printable character was typed and no other widget is
     // active, redirect keyboard input to the chat field immediately.
+    // Pre-seed the buffer with the triggering character so it appears in the
+    // field on the same frame instead of requiring a second keypress.
     if (!ImGui::IsAnyItemActive() && io.InputQueueCharacters.Size > 0) {
+      const ImWchar ch = io.InputQueueCharacters[0];
+      if (ch >= 32 && ch < 127) {
+        const int len = static_cast<int>(std::strlen(inputBuf_));
+        if (len + 1 < static_cast<int>(sizeof(inputBuf_))) {
+          inputBuf_[len]     = static_cast<char>(ch);
+          inputBuf_[len + 1] = '\0';
+        }
+      }
       ImGui::SetKeyboardFocusHere(0);
     }
     ImGui::SetNextItemWidth(-FLT_MIN);

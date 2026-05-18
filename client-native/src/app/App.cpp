@@ -375,18 +375,12 @@ void App::initHoverMesh() {
   glEnableVertexArrayAttrib(hoverVao_, 0);
   glVertexArrayAttribFormat(hoverVao_, 0, 3, GL_FLOAT, GL_FALSE, 0);
   glVertexArrayAttribBinding(hoverVao_, 0, 0);
-  // Static EBO for 2-triangle fill (vertices: SW=0, SE=1, NE=2, NW=3)
-  glCreateBuffers(1, &hoverEbo_);
-  static constexpr unsigned int kQuadIdx[6] = {0,1,2, 0,2,3};
-  glNamedBufferStorage(hoverEbo_, sizeof(kQuadIdx), kQuadIdx, 0);
-  glVertexArrayElementBuffer(hoverVao_, hoverEbo_);
 }
 
 void App::destroyHoverMesh() {
-  if (hoverEbo_) glDeleteBuffers(1, &hoverEbo_);
   if (hoverVbo_) glDeleteBuffers(1, &hoverVbo_);
   if (hoverVao_) glDeleteVertexArrays(1, &hoverVao_);
-  hoverVao_ = hoverVbo_ = hoverEbo_ = 0;
+  hoverVao_ = hoverVbo_ = 0;
 }
 
 void App::updateHoverMesh(int tx, int ty, int szX, int szY) {
@@ -819,39 +813,34 @@ void App::renderFrame() {
       // u_outlineWidth is managed internally by renderOutlineAt (two-pass stencil)
       obstacles_.renderOutlineAt(outlineShader_, map_, htx, hty);
     }
-    // For NPCs/items we draw a highlight square around the tile instead
-    // (their geometry is instanced from EntityRenderer — separate outline
-    // pass would require per-entity draw which we skip for now; the thicker
-    // cyan tile square is sufficient).
+    // For NPCs/items, run the same 2-pass stencil outline on their actual 3D
+    // geometry (humanoid capsule or item box) via EntityRenderer helpers.
     if (isInteractable && !hasObstacle) {
-      wireframeShader_.use();
-      wireframeShader_.setMat4("u_viewProj", viewProj);
-      wireframeShader_.setVec4("u_color",    glm::vec4(0.0f, 0.9f, 0.9f, 1.0f));
-      glDepthMask(GL_FALSE);
-      glBindVertexArray(hoverVao_);
-      glDrawArrays(GL_LINE_LOOP, 0, 4);
-      glBindVertexArray(0);
-      glDepthMask(GL_TRUE);
-    }
-  }
-
-  // ---- Destination indicator (yellow filled quad at walk target) -------------
-  if (currLocalPlayer_ && !currLocalPlayer_->path.empty()) {
-    const int dx = currLocalPlayer_->destinationX;
-    const int dy = currLocalPlayer_->destinationY;
-    if (dx >= 0 && dy >= 0 && dx < terrainTileW_ && dy < terrainTileH_) {
-      updateHoverMesh(dx, dy);
-      wireframeShader_.use();
-      wireframeShader_.setMat4("u_viewProj", viewProj);
-      wireframeShader_.setVec4("u_color", glm::vec4(1.0f, 0.75f, 0.0f, 0.45f));
-      glEnable(GL_BLEND);
-      glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-      glDepthMask(GL_FALSE);
-      glBindVertexArray(hoverVao_);
-      glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, nullptr);
-      glBindVertexArray(0);
-      glDepthMask(GL_TRUE);
-      glDisable(GL_BLEND);
+      constexpr glm::vec4 kEntityOutline(0.0f, 0.9f, 0.9f, 0.8f);
+      for (const auto& n : npcs_) {
+        if (n.tileX == htx && n.tileY == hty && !n.dying) {
+          const world::EntityRenderer::Instance inst{
+            static_cast<float>(n.tileX),
+            tileWorldY(map_, n.tileX, n.tileY),
+            static_cast<float>(n.tileY),
+            0.0f,
+          };
+          entities_.renderNpcOutline(outlineShader_, viewProj, inst, kEntityOutline);
+          break;
+        }
+      }
+      for (const auto& di : droppedItems_) {
+        if (di.tileX == htx && di.tileY == hty) {
+          const world::EntityRenderer::Instance inst{
+            static_cast<float>(di.tileX),
+            tileWorldY(map_, di.tileX, di.tileY),
+            static_cast<float>(di.tileY),
+            0.0f,
+          };
+          entities_.renderItemOutline(outlineShader_, viewProj, inst, kEntityOutline);
+          break;
+        }
+      }
     }
   }
 

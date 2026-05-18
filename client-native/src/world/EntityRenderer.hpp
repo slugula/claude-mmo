@@ -56,6 +56,17 @@ public:
   // we set u_color per draw.
   void render(render::Shader& shader);
 
+  // Two-pass stencil outline for a single hovered NPC or dropped item.
+  // Sets all required uniforms on `outlineShader` and restores GL state.
+  void renderNpcOutline (render::Shader& outlineShader,
+                         const glm::mat4& viewProj,
+                         const Instance& inst,
+                         const glm::vec4& color) const;
+  void renderItemOutline(render::Shader& outlineShader,
+                         const glm::mat4& viewProj,
+                         const Instance& inst,
+                         const glm::vec4& color) const;
+
   std::size_t npcCount()  const { return npcCount_;  }
   std::size_t itemCount() const { return itemCount_; }
 
@@ -82,10 +93,27 @@ private:
   Kit humanoid_;
   Kit itemBox_;
 
-  GLuint npcInstanceVbo_  = 0;
-  GLuint itemInstanceVbo_ = 0;
-  std::size_t npcCount_   = 0;
-  std::size_t itemCount_  = 0;
+  GLuint npcInstanceVbo_   = 0;
+  GLuint itemInstanceVbo_  = 0;
+  std::size_t npcCount_    = 0;
+  std::size_t itemCount_   = 0;
+
+  // Single-instance VBO + dedicated VAOs used for the 2-pass stencil outline.
+  // Separate from the batched instance VBOs so we can upload one instance
+  // without corrupting the multi-instance draw data.
+  GLuint outlineInstanceVbo_ = 0;
+  GLuint npcOutlineVao_      = 0;
+  GLuint itemOutlineVao_     = 0;
+
+  // Internal helper: build an outline VAO sharing geometry from `kit` but
+  // driven by outlineInstanceVbo_ instead of the kit's normal instance VBO.
+  GLuint buildOutlineVao(const Kit& kit) const;
+  // Internal helper: execute the two-pass stencil outline on `vao`.
+  void   doOutline2Pass(render::Shader& shader, GLuint vao, GLsizei indexCount,
+                        const glm::mat4& viewProj,
+                        const Instance& inst,
+                        const glm::vec4& color,
+                        float outlineWidth) const;
 };
 
 }  // namespace world
