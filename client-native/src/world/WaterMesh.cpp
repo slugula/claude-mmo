@@ -7,22 +7,6 @@
 namespace world {
 
 // ---------------------------------------------------------------------------
-// Local helpers
-// ---------------------------------------------------------------------------
-
-static float tileWorldY(const shared::WorldMapFile& map, int tx, int ty) {
-  const int W = map.width, H = map.height;
-  if (W <= 0 || H <= 0 || tx < 0 || ty < 0 || tx >= W || ty >= H) return 0.0f;
-  const auto& vh = map.vertexHeights;
-  if (static_cast<int>(vh.size()) != (W + 1) * (H + 1)) return 0.0f;
-  const float sw = vh[static_cast<std::size_t>((H - ty)     * (W + 1) + tx)]     * shared::kMaxTerrainH;
-  const float se = vh[static_cast<std::size_t>((H - ty)     * (W + 1) + tx + 1)] * shared::kMaxTerrainH;
-  const float nw = vh[static_cast<std::size_t>((H - ty - 1) * (W + 1) + tx)]     * shared::kMaxTerrainH;
-  const float ne = vh[static_cast<std::size_t>((H - ty - 1) * (W + 1) + tx + 1)] * shared::kMaxTerrainH;
-  return (sw + se + nw + ne) * 0.25f;
-}
-
-// ---------------------------------------------------------------------------
 void WaterMesh::destroy() {
   if (ebo_) { glDeleteBuffers(1, &ebo_); ebo_ = 0; }
   if (vbo_) { glDeleteBuffers(1, &vbo_); vbo_ = 0; }
@@ -57,36 +41,39 @@ void WaterMesh::build(const shared::WorldMapFile& map, float waterOffset) {
   indices.reserve(map.waterTiles.size() * 6);
 
   // --- Single global water Y ------------------------------------------------
-  // Compute ONE shared surface height from the average of ALL non-water border
-  // tile heights across the entire water body.  This prevents per-tile height
-  // differences that produce a stepped / diamond-shaped look.
+  // Compute ONE shared surface height from the average of all WATER TILE
+  // CORNER vertex heights (post-carve).  bakeWaterBank() has already carved
+  // those corners down; averaging them gives the floor of the carved trench.
+  // We then ADD waterOffset so the water surface sits visibly above the floor.
+  // This means waterOffset acts as "fill level above trench floor" rather than
+  // "offset below neighbour terrain" — one slider drives both carve depth and
+  // water fill level consistently.
+  //
+  // Vertex indexing: row 0 = south edge (ty=H), row H = north edge (ty=0).
+  // For tile (tx, ty):  SW = (tx,   H-ty),   SE = (tx+1, H-ty)
+  //                     NW = (tx,   H-ty-1), NE = (tx+1, H-ty-1)
+  const auto& vh = map.vertexHeights;
+  const bool  vhValid = (static_cast<int>(vh.size()) == (W + 1) * (H + 1));
+
   float hSum = 0.0f;
   int   hCnt = 0;
-  for (const auto& wt : map.waterTiles) {
-    if (wt.tileX < 0 || wt.tileY < 0 || wt.tileX >= W || wt.tileY >= H) continue;
-    for (int dy = -1; dy <= 1; ++dy) {
-      for (int dx = -1; dx <= 1; ++dx) {
-        if (dx == 0 && dy == 0) continue;
-        const int nx = wt.tileX + dx, ny = wt.tileY + dy;
-        if (nx >= 0 && ny >= 0 && nx < W && ny < H && !isWater(nx, ny)) {
-          hSum += tileWorldY(map, nx, ny);
-          ++hCnt;
-        }
-      }
-    }
-  }
-  // Fallback when all tiles are interior (no terrain neighbours): use the
-  // average height of the water tiles themselves.
-  if (hCnt == 0) {
+  if (vhValid) {
     for (const auto& wt : map.waterTiles) {
-      if (wt.tileX >= 0 && wt.tileY >= 0 && wt.tileX < W && wt.tileY < H) {
-        hSum += tileWorldY(map, wt.tileX, wt.tileY);
+      const int tx = wt.tileX, ty = wt.tileY;
+      if (tx < 0 || ty < 0 || tx >= W || ty >= H) continue;
+      const int vcs[4] = { tx,     tx + 1, tx,     tx + 1 };
+      const int vrs[4] = { H - ty, H - ty, H-ty-1, H-ty-1 };
+      for (int i = 0; i < 4; ++i) {
+        const int vc = vcs[i], vr = vrs[i];
+        if (vc < 0 || vc > W || vr < 0 || vr > H) continue;
+        hSum += vh[static_cast<std::size_t>(vr * (W + 1) + vc)] * shared::kMaxTerrainH;
         ++hCnt;
       }
     }
   }
-  const float globalWaterY = (hCnt > 0 ? hSum / static_cast<float>(hCnt) : 0.0f)
-                             - waterOffset;
+  // waterOffset fills the trench above its carved floor.
+  const float avgFloor    = hCnt > 0 ? hSum / static_cast<float>(hCnt) : 0.0f;
+  const float globalWaterY = std::max(0.01f, avgFloor + waterOffset);
 
   for (const auto& wt : map.waterTiles) {
     const int tx = wt.tileX, ty = wt.tileY;

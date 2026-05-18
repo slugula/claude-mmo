@@ -1237,43 +1237,67 @@ void EditorApp::setObstacleAtTile(int tx, int ty, shared::ObstacleType obs) {
 
 // -----------------------------------------------------------------------
 void EditorApp::bakeWaterBank(int tx, int ty) {
+  // Strategy: sample the *non-water* neighbour tiles to establish the bank
+  // height (= natural terrain level), then SET the 4 corner vertices of this
+  // water tile to (bankH - trenchDepth), clamped to [0,1].
+  //
+  // Using non-water neighbours for bankH means:
+  //  - On flat terrain (all heights 0): bankH=0, carved=0. No visible trench
+  //    below ground but water still covers the tile (mesh Y sits at 0.01+).
+  //  - On any terrain with positive height: a proper trench is dug, with the
+  //    bank edges naturally sloping into the water via shared vertices.
+  //  - Connected water tiles: each tile reads from its own non-water
+  //    neighbours, so there is no feedback-loop between adjacent tiles.
+
   const int W = map_.width, H = map_.height;
   auto& vh = map_.vertexHeights;
   if (vh.empty() || W <= 0 || H <= 0) return;
+  if (tx < 0 || ty < 0 || tx >= W || ty >= H) return;
 
-  constexpr float kBankSlope = 0.25f;   // world-Y rise per world unit from water edge
+  // Build a quick is-water lookup for this call.
+  auto isWater = [&](int x, int y) {
+    if (x < 0 || y < 0 || x >= W || y >= H) return false;
+    for (const auto& w : map_.waterTiles)
+      if (w.tileX == x && w.tileY == y) return true;
+    return false;
+  };
 
-  // Natural height at water tile center (before banking)
-  const float naturalHWorld = tileWorldY(tx, ty);
-  const float waterYWorld   = naturalHWorld - waterUniforms_.waterOffset;
-
-  // Iterate over a ±2 tile border of vertices around the water tile.
-  // Vertex (vc, vr) world position: x = vc - 0.5,  z = (H - vr) - 0.5
-  const int vrCenter = H - ty;   // vertex row at south edge of tile ty
-  const int vcCenter = tx;       // vertex col at west  edge of tile tx
-
-  for (int vr = vrCenter - 3; vr <= vrCenter + 2; ++vr) {
-    if (vr < 0 || vr > H) continue;
-    for (int vc = vcCenter - 2; vc <= vcCenter + 3; ++vc) {
-      if (vc < 0 || vc > W) continue;
-      const std::size_t idx = static_cast<std::size_t>(vr * (W + 1) + vc);
-
-      // World XZ of this vertex
-      const float vx = static_cast<float>(vc) - 0.5f;
-      const float vz = static_cast<float>(H - vr) - 0.5f;
-
-      // Distance from tile center
-      const float dx   = vx - static_cast<float>(tx);
-      const float dz   = vz - static_cast<float>(ty);
-      const float dist = std::sqrt(dx * dx + dz * dz);
-
-      const float targetWorld = waterYWorld + kBankSlope * dist;
-      const float targetNorm  = std::clamp(targetWorld / shared::kMaxTerrainH, 0.0f, 1.0f);
-
-      // Only lower terrain (never raise), so we don't mess up hills
-      if (targetNorm < vh[idx])
-        vh[idx] = targetNorm;
+  // Sample bank height = average of non-water neighbour tile centers.
+  float bankSum = 0.0f;
+  int   bankCnt = 0;
+  for (int dy = -1; dy <= 1; ++dy) {
+    for (int dx = -1; dx <= 1; ++dx) {
+      if (dx == 0 && dy == 0) continue;
+      const int nx = tx + dx, ny = ty + dy;
+      if (!isWater(nx, ny) && nx >= 0 && ny >= 0 && nx < W && ny < H) {
+        bankSum += tileWorldY(nx, ny);
+        ++bankCnt;
+      }
     }
+  }
+  // Fallback: use the current tile's own height as bank reference.
+  const float bankH = bankCnt > 0 ? bankSum / static_cast<float>(bankCnt)
+                                   : tileWorldY(tx, ty);
+
+  // Trench depth = 2× the waterOffset so water surface (bankH - offset) sits
+  // visibly above the carved floor (bankH - 2*offset).
+  const float trenchDepth = waterUniforms_.waterOffset * 2.0f;
+  const float carvedNorm  = std::clamp((bankH - trenchDepth) / shared::kMaxTerrainH,
+                                        0.0f, 1.0f);
+
+  // The 4 corner vertices of tile (tx, ty):
+  //   SW: (vc=tx,   vr=H-ty)
+  //   SE: (vc=tx+1, vr=H-ty)
+  //   NW: (vc=tx,   vr=H-ty-1)
+  //   NE: (vc=tx+1, vr=H-ty-1)
+  const int cVc[4] = { tx,   tx+1, tx,   tx+1 };
+  const int cVr[4] = { H-ty, H-ty, H-ty-1, H-ty-1 };
+
+  for (int i = 0; i < 4; ++i) {
+    const int vc = cVc[i], vr = cVr[i];
+    if (vc < 0 || vc > W || vr < 0 || vr > H) continue;
+    const std::size_t idx = static_cast<std::size_t>(vr * (W + 1) + vc);
+    vh[idx] = carvedNorm;   // absolute SET – always carve to this depth
   }
 }
 
