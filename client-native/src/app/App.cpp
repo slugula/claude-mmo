@@ -375,12 +375,18 @@ void App::initHoverMesh() {
   glEnableVertexArrayAttrib(hoverVao_, 0);
   glVertexArrayAttribFormat(hoverVao_, 0, 3, GL_FLOAT, GL_FALSE, 0);
   glVertexArrayAttribBinding(hoverVao_, 0, 0);
+  // Static EBO for 2-triangle fill (vertices: SW=0, SE=1, NE=2, NW=3)
+  glCreateBuffers(1, &hoverEbo_);
+  static constexpr unsigned int kQuadIdx[6] = {0,1,2, 0,2,3};
+  glNamedBufferStorage(hoverEbo_, sizeof(kQuadIdx), kQuadIdx, 0);
+  glVertexArrayElementBuffer(hoverVao_, hoverEbo_);
 }
 
 void App::destroyHoverMesh() {
+  if (hoverEbo_) glDeleteBuffers(1, &hoverEbo_);
   if (hoverVbo_) glDeleteBuffers(1, &hoverVbo_);
   if (hoverVao_) glDeleteVertexArrays(1, &hoverVao_);
-  hoverVao_ = hoverVbo_ = 0;
+  hoverVao_ = hoverVbo_ = hoverEbo_ = 0;
 }
 
 void App::updateHoverMesh(int tx, int ty, int szX, int szY) {
@@ -829,6 +835,26 @@ void App::renderFrame() {
     }
   }
 
+  // ---- Destination indicator (yellow filled quad at walk target) -------------
+  if (currLocalPlayer_ && !currLocalPlayer_->path.empty()) {
+    const int dx = currLocalPlayer_->destinationX;
+    const int dy = currLocalPlayer_->destinationY;
+    if (dx >= 0 && dy >= 0 && dx < terrainTileW_ && dy < terrainTileH_) {
+      updateHoverMesh(dx, dy);
+      wireframeShader_.use();
+      wireframeShader_.setMat4("u_viewProj", viewProj);
+      wireframeShader_.setVec4("u_color", glm::vec4(1.0f, 0.75f, 0.0f, 0.45f));
+      glEnable(GL_BLEND);
+      glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+      glDepthMask(GL_FALSE);
+      glBindVertexArray(hoverVao_);
+      glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, nullptr);
+      glBindVertexArray(0);
+      glDepthMask(GL_TRUE);
+      glDisable(GL_BLEND);
+    }
+  }
+
   // ---- Water pass (after all opaque geometry) --------------------------------
   // Resolve colour for SSR and depth for foam, then draw water back into the
   // MSAA FBO so it composites correctly with the rest of the scene.
@@ -1080,14 +1106,6 @@ void App::renderFrame() {
     }
     ImGui::Checkbox("Wireframe overlay", &wireframe_);
     ImGui::Separator();
-    ImGui::TextUnformatted("Level Editor (export)");
-    if (ImGui::Button("Export worldMap.json")) {
-      exportWorldMap();
-    }
-    ImGui::SameLine();
-    ImGui::TextUnformatted("(saves next to exe)");
-
-    ImGui::Separator();
     ImGui::TextUnformatted("Camera");
     if (hoveredTile_.hit) {
       ImGui::Text("Hover: tile (%d, %d)  world (%.2f, %.2f, %.2f)",
@@ -1221,7 +1239,10 @@ void App::drawWorldContextMenu() {
   }
   if (!ImGui::BeginPopup("world_ctx")) return;
 
-  ImGui::Text("Tile (%d, %d)", ctxMenuTileX_, ctxMenuTileY_);
+  // OSRS-style header
+  ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+  ImGui::TextUnformatted("Choose Option");
+  ImGui::PopStyleColor();
   ImGui::Separator();
 
   // ---- Tile obstacle ------------------------------------------------------
@@ -1232,60 +1253,73 @@ void App::drawWorldContextMenu() {
   }
   switch (obstacle) {
     case shared::ObstacleType::tree:
-      if (ImGui::Selectable("Chop tree")) {
+      if (ImGui::Selectable("Chop down  Tree"))
         network_.sendChopTree(ctxMenuTileX_, ctxMenuTileY_);
-      }
+      if (ImGui::Selectable("Examine  Tree"))
+        chatLog_.appendSystem("A sturdy tree.");
       break;
     case shared::ObstacleType::rock:
-      if (ImGui::Selectable("Mine rock")) {
+      if (ImGui::Selectable("Mine  Rock"))
         network_.sendMineRock(ctxMenuTileX_, ctxMenuTileY_);
+      if (ImGui::Selectable("Examine  Rock"))
+        chatLog_.appendSystem("A rocky outcrop.");
+      break;
+    case shared::ObstacleType::chest:
+      if (ImGui::Selectable("Bank  Chest")) {
+        network_.sendOpenBank();
+        bankOpen_ = true;
       }
+      if (ImGui::Selectable("Examine  Chest"))
+        chatLog_.appendSystem("A secure bank chest.");
       break;
     default: break;
   }
 
   // ---- NPCs at this tile --------------------------------------------------
-  // Show only actions appropriate for this NPC kind:
-  //   chicken -> Attack only
-  //   shopkeeper -> Talk-to only
   for (const auto& n : npcs_) {
     if (n.tileX != ctxMenuTileX_ || n.tileY != ctxMenuTileY_) continue;
     if (n.dying) continue;
     const char* displayName = n.kind.empty() ? "NPC" : n.kind.c_str();
     char buf[96];
-    // Attackable NPCs (chicken, etc.) get Attack
     if (n.kind == "chicken") {
-      std::snprintf(buf, sizeof(buf), "Attack %s", displayName);
+      std::snprintf(buf, sizeof(buf), "Attack  %s", displayName);
       if (ImGui::Selectable(buf)) network_.sendAttackNpc(n.id);
-    }
-    // Non-attackable NPCs (shopkeeper, etc.) get Talk-to
-    if (n.kind != "chicken") {
-      std::snprintf(buf, sizeof(buf), "Talk-to %s", displayName);
+    } else {
+      std::snprintf(buf, sizeof(buf), "Talk-to  %s", displayName);
       if (ImGui::Selectable(buf)) network_.sendTalkTo(n.id);
     }
+    // Examine — client-side, no server round-trip
+    const char* examineText = (n.kind == "chicken")    ? "It's a chicken."
+                            : (n.kind == "shopkeeper") ? "This is a friendly shopkeeper."
+                            : "An NPC.";
+    std::snprintf(buf, sizeof(buf), "Examine  %s", displayName);
+    if (ImGui::Selectable(buf)) chatLog_.appendSystem(examineText);
   }
 
   // ---- Dropped items at this tile ----------------------------------------
   for (const auto& it : droppedItems_) {
     if (it.tileX != ctxMenuTileX_ || it.tileY != ctxMenuTileY_) continue;
     char buf[96];
-    std::snprintf(buf, sizeof(buf), "Take %s",
-                  it.itemId.empty() ? "item" : it.itemId.c_str());
+    // Pretty-print the item name (bronze_sword → Bronze sword)
+    const std::string prettyName = [&]() -> std::string {
+      if (it.itemId.empty()) return "item";
+      std::string out; out.reserve(it.itemId.size());
+      bool cap = true;
+      for (char ch : it.itemId) {
+        if (ch == '_' || ch == '-') { out.push_back(' '); cap = false; }
+        else if (cap) { out.push_back(static_cast<char>(std::toupper(static_cast<unsigned char>(ch)))); cap = false; }
+        else out.push_back(ch);
+      }
+      return out;
+    }();
+    std::snprintf(buf, sizeof(buf), "Take  %s", prettyName.c_str());
     if (ImGui::Selectable(buf)) network_.sendTakeItem(it.id);
   }
 
   // ---- Always available --------------------------------------------------
-  if (ImGui::Selectable("Walk here")) {
+  if (ImGui::Selectable("Walk here"))
     network_.sendMoveTo(ctxMenuTileX_, ctxMenuTileY_);
-  }
-  // The world doesn't currently render bank chests (no obstacle type for
-  // them yet), so this lives at the bottom of every tile's menu as a
-  // placeholder. Once chests get a proper obstacle/decoration type we'll
-  // gate this on tile.obstacle == bank_chest.
-  if (ImGui::Selectable("Open bank")) {
-    network_.sendOpenBank();
-    bankOpen_ = true;
-  }
+
   ImGui::EndPopup();
 }
 
