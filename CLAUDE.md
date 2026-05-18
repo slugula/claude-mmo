@@ -25,6 +25,19 @@ Feature documentation lives in `docs/Features/`.
 
 **Build:** `npm run build`
 
+**Native client / level editor (PowerShell):**
+```powershell
+# Level editor only
+& "C:\Program Files\Microsoft Visual Studio\18\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe" --build "client-native\build" --config Release --target level-editor
+
+# Game client only
+& "C:\Program Files\Microsoft Visual Studio\18\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe" --build "client-native\build" --config Release --target client-native
+
+# Both
+& "C:\Program Files\Microsoft Visual Studio\18\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe" --build "client-native\build" --config Release
+```
+Output: `client-native\build\Release\level-editor.exe` and `client-native\build\Release\client-native.exe`
+
 No test suite. TypeScript type-checking is the primary correctness gate.
 
 ---
