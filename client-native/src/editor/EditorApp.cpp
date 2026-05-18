@@ -629,7 +629,7 @@ void EditorApp::drawWaterSettings() {
     ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##nstr", &u.normalStrength,  0.0f, 2.0f,  "NrmStr:%.2f");
     ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##rfl",  &u.reflectStrength, 0.0f, 1.0f,  "Reflect:%.2f");
     ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##caus", &u.causticIntensity,0.0f, 1.0f,  "Caustic:%.2f");
-    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##fdep", &u.foamDepth,        0.0f, 2.0f,  "FoamDepth:%.2f");
+    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##fwid", &u.foamWidth,        0.0f, 1.0f,  "FoamWidth:%.2f");
   }
   if (ImGui::CollapsingHeader("Water — Advanced")) {
     ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##wsc",  &u.waveScale,       0.5f, 8.0f,  "WaveSc:%.2f");
@@ -1106,7 +1106,8 @@ void EditorApp::applyToolAt(int tx, int ty, float dt,
           vh[idx] = std::clamp(vh[idx] + dir * brush_.strength * w * dt, 0.0f, 1.0f);
         }
       }
-      dirtyTerrain = true;
+      dirtyTerrain   = true;
+      dirtyObstacles = true;   // obstacle/NPC positions follow terrain height
       break;
     }
     case EditorTool::PlaceObstacle: {

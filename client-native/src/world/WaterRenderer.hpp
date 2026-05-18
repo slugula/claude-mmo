@@ -22,7 +22,7 @@ struct WaterUniforms {
   float     normalStrength  = 0.60f;
   float     reflectStrength = 0.60f;
   float     causticIntensity= 0.00f;
-  float     foamDepth       = 0.50f;  // world-unit depth range for intersection foam
+  float     foamWidth       = 0.50f;  // 0–1: how far foam extends from tile edge inward
   // ---- Advanced ----
   float     waveScale       = 2.00f;
   float     causticScale    = 4.00f;

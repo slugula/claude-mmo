@@ -166,7 +166,7 @@ void WaterRenderer::render(float time,
   shader_.setFloat("uCausticIntensity", u.causticIntensity);
   shader_.setFloat("uCausticScale",     u.causticScale);
   shader_.setFloat("uCausticSpeed",     u.causticSpeed);
-  shader_.setFloat("uFoamDepth",        u.foamDepth);
+  shader_.setFloat("uFoamWidth",         u.foamWidth);
   shader_.setFloat("uFoamSpeed",        u.foamSpeed);
   shader_.setFloat("uFoamScale",        u.foamScale);
   shader_.setFloat("uParallaxDepth",    u.parallaxDepth);

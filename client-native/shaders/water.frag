@@ -19,7 +19,7 @@ uniform float uCausticIntensity;
 uniform float uCausticScale;
 uniform float uCausticSpeed;
 uniform float uUseCausticMap;   // 1.0 = sample uCausticMap, 0.0 = procedural
-uniform float uFoamDepth;    // world units — intersection zone where foam appears
+uniform float uFoamWidth;    // 0–1: how far from the tile edge foam extends inward
 uniform float uFoamSpeed;
 uniform float uFoamScale;
 uniform float uParallaxDepth;
@@ -61,16 +61,6 @@ float foamNoise(vec2 uv, float t) {
 }
 
 // ---------------------------------------------------------------------------
-// Linearise a depth-buffer value (stored in [0,1]) to view-space distance.
-// Near/far must match the camera projection (0.1 / 500.0 defaults).
-// ---------------------------------------------------------------------------
-float linearDepth(float d) {
-    const float near = 0.1;
-    const float far  = 500.0;
-    return (2.0 * near * far) / (far + near - (2.0 * d - 1.0) * (far - near));
-}
-
-// ---------------------------------------------------------------------------
 void main() {
     // ---- Dual normal-map scroll (two different directions + speeds) --------
     vec2 uv1 = vUV * uWaveScale + vec2( uTime * uWaveSpeed,       uTime * uWaveSpeed * 0.7);
@@ -102,25 +92,15 @@ void main() {
     float reflWeight = uReflectStrength * (1.0 - vShoreWeight * 0.5);
     waterColor = mix(waterColor, reflected, reflWeight);
 
-    // ---- Depth-intersection foam -------------------------------------------
-    // Sample the pre-water terrain depth at this screen pixel (unperturbed UV).
-    // Linearise both depths and compute the world-space gap. Where the terrain
-    // surface is within uFoamDepth units of the water surface, draw foam.
-    //
-    // The depth gap alone is insufficient: when waterOffset=0 the carved floor
-    // sits at the same Y as the water surface, so depth≈0 everywhere and foam
-    // floods the whole body. Multiplying by smoothstep(shore_weight) gates foam
-    // to boundary tiles only (shore_weight=0 in open water → no foam there).
-    float sceneD  = texture(uSceneDepth, screenUV).r;
-    float waterD  = gl_FragCoord.z;
-    float sceneL  = linearDepth(sceneD);
-    float waterL  = linearDepth(waterD);
-    float depthGap = sceneL - waterL;  // > 0 ⟹ terrain behind water surface
-    float foamFactor = (depthGap > 0.0)
-                     ? (1.0 - smoothstep(0.0, uFoamDepth, depthGap))
-                     : 0.0;
-    // Gate to the shoreline: open-water tiles (vShoreWeight≈0) get no foam.
-    foamFactor *= smoothstep(0.0, 0.35, vShoreWeight);
+    // ---- Shore-weight foam -------------------------------------------------
+    // vShoreWeight encodes how many of the 4 adjacent tiles are non-water
+    // (0 = open water, 1 = surrounded by terrain on all sides).
+    // uFoamWidth [0,1] controls how far the foam band extends from the tile
+    // edge inward: 0 = no foam, 0.5 = moderate band, 1 = fills all boundary
+    // tiles with a smooth gradient toward the interior.
+    // smoothstep maps shore_weight into a [0,1] foam factor so the band fades
+    // naturally rather than cutting off with a hard edge.
+    float foamFactor = smoothstep(max(0.0, 1.0 - uFoamWidth), 1.0, vShoreWeight);
     float foam = foamFactor * foamNoise(vUV, uTime);
     waterColor = mix(waterColor, uFoamColor, foam);
 
