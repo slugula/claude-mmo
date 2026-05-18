@@ -776,6 +776,19 @@ void App::renderFrame() {
     glDepthMask(GL_TRUE);
   }
 
+  // ---- Water pass ------------------------------------------------------------
+  // Drawn here — after opaque geometry and SSR snapshot but BEFORE the hover
+  // tile outline and entity stencil outlines, so those always composite on top
+  // of water rather than being hidden beneath it.
+  if (!map_.waterTiles.empty() && waterRenderer_.valid()) {
+    waterRenderer_.render(
+        static_cast<float>(glfwGetTime()),
+        viewProj,
+        msaa_->resolveColorTexture(),
+        msaa_->resolveDepthTexture(),
+        waterUniforms_);
+  }
+
   // ---- Hover tile outline (yellow) ------------------------------------------
   if (hoveredTile_.hit) {
     wireframeShader_.use();
@@ -851,18 +864,6 @@ void App::renderFrame() {
         }
       }
     }
-  }
-
-  // ---- Water pass (after all opaque geometry + outlines) --------------------
-  // SSR snapshot was already taken above (before outlines) so water reflects
-  // terrain/entities but NOT the hover/selection outlines.
-  if (!map_.waterTiles.empty() && waterRenderer_.valid()) {
-    waterRenderer_.render(
-        static_cast<float>(glfwGetTime()),
-        viewProj,
-        msaa_->resolveColorTexture(),
-        msaa_->resolveDepthTexture(),
-        waterUniforms_);
   }
 
   // ---- Resolve to single-sample + blit to window ----------------------------
