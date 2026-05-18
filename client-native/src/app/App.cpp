@@ -1909,7 +1909,7 @@ void App::processNetworkMessages() {
             }
           }
           // Pickup completed: pickupItemId just cleared → PickUp_Table.
-          const bool pickupNow = !ps.pickupItemId.empty();
+          const bool pickupNow = ps.pickupItemId.has_value();
           if (ra.prevPickupActive && !pickupNow && ra.oneShotClip.empty()) {
             ra.oneShotClip   = "PickUp_Table";
             ra.oneShotEndsAt = nowRem + remDurMs("PickUp_Table");
@@ -1976,7 +1976,7 @@ void App::processNetworkMessages() {
         }
         // Pickup completed: pickupItemId just cleared → play PickUp_Table
         // only if nothing else is already happening this tick.
-        const bool pickupActive = !cp.pickupItemId.empty();
+        const bool pickupActive = cp.pickupItemId.has_value();
         if (prevPickupActive_ && !pickupActive && oneShotClip_.empty()) {
           oneShotClip_   = "PickUp_Table";
           oneShotEndsAt_ = lastTickTime_ + std::chrono::milliseconds(oneShotDurMs("PickUp_Table"));

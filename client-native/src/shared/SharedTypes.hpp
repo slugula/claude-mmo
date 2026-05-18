@@ -129,9 +129,9 @@ struct PlayerState {
   // value rises monotonically when the server validates an attack / chop.
   int                                          lastAttackTick  = -999;
   int                                          lastChopTick    = -999;
-  // Non-empty while the server has a pending pick-up queued for this player.
-  // Transitions from non-empty → empty indicate a completed pickup.
-  std::string                                  pickupItemId;
+  // Set while the server has a pending pick-up queued for this player.
+  // Transitions from has_value() → nullopt indicate a completed pickup.
+  std::optional<std::string>                   pickupItemId;
 };
 
 // Partial NPCState — enough to render at the right place + face.
