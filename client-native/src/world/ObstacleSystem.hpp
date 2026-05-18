@@ -57,6 +57,14 @@ public:
                        const shared::WorldMapFile& map,
                        int tileX, int tileY);
 
+  // Render just the geometry for a single obstacle (no stencil / inflation).
+  // Used by the screen-space outline mask pass to build a silhouette texture.
+  // u_viewProj must already be set on the shader. Returns false if the tile
+  // has no renderable obstacle.
+  bool renderGeometryAt(render::Shader& maskShader,
+                        const shared::WorldMapFile& map,
+                        int tileX, int tileY);
+
   std::size_t treeCount()  const { return treeCount_;  }
   std::size_t rockCount()  const { return rockCount_;  }
   std::size_t fenceCount() const { return fenceCount_; }

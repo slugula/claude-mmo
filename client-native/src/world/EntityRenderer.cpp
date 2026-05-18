@@ -421,4 +421,32 @@ void EntityRenderer::renderItemOutline(render::Shader& outlineShader,
                  viewProj, inst, color, 0.12f);
 }
 
+void EntityRenderer::renderNpcGeometry(render::Shader& /*maskShader*/,
+                                       const Instance& inst) const {
+  if (!npcOutlineVao_ || !outlineInstanceVbo_) return;
+  glNamedBufferSubData(outlineInstanceVbo_, 0, sizeof(Instance), &inst);
+  glDisable(GL_STENCIL_TEST);
+  glDepthFunc(GL_LEQUAL);
+  glDepthMask(GL_FALSE);
+  glBindVertexArray(npcOutlineVao_);
+  glDrawElementsInstanced(GL_TRIANGLES, humanoid_.indexCount, GL_UNSIGNED_INT, nullptr, 1);
+  glBindVertexArray(0);
+  glDepthMask(GL_TRUE);
+  glDepthFunc(GL_LESS);
+}
+
+void EntityRenderer::renderItemGeometry(render::Shader& /*maskShader*/,
+                                        const Instance& inst) const {
+  if (!itemOutlineVao_ || !outlineInstanceVbo_) return;
+  glNamedBufferSubData(outlineInstanceVbo_, 0, sizeof(Instance), &inst);
+  glDisable(GL_STENCIL_TEST);
+  glDepthFunc(GL_LEQUAL);
+  glDepthMask(GL_FALSE);
+  glBindVertexArray(itemOutlineVao_);
+  glDrawElementsInstanced(GL_TRIANGLES, itemBox_.indexCount, GL_UNSIGNED_INT, nullptr, 1);
+  glBindVertexArray(0);
+  glDepthMask(GL_TRUE);
+  glDepthFunc(GL_LESS);
+}
+
 }  // namespace world

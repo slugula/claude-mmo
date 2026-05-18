@@ -54,6 +54,10 @@ private:
   void processNetworkMessages();
   void drawWorldContextMenu();
   void exportWorldMap();
+
+  // Allocate / reallocate the R8 mask texture + FBO used by the screen-space
+  // outline composite. Called on init and on every window resize.
+  void initOutlineMaskFbo(int w, int h);
   // Returns true if cursor world position should be sampled for a click
   // action (i.e. a real terrain tile, not an ImGui-owned area).
   bool drawLoginUi();
@@ -65,7 +69,9 @@ private:
   render::Shader                           wireframeShader_;
   render::Shader                           obstacleShader_;
   render::Shader                           skinnedShader_;
-  render::Shader                           outlineShader_;
+  render::Shader                           outlineShader_;          // (kept, unused after SS-outline)
+  render::Shader                           outlineMaskShader_;      // renders silhouette to mask FBO
+  render::Shader                           outlineCompositeShader_; // composites border over scene
   render::Shader                           shadowInstancedShader_;
   render::ShadowMap                        shadowMap_;
   render::Mesh                             terrainMesh_;
@@ -81,6 +87,14 @@ private:
   // hovered tile.
   GLuint                                   hoverVao_     = 0;
   GLuint                                   hoverVbo_     = 0;
+
+  // Screen-space outline mask FBO: a single R8 texture rendered into a
+  // colour-only FBO.  Rebuilt on every window resize.  Used by the
+  // outline_mask → outline_composite two-pass screen-space outline system.
+  GLuint                                   outlineMaskFbo_  = 0;
+  GLuint                                   outlineMaskTex_  = 0;
+  // Empty VAO used for the fullscreen-triangle composite draw (no buffers).
+  GLuint                                   outlineQuadVao_  = 0;
 
   // Networking
   net::NetworkClient                       network_;

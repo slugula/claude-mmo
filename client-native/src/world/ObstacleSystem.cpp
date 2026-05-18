@@ -526,6 +526,72 @@ bool ObstacleSystem::renderOutlineAt(render::Shader& outlineShader,
   return true;
 }
 
+bool ObstacleSystem::renderGeometryAt(render::Shader& /*maskShader*/,
+                                      const shared::WorldMapFile& map,
+                                      int tileX, int tileY) {
+  if (tileY < 0 || tileY >= map.height || tileX < 0 || tileX >= map.width) return false;
+  const auto obs = map.tiles[tileY][tileX].obstacle;
+  if (obs == shared::ObstacleType::none ||
+      obs == shared::ObstacleType::fishing_spot) return false;
+
+  const auto& vh = map.vertexHeights;
+  if (static_cast<int>(vh.size()) != (map.width + 1) * (map.height + 1)) return false;
+
+  const float cy      = tileCenterY(vh, map.width, map.height, tileX, tileY);
+  const bool  isTree  = (obs == shared::ObstacleType::tree);
+  const bool  isFence = (obs == shared::ObstacleType::fence);
+
+  // Upload the single instance (same position as renderOutlineAt).
+  const Instance inst{ static_cast<float>(tileX), cy,
+                       static_cast<float>(tileY),
+                       hashRotation(tileX, tileY) };
+  if (isTree && treeModelLoaded_) {
+    glNamedBufferSubData(outlineTreeGltfInstanceVbo_, 0, sizeof(Instance), &inst);
+  } else {
+    glNamedBufferSubData(outlineInstanceVbo_, 0, sizeof(Instance), &inst);
+  }
+
+  // Draw with no stencil / inflation — just the raw geometry for silhouette mask.
+  glDisable(GL_STENCIL_TEST);
+  glDepthFunc(GL_LEQUAL);
+  glDepthMask(GL_FALSE);  // caller handles depth writes
+
+  if (isTree) {
+    if (treeModelLoaded_) {
+      if (outlineTreeTrunkGltf_.vao) {
+        glBindVertexArray(outlineTreeTrunkGltf_.vao);
+        glDrawElementsInstanced(GL_TRIANGLES, outlineTreeTrunkGltf_.indexCount,
+                                GL_UNSIGNED_INT, nullptr, 1);
+      }
+      if (outlineTreeCanopyGltf_.vao) {
+        glBindVertexArray(outlineTreeCanopyGltf_.vao);
+        glDrawElementsInstanced(GL_TRIANGLES, outlineTreeCanopyGltf_.indexCount,
+                                GL_UNSIGNED_INT, nullptr, 1);
+      }
+    } else {
+      glBindVertexArray(outlineTrunk_.vao);
+      glDrawElementsInstanced(GL_TRIANGLES, outlineTrunk_.indexCount,
+                              GL_UNSIGNED_INT, nullptr, 1);
+      glBindVertexArray(outlineCanopy_.vao);
+      glDrawElementsInstanced(GL_TRIANGLES, outlineCanopy_.indexCount,
+                              GL_UNSIGNED_INT, nullptr, 1);
+    }
+  } else if (isFence) {
+    glBindVertexArray(outlineFence_.vao);
+    glDrawElementsInstanced(GL_TRIANGLES, outlineFence_.indexCount,
+                            GL_UNSIGNED_INT, nullptr, 1);
+  } else {
+    glBindVertexArray(outlineRock_.vao);
+    glDrawElementsInstanced(GL_TRIANGLES, outlineRock_.indexCount,
+                            GL_UNSIGNED_INT, nullptr, 1);
+  }
+  glBindVertexArray(0);
+
+  glDepthMask(GL_TRUE);
+  glDepthFunc(GL_LESS);
+  return true;
+}
+
 bool ObstacleSystem::loadTreeModel(const std::filesystem::path& path) {
   cgltf_options opts{};
   cgltf_data*   data = nullptr;

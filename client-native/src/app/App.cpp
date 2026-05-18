@@ -43,8 +43,12 @@ constexpr const char* kObstacleVertPath  = "shaders/obstacle.vert";
 constexpr const char* kObstacleFragPath  = "shaders/obstacle.frag";
 constexpr const char* kSkinnedVertPath   = "shaders/skinned.vert";
 constexpr const char* kSkinnedFragPath   = "shaders/skinned.frag";
-constexpr const char* kOutlineVertPath   = "shaders/outline.vert";
-constexpr const char* kOutlineFragPath   = "shaders/outline.frag";
+constexpr const char* kOutlineVertPath        = "shaders/outline.vert";
+constexpr const char* kOutlineFragPath        = "shaders/outline.frag";
+constexpr const char* kOutlineMaskVertPath    = "shaders/outline_mask.vert";
+constexpr const char* kOutlineMaskFragPath    = "shaders/outline_mask.frag";
+constexpr const char* kOutlineCompositeVertPath = "shaders/outline_composite.vert";
+constexpr const char* kOutlineCompositeFragPath = "shaders/outline_composite.frag";
 constexpr const char* kShadowInstVertPath= "shaders/shadow_instanced.vert";
 constexpr const char* kShadowFragPath    = "shaders/shadow.frag";
 constexpr const char* kPlayerModelPath   = "assets/models/player.glb";
@@ -141,6 +145,9 @@ const char* clipForPlayer(const shared::PlayerState* p) {
 App::~App() {
   if (imguiInited_) shutdownImGui();
   destroyHoverMesh();
+  if (outlineMaskFbo_) glDeleteFramebuffers(1, &outlineMaskFbo_);
+  if (outlineMaskTex_) glDeleteTextures(1, &outlineMaskTex_);
+  if (outlineQuadVao_) glDeleteVertexArrays(1, &outlineQuadVao_);
 }
 
 bool App::init() {
@@ -272,6 +279,16 @@ bool App::init() {
     std::fprintf(stderr, "[App] outline shader load failed\n");
     return false;
   }
+  if (!outlineMaskShader_.fromFiles(resolveFromExe(kOutlineMaskVertPath),
+                                    resolveFromExe(kOutlineMaskFragPath))) {
+    std::fprintf(stderr, "[App] outline mask shader load failed\n");
+    return false;
+  }
+  if (!outlineCompositeShader_.fromFiles(resolveFromExe(kOutlineCompositeVertPath),
+                                         resolveFromExe(kOutlineCompositeFragPath))) {
+    std::fprintf(stderr, "[App] outline composite shader load failed\n");
+    return false;
+  }
   if (!shadowInstancedShader_.fromFiles(resolveFromExe(kShadowInstVertPath),
                                         resolveFromExe(kShadowFragPath))) {
     std::fprintf(stderr, "[App] shadow shader load failed\n");
@@ -296,6 +313,13 @@ bool App::init() {
   entities_.initGL();
   generateAndBuildTerrain();
   initHoverMesh();
+
+  // Screen-space outline infrastructure.
+  // Empty VAO for the fullscreen-triangle composite draw (no buffers needed —
+  // the vertex shader uses gl_VertexID to generate positions directly).
+  glCreateVertexArrays(1, &outlineQuadVao_);
+  // Allocate the mask FBO at the initial window size.
+  initOutlineMaskFbo(kInitialWidth, kInitialHeight);
   // Player skinned mesh — failure is non-fatal so we still run if the
   // asset is missing; the player just won't render.
   if (!playerModel_.load(resolveFromExe(kPlayerModelPath))) {
@@ -801,68 +825,109 @@ void App::renderFrame() {
     glDepthMask(GL_TRUE);
   }
 
-  // ---- Outline shader for hovered interactables (tree/rock/NPC) ----------
-  if (hoveredTile_.hit && network_.status() == net::Connection::Connected) {
+  // ---- Screen-space outline for hovered interactables ----------------------
+  // Two-pass approach:
+  //   Pass A — Render the hovered entity's geometry flat-white into the R8
+  //             mask FBO. Manual depth comparison against the pre-resolved
+  //             scene depth texture discards occluded fragments, giving a
+  //             clean silhouette of whatever is actually visible.
+  //   Pass B — Fullscreen composite: sample the mask at 16 ring offsets;
+  //             pixels where the ring is filled but the center is empty are
+  //             border pixels — alpha-blend those in the outline color.
+  //
+  // Unlike world-space normal inflation this produces gap-free, constant-
+  // pixel-width outlines regardless of mesh topology, face normals, or the
+  // angle between adjacent hard-edge faces.
+  if (hoveredTile_.hit && network_.status() == net::Connection::Connected
+      && outlineMaskFbo_ && outlineMaskTex_ && msaa_->resolveDepthTexture()) {
     const int htx = hoveredTile_.tileX;
     const int hty = hoveredTile_.tileY;
-    bool isInteractable = false;
-    // Check NPCs at this tile
-    for (const auto& n : npcs_) {
-      if (n.tileX == htx && n.tileY == hty && !n.dying) { isInteractable = true; break; }
-    }
-    // Check dropped items
-    if (!isInteractable) {
-      for (const auto& it : droppedItems_) {
-        if (it.tileX == htx && it.tileY == hty) { isInteractable = true; break; }
-      }
-    }
-    // Check obstacles (tree/rock/chest)
+
+    // Detect what's at the hovered tile.
     bool hasObstacle = false;
-    if (!isInteractable && hty >= 0 && hty < static_cast<int>(map_.tiles.size()) &&
+    bool hasNpc      = false;
+    bool hasItem     = false;
+    world::EntityRenderer::Instance npcInst{}, itemInst{};
+
+    if (hty >= 0 && hty < static_cast<int>(map_.tiles.size()) &&
         htx >= 0 && htx < static_cast<int>(map_.tiles[hty].size())) {
       const auto obs = map_.tiles[hty][htx].obstacle;
       if (obs == shared::ObstacleType::tree || obs == shared::ObstacleType::rock ||
           obs == shared::ObstacleType::chest) {
-        isInteractable = true;
         hasObstacle = true;
       }
     }
-    // Draw obstacle outline shell (cyan glow)
-    if (hasObstacle) {
-      outlineShader_.use();
-      outlineShader_.setMat4("u_viewProj",     viewProj);
-      outlineShader_.setVec4("u_outlineColor", glm::vec4(0.0f, 0.9f, 0.9f, 0.8f));
-      // u_outlineWidth is managed internally by renderOutlineAt (two-pass stencil)
-      obstacles_.renderOutlineAt(outlineShader_, map_, htx, hty);
-    }
-    // For NPCs/items, run the same 2-pass stencil outline on their actual 3D
-    // geometry (humanoid capsule or item box) via EntityRenderer helpers.
-    if (isInteractable && !hasObstacle) {
-      constexpr glm::vec4 kEntityOutline(0.0f, 0.9f, 0.9f, 0.8f);
+    if (!hasObstacle) {
       for (const auto& n : npcs_) {
         if (n.tileX == htx && n.tileY == hty && !n.dying) {
-          const world::EntityRenderer::Instance inst{
-            static_cast<float>(n.tileX),
-            tileWorldY(map_, n.tileX, n.tileY),
-            static_cast<float>(n.tileY),
-            0.0f,
-          };
-          entities_.renderNpcOutline(outlineShader_, viewProj, inst, kEntityOutline);
+          hasNpc  = true;
+          npcInst = { static_cast<float>(n.tileX),
+                      tileWorldY(map_, n.tileX, n.tileY),
+                      static_cast<float>(n.tileY), 0.0f };
           break;
         }
       }
+    }
+    if (!hasObstacle && !hasNpc) {
       for (const auto& di : droppedItems_) {
         if (di.tileX == htx && di.tileY == hty) {
-          const world::EntityRenderer::Instance inst{
-            static_cast<float>(di.tileX),
-            tileWorldY(map_, di.tileX, di.tileY),
-            static_cast<float>(di.tileY),
-            0.0f,
-          };
-          entities_.renderItemOutline(outlineShader_, viewProj, inst, kEntityOutline);
+          hasItem  = true;
+          itemInst = { static_cast<float>(di.tileX),
+                       tileWorldY(map_, di.tileX, di.tileY),
+                       static_cast<float>(di.tileY), 0.0f };
           break;
         }
       }
+    }
+
+    if (hasObstacle || hasNpc || hasItem) {
+      // ── Pass A: render silhouette into mask FBO ──────────────────────────
+      glBindFramebuffer(GL_FRAMEBUFFER, outlineMaskFbo_);
+      const GLfloat kBlack[] = {0.0f, 0.0f, 0.0f, 0.0f};
+      glClearNamedFramebufferfv(outlineMaskFbo_, GL_COLOR, 0, kBlack);
+      glViewport(0, 0, fbW, fbH);
+
+      glDisable(GL_STENCIL_TEST);
+      glEnable(GL_DEPTH_TEST);
+      glDepthMask(GL_FALSE);   // read-only depth via manual comparison in shader
+      glDepthFunc(GL_ALWAYS);  // let the fragment shader decide via texture lookup
+
+      outlineMaskShader_.use();
+      outlineMaskShader_.setMat4("u_viewProj",   viewProj);
+      outlineMaskShader_.setInt ("u_sceneDepth",  2);  // texture unit 2
+      outlineMaskShader_.setVec2("u_screenSize",  glm::vec2(static_cast<float>(fbW),
+                                                             static_cast<float>(fbH)));
+      glBindTextureUnit(2, msaa_->resolveDepthTexture());
+
+      if (hasObstacle) obstacles_.renderGeometryAt(outlineMaskShader_, map_, htx, hty);
+      if (hasNpc)      entities_.renderNpcGeometry (outlineMaskShader_, npcInst);
+      if (hasItem)     entities_.renderItemGeometry(outlineMaskShader_, itemInst);
+
+      glDepthMask(GL_TRUE);
+      glDepthFunc(GL_LESS);
+
+      // ── Pass B: composite outline border over MSAA scene ─────────────────
+      msaa_->bind();
+      glViewport(0, 0, fbW, fbH);
+
+      glDisable(GL_DEPTH_TEST);
+      glEnable(GL_BLEND);
+      glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+      outlineCompositeShader_.use();
+      outlineCompositeShader_.setInt  ("u_mask",          3);  // texture unit 3
+      outlineCompositeShader_.setVec2 ("u_pixelSize",     glm::vec2(1.0f / fbW,
+                                                                    1.0f / fbH));
+      outlineCompositeShader_.setFloat("u_outlineRadius", 3.0f);
+      outlineCompositeShader_.setVec4 ("u_outlineColor",  glm::vec4(0.0f, 0.9f, 0.9f, 0.95f));
+      glBindTextureUnit(3, outlineMaskTex_);
+
+      glBindVertexArray(outlineQuadVao_);
+      glDrawArrays(GL_TRIANGLES, 0, 3);
+      glBindVertexArray(0);
+
+      glDisable(GL_BLEND);
+      glEnable(GL_DEPTH_TEST);
     }
   }
 
@@ -1458,6 +1523,22 @@ void App::exportWorldMap() {
 
 void App::onResize(int width, int height) {
   if (msaa_) msaa_->resize(width, height);
+  if (width > 0 && height > 0) initOutlineMaskFbo(width, height);
+}
+
+void App::initOutlineMaskFbo(int w, int h) {
+  if (outlineMaskFbo_) { glDeleteFramebuffers(1, &outlineMaskFbo_); outlineMaskFbo_ = 0; }
+  if (outlineMaskTex_) { glDeleteTextures(1, &outlineMaskTex_);     outlineMaskTex_ = 0; }
+
+  glCreateTextures(GL_TEXTURE_2D, 1, &outlineMaskTex_);
+  glTextureStorage2D(outlineMaskTex_, 1, GL_R8, w, h);
+  glTextureParameteri(outlineMaskTex_, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+  glTextureParameteri(outlineMaskTex_, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+  glTextureParameteri(outlineMaskTex_, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTextureParameteri(outlineMaskTex_, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+  glCreateFramebuffers(1, &outlineMaskFbo_);
+  glNamedFramebufferTexture(outlineMaskFbo_, GL_COLOR_ATTACHMENT0, outlineMaskTex_, 0);
 }
 
 void App::initImGui() {

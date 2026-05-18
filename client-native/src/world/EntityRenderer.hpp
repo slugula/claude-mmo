@@ -67,6 +67,12 @@ public:
                          const Instance& inst,
                          const glm::vec4& color) const;
 
+  // Render just the geometry for a single NPC or dropped item (no stencil,
+  // no inflation). u_viewProj must already be set on the shader. Used by the
+  // screen-space outline mask pass to build a silhouette texture.
+  void renderNpcGeometry (render::Shader& maskShader, const Instance& inst) const;
+  void renderItemGeometry(render::Shader& maskShader, const Instance& inst) const;
+
   std::size_t npcCount()  const { return npcCount_;  }
   std::size_t itemCount() const { return itemCount_; }
 
