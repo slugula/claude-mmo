@@ -7,6 +7,7 @@ in vec4  vClipPos;
 
 uniform sampler2D uNormalMap;   // unit 0
 uniform sampler2D uSceneColor;  // unit 1 — resolved FBO before water pass
+uniform sampler2D uSceneDepth;  // unit 2 — resolved depth before water pass (for foam)
 
 uniform float uTime;
 uniform float uWaveSpeed;
@@ -16,7 +17,7 @@ uniform float uReflectStrength;
 uniform float uCausticIntensity;
 uniform float uCausticScale;
 uniform float uCausticSpeed;
-uniform float uFoamThreshold;
+uniform float uFoamDepth;    // world units — intersection zone where foam appears
 uniform float uFoamSpeed;
 uniform float uFoamScale;
 uniform float uParallaxDepth;
@@ -43,6 +44,16 @@ float causticPattern(vec2 uv, float t) {
 float foamNoise(vec2 uv, float t) {
     vec2 suv = uv * uFoamScale + vec2(t * uFoamSpeed, t * uFoamSpeed * 0.7);
     return fract(sin(dot(floor(suv), vec2(127.1, 311.7))) * 43758.5453);
+}
+
+// ---------------------------------------------------------------------------
+// Linearise a depth-buffer value (stored in [0,1]) to view-space distance.
+// Near/far must match the camera projection (0.1 / 500.0 defaults).
+// ---------------------------------------------------------------------------
+float linearDepth(float d) {
+    const float near = 0.1;
+    const float far  = 500.0;
+    return (2.0 * near * far) / (far + near - (2.0 * d - 1.0) * (far - near));
 }
 
 // ---------------------------------------------------------------------------
@@ -77,8 +88,19 @@ void main() {
     float reflWeight = uReflectStrength * (1.0 - vShoreWeight * 0.5);
     waterColor = mix(waterColor, reflected, reflWeight);
 
-    // ---- Foam at shoreline edge --------------------------------------------
-    float foam = step(uFoamThreshold, vShoreWeight) * foamNoise(vUV, uTime);
+    // ---- Depth-intersection foam -------------------------------------------
+    // Sample the pre-water terrain depth at this screen pixel (unperturbed UV).
+    // Linearise both depths and compute the world-space gap. Where the terrain
+    // surface is within uFoamDepth units of the water surface, draw foam.
+    float sceneD  = texture(uSceneDepth, screenUV).r;
+    float waterD  = gl_FragCoord.z;
+    float sceneL  = linearDepth(sceneD);
+    float waterL  = linearDepth(waterD);
+    float depthGap = sceneL - waterL;  // > 0 ⟹ terrain behind water surface
+    float foamFactor = (depthGap > 0.0)
+                     ? (1.0 - smoothstep(0.0, uFoamDepth, depthGap))
+                     : 0.0;
+    float foam = foamFactor * foamNoise(vUV, uTime);
     waterColor = mix(waterColor, uFoamColor, foam);
 
     // Fully opaque — terrain must not poke through the water surface.

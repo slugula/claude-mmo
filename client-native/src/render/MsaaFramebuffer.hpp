@@ -34,11 +34,17 @@ public:
   // After this call, resolveColorTexture() is up-to-date.
   void resolve() const;
 
+  // Blit the multisampled depth attachment to the resolve FBO depth texture.
+  // After this call, resolveDepthTexture() is up-to-date.
+  // Call this before rendering passes that need to sample scene depth (e.g. water foam).
+  void resolveDepth() const;
+
   // Blit the resolved color to the default framebuffer (window).
   // Use this after resolve() to present the result.
   void blitToDefault(int targetWidth, int targetHeight) const;
 
   GLuint resolveColorTexture() const { return resolveColor_; }
+  GLuint resolveDepthTexture() const { return resolveDepth_; }
   int width()  const { return width_;  }
   int height() const { return height_; }
   int samples() const { return samples_; }
@@ -56,6 +62,7 @@ private:
 
   GLuint fboResolve_   = 0;
   GLuint resolveColor_ = 0;
+  GLuint resolveDepth_ = 0;
 };
 
 }  // namespace render

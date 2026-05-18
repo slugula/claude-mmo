@@ -154,8 +154,9 @@ private:
   BrushState    brush_;
   int           hoveredTileX_   = -1;
   int           hoveredTileY_   = -1;
-  bool          mouseHeldGrid_  = false;   // drag in 2D view
-  bool          mouseHeld3D_    = false;   // drag in 3D viewport
+  bool          mouseHeldGrid_    = false;   // drag in 2D view
+  bool          mouseHeld3D_      = false;   // drag in 3D viewport
+  bool          middleClickIn3D_  = false;   // middle-click started in 3D viewport (locks orbit there)
 
   // Sub-selection within tools
   shared::ObstacleType  obstacleSubtype_ = shared::ObstacleType::tree;
@@ -168,6 +169,8 @@ private:
   bool showHeightOverlay_         = false;
   bool showWalkabilityOverlay_    = false;
   bool showGridmapOverlay_        = false;
+  bool showWireframe_             = false;
+  bool resetLayout_               = false;  // triggers DockBuilder reset next frame
   // True when overlay was auto-enabled by tool selection (so it auto-disables on tool change)
   bool overlayHeightAuto_         = false;
   bool overlayWalkabilityAuto_    = false;

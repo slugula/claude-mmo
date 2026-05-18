@@ -301,9 +301,12 @@ void EditorApp::renderFrame(float dt) {
     ImGuiDockNodeFlags dsFlags = ImGuiDockNodeFlags_PassthruCentralNode;
     ImGui::DockSpace(dsId, ImVec2(0, 0), dsFlags);
 
-    static bool firstLayout = true;
-    if (firstLayout) {
-      firstLayout = false;
+    // Build the default layout only when no saved layout exists (first ever
+    // run, or after "Reset Layout").  DockBuilderGetNode returns non-null once
+    // imgui.ini has been loaded/saved, so we don't clobber user arrangements.
+    const bool needDefaultLayout = (ImGui::DockBuilderGetNode(dsId) == nullptr);
+    if (needDefaultLayout || resetLayout_) {
+      resetLayout_ = false;
       ImGui::DockBuilderRemoveNode(dsId);
       ImGui::DockBuilderAddNode(dsId, ImGuiDockNodeFlags_DockSpace);
       ImGui::DockBuilderSetNodeSize(dsId, vp->WorkSize);
@@ -423,6 +426,21 @@ void EditorApp::render3DViewport(float dt) {
   terrainShader_.setFloat("u_lightingEnabled", lightingEnabled_ ? 1.0f : 0.0f);
   terrainMesh_.draw();
 
+  // ---- Wireframe overlay -----------------------------------------------
+  if (showWireframe_) {
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glDepthMask(GL_FALSE);
+    glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+    wireframeShader_.use();
+    wireframeShader_.setMat4("u_viewProj", viewProj);
+    wireframeShader_.setVec4("u_color", glm::vec4(0.0f, 0.0f, 0.0f, 0.30f));
+    terrainMesh_.draw();
+    glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+    glDepthMask(GL_TRUE);
+    glDisable(GL_BLEND);
+  }
+
   // Obstacles
   obstacleShader_.use();
   obstacleShader_.setMat4 ("u_viewProj",       viewProj);
@@ -480,20 +498,20 @@ void EditorApp::render3DViewport(float dt) {
   }
 
   // ---- Water pass -------------------------------------------------------
-  // First resolve captures the scene (terrain+obstacles) for SSR sampling.
-  // Then we re-bind the MSAA FBO, draw water on top, and resolve again.
+  // Resolve colour (for SSR) and depth (for foam intersection) before drawing
+  // water.  Then re-bind the MSAA FBO, draw water on top, and resolve again.
   if (!map_.waterTiles.empty() && waterRenderer_.valid()) {
-    viewport3dFbo_->resolve();   // pre-water snapshot for SSR
+    viewport3dFbo_->resolve();      // pre-water colour snapshot for SSR
+    viewport3dFbo_->resolveDepth(); // pre-water depth snapshot for foam
 
     viewport3dFbo_->bind();
     glViewport(0, 0, viewport3dW_, viewport3dH_);
 
-    // Water is opaque; no blending needed.  Depth writes enabled so the hover
-    // outline correctly renders on top of the water surface.
     waterRenderer_.render(
         static_cast<float>(glfwGetTime()),
         viewProj,
         viewport3dFbo_->resolveColorTexture(),
+        viewport3dFbo_->resolveDepthTexture(),
         waterUniforms_);
   }
 
@@ -539,10 +557,16 @@ void EditorApp::drawMenuBar() {
     if (ImGui::MenuItem("Walkability Overlay", nullptr, &showWalkabilityOverlay_))
       overlayWalkabilityAuto_ = false;
     ImGui::MenuItem("Gridmap Overlay",         nullptr, &showGridmapOverlay_);
+    ImGui::MenuItem("Wireframe",               nullptr, &showWireframe_);
     ImGui::Separator();
     ImGui::MenuItem("Palette Quantisation",    nullptr, &palette_);
     ImGui::MenuItem("Lighting",                nullptr, &lightingEnabled_);
     ImGui::MenuItem("Shadows",                 nullptr, &shadowsEnabled_);
+    ImGui::Separator();
+    if (ImGui::MenuItem("Save Layout as Default"))
+      ImGui::SaveIniSettingsToDisk(ImGui::GetIO().IniFilename);
+    if (ImGui::MenuItem("Reset Layout"))
+      resetLayout_ = true;
     ImGui::EndMenu();
   }
 }
@@ -605,7 +629,7 @@ void EditorApp::drawWaterSettings() {
     ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##nstr", &u.normalStrength,  0.0f, 2.0f,  "NrmStr:%.2f");
     ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##rfl",  &u.reflectStrength, 0.0f, 1.0f,  "Reflect:%.2f");
     ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##caus", &u.causticIntensity,0.0f, 1.0f,  "Caustic:%.2f");
-    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##fthrs",&u.foamThreshold,   0.0f, 1.0f,  "FoamEdge:%.2f");
+    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##fdep", &u.foamDepth,        0.0f, 2.0f,  "FoamDepth:%.2f");
   }
   if (ImGui::CollapsingHeader("Water — Advanced")) {
     ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##wsc",  &u.waveScale,       0.5f, 8.0f,  "WaveSc:%.2f");
@@ -728,6 +752,13 @@ void EditorApp::draw3DViewportWindow() {
   const bool imageHovered = ImGui::IsItemHovered();
   const auto& io = ImGui::GetIO();
 
+  // Track middle-click origin: if it started in this viewport, keep orbit
+  // locked here until the button is released — prevents 2D grid from panning.
+  if (imageHovered && io.MouseClicked[ImGuiMouseButton_Middle])
+    middleClickIn3D_ = true;
+  if (!io.MouseDown[ImGuiMouseButton_Middle])
+    middleClickIn3D_ = false;
+
   // Ctrl+Scroll → brush size; plain scroll → camera zoom
   if (imageHovered && io.MouseWheel != 0.0f) {
     if (io.KeyCtrl) {
@@ -791,7 +822,7 @@ void EditorApp::drawGridView() {
         gridZoom_ = std::clamp(gridZoom_ * (io.MouseWheel > 0 ? 1.15f : (1.0f / 1.15f)), 2.0f, 32.0f);
       }
     }
-    if (ImGui::IsMouseDragging(ImGuiMouseButton_Middle)) {
+    if (!middleClickIn3D_ && ImGui::IsMouseDragging(ImGuiMouseButton_Middle)) {
       const auto delta = ImGui::GetMouseDragDelta(ImGuiMouseButton_Middle, 0.0f);
       ImGui::ResetMouseDragDelta(ImGuiMouseButton_Middle);
       gridOffX_ += delta.x;

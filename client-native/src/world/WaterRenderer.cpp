@@ -81,6 +81,7 @@ void WaterRenderer::rebuild(const shared::WorldMapFile& map, float waterOffset) 
 void WaterRenderer::render(float time,
                             const glm::mat4& viewProj,
                             GLuint sceneColorTex,
+                            GLuint sceneDepthTex,
                             const WaterUniforms& u) {
   if (!shader_.isValid() || mesh_.empty()) return;
 
@@ -101,7 +102,7 @@ void WaterRenderer::render(float time,
   shader_.setFloat("uCausticIntensity", u.causticIntensity);
   shader_.setFloat("uCausticScale",     u.causticScale);
   shader_.setFloat("uCausticSpeed",     u.causticSpeed);
-  shader_.setFloat("uFoamThreshold",    u.foamThreshold);
+  shader_.setFloat("uFoamDepth",        u.foamDepth);
   shader_.setFloat("uFoamSpeed",        u.foamSpeed);
   shader_.setFloat("uFoamScale",        u.foamScale);
   shader_.setFloat("uParallaxDepth",    u.parallaxDepth);
@@ -112,8 +113,10 @@ void WaterRenderer::render(float time,
   // Textures
   shader_.setInt("uNormalMap",  0);
   shader_.setInt("uSceneColor", 1);
+  shader_.setInt("uSceneDepth", 2);
   glBindTextureUnit(0, normalMapTex_);
   glBindTextureUnit(1, sceneColorTex);
+  glBindTextureUnit(2, sceneDepthTex);
 
   mesh_.draw();
 }

@@ -22,7 +22,7 @@ struct WaterUniforms {
   float     normalStrength  = 0.60f;
   float     reflectStrength = 0.50f;
   float     causticIntensity= 0.30f;
-  float     foamThreshold   = 0.60f;
+  float     foamDepth       = 0.50f;  // world-unit depth range for intersection foam
   // ---- Advanced ----
   float     waveScale       = 2.00f;
   float     causticScale    = 4.00f;
@@ -61,10 +61,12 @@ public:
   //   time          — elapsed seconds (for animation)
   //   viewProj      — combined view*projection matrix
   //   sceneColorTex — resolved FBO colour texture (for screen-space reflection)
+  //   sceneDepthTex — resolved FBO depth texture (for depth-intersection foam)
   //   u             — appearance uniforms
   void render(float time,
               const glm::mat4& viewProj,
               GLuint           sceneColorTex,
+              GLuint           sceneDepthTex,
               const WaterUniforms& u);
 
   bool valid() const { return shader_.isValid(); }
