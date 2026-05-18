@@ -422,11 +422,12 @@ void App::updateHoverMesh(int tx, int ty, int szX, int szY) {
   const float hNW = vh[(H - ty2 - 1) * (W + 1) + tx]      * shared::kMaxTerrainH;
   const float hNE = vh[(H - ty2 - 1) * (W + 1) + tx2 + 1] * shared::kMaxTerrainH;
 
+  constexpr float kHoverBias = 0.015f;
   const float verts[12] = {
-      tx  - 0.5f, hSW, ty  - 0.5f,
-      tx2 + 0.5f, hSE, ty  - 0.5f,
-      tx2 + 0.5f, hNE, ty2 + 0.5f,
-      tx  - 0.5f, hNW, ty2 + 0.5f,
+      tx  - 0.5f, hSW + kHoverBias, ty  - 0.5f,
+      tx2 + 0.5f, hSE + kHoverBias, ty  - 0.5f,
+      tx2 + 0.5f, hNE + kHoverBias, ty2 + 0.5f,
+      tx  - 0.5f, hNW + kHoverBias, ty2 + 0.5f,
   };
   glNamedBufferSubData(hoverVbo_, 0, sizeof(verts), verts);
 }
@@ -790,16 +791,6 @@ void App::renderFrame() {
     glViewport(0, 0, fbW, fbH);
   }
 
-  // ---- Wireframe grid overlay ------------------------------------------------
-  if (wireframe_) {
-    wireframeShader_.use();
-    wireframeShader_.setMat4("u_viewProj", viewProj);
-    wireframeShader_.setVec4("u_color",    glm::vec4(1.0f, 1.0f, 1.0f, 1.0f));
-    glDepthMask(GL_FALSE);
-    terrainMesh_.drawLines();
-    glDepthMask(GL_TRUE);
-  }
-
   // ---- Water pass ------------------------------------------------------------
   // Drawn here — after opaque geometry and SSR snapshot but BEFORE the hover
   // tile outline and entity stencil outlines, so those always composite on top
@@ -813,11 +804,21 @@ void App::renderFrame() {
         waterUniforms_);
   }
 
+  // ---- Wireframe grid overlay ------------------------------------------------
+  if (wireframe_) {
+    wireframeShader_.use();
+    wireframeShader_.setMat4("u_viewProj", viewProj);
+    wireframeShader_.setVec4("u_color",    glm::vec4(1.0f, 1.0f, 1.0f, 1.0f));
+    glDepthMask(GL_FALSE);
+    terrainMesh_.drawLines();
+    glDepthMask(GL_TRUE);
+  }
+
   // ---- Hover tile outline (yellow) ------------------------------------------
   if (hoveredTile_.hit) {
     wireframeShader_.use();
     wireframeShader_.setMat4("u_viewProj", viewProj);
-    wireframeShader_.setVec4("u_color",    glm::vec4(1.0f, 0.85f, 0.10f, 1.0f));
+    wireframeShader_.setVec4("u_color",    hoverTileColor_);
     glDepthMask(GL_FALSE);
     glBindVertexArray(hoverVao_);
     glDrawArrays(GL_LINE_LOOP, 0, 4);
@@ -897,6 +898,7 @@ void App::renderFrame() {
       outlineMaskShader_.setInt ("u_sceneDepth",  2);  // texture unit 2
       outlineMaskShader_.setVec2("u_screenSize",  glm::vec2(static_cast<float>(fbW),
                                                              static_cast<float>(fbH)));
+      outlineMaskShader_.setFloat("u_depthBias",  outlineDepthBias_);
       glBindTextureUnit(2, msaa_->resolveDepthTexture());
 
       if (hasObstacle) obstacles_.renderGeometryAt(outlineMaskShader_, map_, htx, hty);
@@ -918,8 +920,8 @@ void App::renderFrame() {
       outlineCompositeShader_.setInt  ("u_mask",          3);  // texture unit 3
       outlineCompositeShader_.setVec2 ("u_pixelSize",     glm::vec2(1.0f / fbW,
                                                                     1.0f / fbH));
-      outlineCompositeShader_.setFloat("u_outlineRadius", 3.0f);
-      outlineCompositeShader_.setVec4 ("u_outlineColor",  glm::vec4(0.0f, 0.9f, 0.9f, 0.95f));
+      outlineCompositeShader_.setFloat("u_outlineRadius", outlineRadius_);
+      outlineCompositeShader_.setVec4 ("u_outlineColor",  outlineColor_);
       glBindTextureUnit(3, outlineMaskTex_);
 
       glBindVertexArray(outlineQuadVao_);
@@ -1300,6 +1302,19 @@ void App::renderFrame() {
       paletteHues_ = 64; paletteSats_ = 16; paletteLums_ = 64;
     }
     ImGui::EndDisabled();
+
+    ImGui::Separator();
+    ImGui::TextUnformatted("Hover Outline");
+    ImGui::SliderFloat("Outline radius (px)", &outlineRadius_,    1.0f, 10.0f, "%.1f");
+    ImGui::SliderFloat("Depth bias",          &outlineDepthBias_, 0.0f,  0.01f, "%.4f");
+    ImGui::ColorEdit4("Outline color",  reinterpret_cast<float*>(&outlineColor_));
+    ImGui::ColorEdit4("Tile hover color", reinterpret_cast<float*>(&hoverTileColor_));
+    if (ImGui::SmallButton("Reset outline defaults")) {
+      outlineRadius_    = 3.0f;
+      outlineDepthBias_ = 0.002f;
+      outlineColor_     = {0.0f, 0.9f, 0.9f, 0.95f};
+      hoverTileColor_   = {1.0f, 0.85f, 0.10f, 1.0f};
+    }
 
     ImGui::Separator();
     ImGui::TextUnformatted("Network (Phase 4)");

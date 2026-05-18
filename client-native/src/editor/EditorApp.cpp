@@ -426,21 +426,6 @@ void EditorApp::render3DViewport(float dt) {
   terrainShader_.setFloat("u_lightingEnabled", lightingEnabled_ ? 1.0f : 0.0f);
   terrainMesh_.draw();
 
-  // ---- Wireframe overlay -----------------------------------------------
-  if (showWireframe_) {
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-    glDepthMask(GL_FALSE);
-    glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
-    wireframeShader_.use();
-    wireframeShader_.setMat4("u_viewProj", viewProj);
-    wireframeShader_.setVec4("u_color", glm::vec4(0.0f, 0.0f, 0.0f, 0.30f));
-    terrainMesh_.draw();
-    glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
-    glDepthMask(GL_TRUE);
-    glDisable(GL_BLEND);
-  }
-
   // Obstacles
   obstacleShader_.use();
   obstacleShader_.setMat4 ("u_viewProj",       viewProj);
@@ -513,6 +498,21 @@ void EditorApp::render3DViewport(float dt) {
         viewport3dFbo_->resolveColorTexture(),
         viewport3dFbo_->resolveDepthTexture(),
         waterUniforms_);
+  }
+
+  // ---- Wireframe overlay — AFTER water so it composites on top ----------
+  if (showWireframe_) {
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glDepthMask(GL_FALSE);
+    glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+    wireframeShader_.use();
+    wireframeShader_.setMat4("u_viewProj", viewProj);
+    wireframeShader_.setVec4("u_color", glm::vec4(0.0f, 0.0f, 0.0f, 0.30f));
+    terrainMesh_.draw();
+    glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+    glDepthMask(GL_TRUE);
+    glDisable(GL_BLEND);
   }
 
   viewport3dFbo_->resolve();   // final resolve for ImGui display

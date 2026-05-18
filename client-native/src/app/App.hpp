@@ -178,6 +178,12 @@ private:
   int                                      terrainTileH_    = 0;
   int                                      terrainIndexCt_  = 0;
   bool                                     wireframe_       = false;
+  // Screen-space outline settings
+  float     outlineRadius_    = 3.0f;
+  float     outlineDepthBias_ = 0.002f;
+  glm::vec4 outlineColor_     = {0.0f, 0.9f, 0.9f, 0.95f};
+  glm::vec4 hoverTileColor_   = {1.0f, 0.85f, 0.10f, 1.0f};
+
   // Phase 7 — HSL palette quantization (per-fragment).
   bool                                     palette_         = true;
   int                                      paletteHues_     = 64;

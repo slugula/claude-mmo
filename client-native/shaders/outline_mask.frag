@@ -11,12 +11,13 @@
 
 uniform sampler2D u_sceneDepth;  // resolved scene depth (GL_DEPTH_COMPONENT)
 uniform vec2      u_screenSize;  // (fbWidth, fbHeight)
+uniform float     u_depthBias;   // configurable epsilon for MSAA depth resolve tolerance
 
 out vec4 fragColor;
 
 void main() {
     vec2  uv         = gl_FragCoord.xy / u_screenSize;
     float sceneDepth = texture(u_sceneDepth, uv).r;
-    if (gl_FragCoord.z > sceneDepth + 0.002) discard;
+    if (gl_FragCoord.z > sceneDepth + u_depthBias) discard;
     fragColor = vec4(1.0);
 }
