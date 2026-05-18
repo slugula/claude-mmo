@@ -139,6 +139,18 @@ float facingToYaw(const std::string& facing) {
   return 0.0f;
 }
 
+// Returns true for movement clips that should be suppressed while turning.
+static bool isMovementClip(const char* name) {
+  return name == std::string_view("Walk_Loop") || name == std::string_view("Sprint_Loop");
+}
+
+// Smallest signed angle between two yaw values (result in [-π, π]).
+static float yawDelta(float from, float to) {
+  constexpr float kTwoPi = 6.28318530f;
+  constexpr float kPi    = 3.14159265f;
+  return std::fmod(to - from + kTwoPi + kPi, kTwoPi) - kPi;
+}
+
 // Choose the base animation clip for a player's current movement state.
 // `prev` is the player state from the previous server tick (may be nullptr).
 // One-shot overrides (attack, hit, pickup) are applied by the caller on top.
@@ -850,6 +862,12 @@ void App::renderFrame() {
         const shared::PlayerState* prevRp =
           prevRpIt != prevRemotePlayers_.end() ? &prevRpIt->second : nullptr;
         desiredClip = clipForPlayer(&rp, prevRp);
+        // Same turn-suppression as local player.
+        constexpr float kTurnThreshold = 1.05f;
+        if (isMovementClip(desiredClip) &&
+            std::abs(yawDelta(ra.yaw, targetYaw)) > kTurnThreshold) {
+          desiredClip = "Idle_Loop";
+        }
       }
       const int wantIdx = playerModel_.findClipIndex(desiredClip);
       if (wantIdx != ra.clipIndex) {
@@ -1793,6 +1811,9 @@ void App::renderPlayer(const glm::mat4& viewProj, float dt) {
   // Animation clip & timing. Phase 5e — while a one-shot deadline is in
   // the future, override the movement-driven clip with the attack/chop
   // animation. Falls back through clipForPlayer once the deadline lapses.
+  // Pre-compute target yaw here so it's available for turn-suppression below.
+  const float targetYaw = facingToYaw(currLocalPlayer_->facing);
+
   const char* desired = nullptr;
   const auto  now = std::chrono::steady_clock::now();
   if (!oneShotClip_.empty() && now < oneShotEndsAt_) {
@@ -1802,6 +1823,15 @@ void App::renderPlayer(const glm::mat4& viewProj, float dt) {
     const shared::PlayerState* prevPtr =
       prevLocalPlayer_.has_value() ? &*prevLocalPlayer_ : nullptr;
     desired = clipForPlayer(&*currLocalPlayer_, prevPtr);
+    // Suppress movement clips while the character is still turning significantly.
+    // This prevents running-in-place in the wrong direction when pathfinding
+    // behind the player.  ~60° threshold: small turns start immediately, large
+    // turns wait until the model has visibly pivoted toward the destination.
+    constexpr float kTurnThreshold = 1.05f;  // ≈ 60°
+    if (isMovementClip(desired) &&
+        std::abs(yawDelta(smoothedPlayerYaw_, targetYaw)) > kTurnThreshold) {
+      desired = "Idle_Loop";
+    }
   }
   if (playerModel_.clipName() != desired) {
     playerModel_.setClip(desired);
@@ -1812,7 +1842,6 @@ void App::renderPlayer(const glm::mat4& viewProj, float dt) {
   // looks like a tank turret rotating instantaneously; a fast exponential
   // ease (half-life ~80ms) reads as "the character pivoted" without
   // visibly lagging server-authoritative facing.
-  const float targetYaw = facingToYaw(currLocalPlayer_->facing);
   if (!smoothedYawValid_) {
     smoothedPlayerYaw_ = targetYaw;
     smoothedYawValid_  = true;
