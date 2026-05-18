@@ -126,6 +126,7 @@ export interface NPCState {
   facing: Direction;
   path: GridPosition[];
   hp: number;
+  maxHp: number;
   homeX: number;
   homeY: number;
   waitTicks: number;

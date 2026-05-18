@@ -73,13 +73,36 @@ void WorldOverlays::update(int /*currentTick*/,
 }
 
 // ---------------------------------------------------------------------------
-// Compute billboard bar pixel width by projecting two world-edge points.
-// Returns a clamped minimum so bars are always readable up close.
-static float billboardBarW(const glm::mat4& vp, float wx, float wy, float wz,
+// Compute billboard bar pixel width that is invariant to camera rotation.
+//
+// A naive approach projects ±X world offsets, but when the camera looks from
+// the side those offsets point into/out of the screen and the bar shrinks or
+// expands with rotation.
+//
+// Instead we extract the camera RIGHT vector from the viewProj matrix.
+// For a standard perspective projection P and view matrix V (column-major GLM):
+//   viewProj[j][0] = (P[0][0]) * V[j][0]   (row 0 of viewProj)
+// where V[j][0] = cameraRight[j]  (row 0 of V = camera right in world space)
+// and P[0][0] = projXScale (x focal length).
+//
+// Since cameraRight is a unit vector:
+//   projXScale = ||(viewProj[0][0], viewProj[1][0], viewProj[2][0])||
+//   cameraRight = (viewProj[0][0], viewProj[1][0], viewProj[2][0]) / projXScale
+//
+// We then project anchor ± cameraRight * halfWorldW — these points are always
+// perpendicular to the viewing direction, so the bar width is stable.
+static float billboardBarW(const glm::mat4& vp, float wx, float anchorY, float wz,
                             float halfWorldW, int fbW, int fbH) {
+  // Row 0 of viewProj = projXScale * cameraRight  (GLM col-major: [col][row])
+  const glm::vec3 vpRow0(vp[0][0], vp[1][0], vp[2][0]);
+  const float projXScale = glm::length(vpRow0);
+  if (projXScale < 0.0001f) return 44.0f;
+  const glm::vec3 camRight = vpRow0 / projXScale;
+
+  const glm::vec3 anchor(wx, anchorY, wz);
   glm::vec2 pxL, pxR;
-  const bool okL = worldToScreen(vp, {wx - halfWorldW, wy, wz}, fbW, fbH, &pxL);
-  const bool okR = worldToScreen(vp, {wx + halfWorldW, wy, wz}, fbW, fbH, &pxR);
+  const bool okL = worldToScreen(vp, anchor - camRight * halfWorldW, fbW, fbH, &pxL);
+  const bool okR = worldToScreen(vp, anchor + camRight * halfWorldW, fbW, fbH, &pxR);
   if (okL && okR) return std::max(14.0f, std::abs(pxR.x - pxL.x));
   return 44.0f;  // fallback
 }

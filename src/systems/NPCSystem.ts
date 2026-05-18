@@ -18,6 +18,7 @@ export function spawnNPC(id: string, kind: NPCKind, x: number, y: number): NPCSt
     facing: 'south',
     path: [],
     hp: def.maxHp,
+    maxHp: def.maxHp,
     homeX: x,
     homeY: y,
     waitTicks: WAIT_MIN,
