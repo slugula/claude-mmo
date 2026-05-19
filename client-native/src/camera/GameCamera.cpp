@@ -110,4 +110,16 @@ void GameCamera::snapTo(const glm::vec3& target) {
   currentTarget_ = target;
 }
 
+void GameCamera::pan(float right, float forward) {
+  // Camera yaw is alpha_ (azimuth). Forward direction in XZ:
+  //   forward = ( sin(alpha), 0, cos(alpha) )  — same convention as cameraPosition()
+  const float sinA = std::sin(alpha_);
+  const float cosA = std::cos(alpha_);
+  // Forward in world XZ (toward target from camera position projected to XZ)
+  const glm::vec3 fwd { sinA, 0.0f, cosA };
+  // Right is perpendicular in XZ
+  const glm::vec3 rgt { cosA, 0.0f, -sinA };
+  targetPos_ += rgt * right + fwd * forward;
+}
+
 }  // namespace camera

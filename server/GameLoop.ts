@@ -25,6 +25,10 @@ interface WorldMapJSON {
   npcSpawns?:      NPCSpawn[];
   permanentItems?: PermanentItemSpawn[];
   vertexHeights?:  number[];
+  // Water tiles — separate list used by the renderer; walkable is authoritative
+  // source of truth for pathfinding, but old maps may have saved these as
+  // walkable=true before the editor bug was fixed. We re-enforce on load.
+  waterTiles?: { tileX: number; tileY: number }[];
   // legacy v1 fields (ignored by new renderer)
   pixelWidth?:  number;
   pixelHeight?: number;
@@ -83,6 +87,14 @@ export class GameLoop {
     this.worldTiles = mapData.tiles;
 
     const world = createWorldFromTiles(mapData.tiles, mapData.vertexHeights);
+
+    // Enforce walkable=false for every water tile. Old maps saved by the editor
+    // before a bug-fix may have waterTiles listed but tile.walkable=true in the
+    // tile array; this re-derives walkability from the authoritative waterTiles list.
+    for (const wt of (mapData.waterTiles ?? [])) {
+      const row = world.tiles[wt.tileY];
+      if (row && row[wt.tileX]) row[wt.tileX].walkable = false;
+    }
 
     // NPC spawns: use map file's list (v2) or legacy defaults
     const npcSpawnDefs = (mapData.npcSpawns && mapData.npcSpawns.length > 0)

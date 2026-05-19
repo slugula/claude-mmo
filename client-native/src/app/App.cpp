@@ -34,7 +34,7 @@ constexpr int kInitialHeight = 720;
 constexpr int kMsaaSamples   = 4;
 constexpr int kMapWidth      = 64;
 constexpr int kMapHeight     = 64;
-constexpr const char* kTitle             = "Snook Online (native)";
+constexpr const char* kTitle             = "Project L";
 constexpr const char* kTerrainVertPath   = "shaders/terrain.vert";
 constexpr const char* kTerrainFragPath   = "shaders/terrain.frag";
 constexpr const char* kWireframeVertPath = "shaders/wireframe.vert";
@@ -1432,6 +1432,7 @@ void App::renderFrame() {
     ImGui::BeginDisabled(!aoEnabled_);
     ImGui::SliderFloat("AO strength",  &aoStrength_, 0.0f,  1.0f,  "%.2f");
     if (ImGui::SmallButton("AO defaults")) { aoStrength_ = 0.50f; }
+    ImGui::Separator();
     ImGui::EndDisabled();
     if (aoEnabled_) ImGui::TextDisabled("AO baked into terrain mesh — regen to update");
 
@@ -2058,7 +2059,7 @@ void App::processNetworkMessages() {
         }
         if (firstState) {
           if (!loginAnnounced_) {
-            chatLog_.appendSystem("Welcome to Project Reverie.");
+            chatLog_.appendSystem("Welcome to Project L.");
             chatLog_.appendSystem(std::string("Logged in as ") + network_.playerName() + ".");
             loginAnnounced_ = true;
           }
@@ -2109,18 +2110,11 @@ bool App::drawLoginUi() {
 
   // Title / logo
   {
-    const char* title = "Reverie";
+    const char* title = "Project L";
     const float tw = ImGui::CalcTextSize(title).x;
     ImGui::SetCursorPosX((kW - tw) * 0.5f - ImGui::GetStyle().WindowPadding.x);
     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.00f, 0.60f, 0.12f, 1.0f));
     ImGui::Text("%s", title);
-    ImGui::PopStyleColor();
-
-    const char* sub = "Project Reverie";
-    const float sw = ImGui::CalcTextSize(sub).x;
-    ImGui::SetCursorPosX((kW - sw) * 0.5f - ImGui::GetStyle().WindowPadding.x);
-    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.78f, 0.63f, 0.38f, 1.0f));
-    ImGui::TextUnformatted(sub);
     ImGui::PopStyleColor();
   }
 
@@ -2129,6 +2123,7 @@ bool App::drawLoginUi() {
   ImGui::Spacing();
 
   // Form — two-column table keeps labels and inputs aligned.
+  bool userEnter = false, passEnter = false;
   if (ImGui::BeginTable("##lf", 2)) {
     ImGui::TableSetupColumn("##lc", ImGuiTableColumnFlags_WidthFixed, 68.0f);
     ImGui::TableSetupColumn("##li", ImGuiTableColumnFlags_WidthStretch);
@@ -2147,13 +2142,16 @@ bool App::drawLoginUi() {
     ImGui::TableNextRow(); ImGui::TableSetColumnIndex(0);
     ImGui::TextColored(lCol, "Username");
     ImGui::TableSetColumnIndex(1); ImGui::SetNextItemWidth(-FLT_MIN);
-    ImGui::InputText("##user", loginUser_, sizeof(loginUser_));
+    if (ImGui::IsWindowAppearing()) ImGui::SetKeyboardFocusHere();
+    userEnter = ImGui::InputText("##user", loginUser_, sizeof(loginUser_),
+                                 ImGuiInputTextFlags_EnterReturnsTrue);
 
     ImGui::TableNextRow(); ImGui::TableSetColumnIndex(0);
     ImGui::TextColored(lCol, "Password");
     ImGui::TableSetColumnIndex(1); ImGui::SetNextItemWidth(-FLT_MIN);
-    ImGui::InputText("##pass", loginPass_, sizeof(loginPass_),
-                     ImGuiInputTextFlags_Password);
+    passEnter = ImGui::InputText("##pass", loginPass_, sizeof(loginPass_),
+                                 ImGuiInputTextFlags_Password |
+                                 ImGuiInputTextFlags_EnterReturnsTrue);
 
     ImGui::EndTable();
   }
@@ -2163,6 +2161,9 @@ bool App::drawLoginUi() {
   const bool busy = (status == net::Connection::LoggingIn ||
                      status == net::Connection::Connecting);
 
+  // Trigger connect/register on Enter from either field
+  const bool enterPressed = (userEnter || passEnter) && !busy;
+
   // Login / Register toggle buttons
   {
     const ImVec4 activeCol  (0.55f, 0.34f, 0.14f, 1.0f);
@@ -2170,18 +2171,18 @@ bool App::drawLoginUi() {
     const float  halfW = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
 
     ImGui::PushStyleColor(ImGuiCol_Button, loginRegisterMode_ ? inactiveCol : activeCol);
-    if (ImGui::Button("Login", ImVec2(halfW, 0.0f))) loginRegisterMode_ = false;
+    if (ImGui::Button("Existing User", ImVec2(halfW, 0.0f))) loginRegisterMode_ = false;
     ImGui::PopStyleColor();
     ImGui::SameLine();
     ImGui::PushStyleColor(ImGuiCol_Button, loginRegisterMode_ ? activeCol : inactiveCol);
-    if (ImGui::Button("Register", ImVec2(halfW, 0.0f))) loginRegisterMode_ = true;
+    if (ImGui::Button("New Account", ImVec2(halfW, 0.0f))) loginRegisterMode_ = true;
     ImGui::PopStyleColor();
   }
 
   ImGui::Spacing();
   ImGui::BeginDisabled(busy);
   const char* actionLabel = loginRegisterMode_ ? "Create Account" : "Connect";
-  if (ImGui::Button(actionLabel, ImVec2(-FLT_MIN, 0.0f))) {
+  if (ImGui::Button(actionLabel, ImVec2(-FLT_MIN, 0.0f)) || enterPressed) {
     if (loginRegisterMode_)
       network_.registerAndConnect(loginHost_, loginPort_, loginUser_, loginPass_);
     else
@@ -2267,7 +2268,7 @@ void App::drawJoinModal() {
 
   // Title
   {
-    const char* title = "Welcome to Reverie!";
+    const char* title = "Welcome to Project L!";
     const float tw = ImGui::CalcTextSize(title).x;
     ImGui::SetCursorPosX((kW - tw) * 0.5f - ImGui::GetStyle().WindowPadding.x);
     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.00f, 0.65f, 0.15f, 1.0f));

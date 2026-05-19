@@ -127,7 +127,6 @@ void main() {
     vec3 snapped   = floor(hsl * u_paletteLevels) / u_paletteLevels;
     vec3 quantized = hsl2rgb(snapped);
 
-    // u_paletteEnabled is a linear mix so the toggle has zero branches.
     fragColor = vec4(mix(rgb, quantized, u_paletteEnabled), 1.0);
 
     // Exponential distance fog.

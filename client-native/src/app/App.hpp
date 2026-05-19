@@ -157,8 +157,8 @@ private:
   audio::AudioEngine                       audio_;
   std::chrono::steady_clock::time_point    lastTickTime_{};
   int                                      currentTick_       = 0;
-  char                                     loginUser_[64]     = "test";
-  char                                     loginPass_[64]     = "test1234";
+  char                                     loginUser_[64]     = {};
+  char                                     loginPass_[64]     = {};
   char                                     loginHost_[64]     = "localhost";
   int                                      loginPort_         = 8080;
   bool                                     loginRegisterMode_ = false;  // false=Login, true=Register

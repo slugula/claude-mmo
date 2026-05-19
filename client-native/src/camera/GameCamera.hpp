@@ -45,9 +45,15 @@ public:
   glm::mat4 viewProjection(float aspect) const;
   glm::vec3 cameraPosition() const;
   glm::vec3 lookAtTarget()   const { return currentTarget_; }
+  glm::vec3 panTarget()      const { return targetPos_; }  // the unsmoothed target; pass back into update() to avoid overwrite
 
   // Reset alpha/beta/radius to defaults and snap target to a position.
   void snapTo(const glm::vec3& target);
+
+  // Pan the camera target in world-space XZ by a camera-relative offset
+  // (forward/right relative to the camera's current yaw). Call each frame
+  // with a velocity * dt value.
+  void pan(float right, float forward);
 
   bool isDragging() const { return dragging_; }
 

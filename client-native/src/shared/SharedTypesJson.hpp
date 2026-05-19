@@ -107,6 +107,18 @@ inline bool loadWorldMap(const std::filesystem::path& path, WorldMapFile& out) {
       out.tiles[ty][tx].y = ty;
     }
 
+  // Enforce walkable=false for every water tile. Old maps may have the
+  // waterTiles list correct but tile.walkable=true due to a now-fixed editor
+  // bug. Re-derive walkability from waterTiles so overlays and picking are right.
+  for (const auto& wt : out.waterTiles) {
+    if (wt.tileY >= 0 && wt.tileY < out.height &&
+        wt.tileX >= 0 && wt.tileX < out.width &&
+        wt.tileY < static_cast<int>(out.tiles.size()) &&
+        wt.tileX < static_cast<int>(out.tiles[wt.tileY].size())) {
+      out.tiles[wt.tileY][wt.tileX].walkable = false;
+    }
+  }
+
   return true;
 }
 

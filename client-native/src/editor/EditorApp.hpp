@@ -54,16 +54,17 @@ private:
   void render3DViewport(float dt);
   void draw3DViewportWindow();   // ImGui window that hosts the FBO image + 3D interaction
   void drawToolbar();
-  void drawProperties();
+  void drawProperties();         // right-hand docked panel (palette, object/NPC type, file info)
+  void drawPreferencesWindow();  // floating Preferences window (Edit → Preferences)
   void drawGridView();
   void drawMinimapWindow();
   void drawMenuBar();
 
   // ---- Editing
-  void applyToolAt(int tx, int ty, float dt,
+  void applyToolAt(int tx, int ty, float dt, bool rightClick,
                    bool& dirtyTerrain, bool& dirtyObstacles,
                    bool& dirtyMinimap,  bool& dirtyWater);
-  void applyBrush(int cx, int cy, float dt);  // dispatches to applyToolAt for each tile in brush
+  void applyBrush(int cx, int cy, float dt, bool rightClick = false);  // dispatches to applyToolAt for each tile in brush
   int  clampTile(int v, int max) const;
 
   // ---- Blocked-tile 3D overlay
@@ -104,7 +105,7 @@ private:
   // Deform vertex heights in a ±2 tile radius around the placed water tile so
   // the terrain slopes smoothly down into the water surface.
   void bakeWaterBank(int tx, int ty);
-  // Water settings UI block (called from drawProperties).
+  // Water settings UI block (called from drawPreferencesWindow).
   void drawWaterSettings();
 
   // ---- Settings persistence
@@ -189,6 +190,10 @@ private:
   bool showResizeDialog_ = false;
   int  resizeW_          = 64;
   int  resizeH_          = 64;
+
+  // Preferences window state
+  bool showPrefsWindow_  = false;
+  int  prefsCategory_    = 0;  // 0=Water, 1=Lighting, 2=Fog, 3=AO, 4=Rendering
 
   // New map dialog state
   bool showNewMapDialog_ = false;

@@ -34,7 +34,7 @@ namespace {
 constexpr int   kInitialWidth  = 1440;
 constexpr int   kInitialHeight = 900;
 constexpr int   kMsaaSamples   = 4;
-constexpr const char* kTitle             = "Snook Editor";
+constexpr const char* kTitle             = "Project L Editor";
 constexpr const char* kTerrainVertPath   = "shaders/terrain.vert";
 constexpr const char* kTerrainFragPath   = "shaders/terrain.frag";
 constexpr const char* kWireframeVertPath = "shaders/wireframe.vert";
@@ -236,18 +236,36 @@ void EditorApp::renderFrame(float dt) {
   double cursorX = 0.0, cursorY = 0.0;
   glfwGetCursorPos(win, &cursorX, &cursorY);
   camera_.onCursorPos(cursorX, cursorY);
-  camera_.update(dt, win,
-                 { static_cast<float>(map_.width) * 0.5f, 0.0f,
-                   static_cast<float>(map_.height) * 0.5f });
+
+  // ---- WASD camera pan (suppress only when a text field is active) ----
+  // pan() modifies targetPos_. It must be called BEFORE update() and we must
+  // pass panTarget() (= targetPos_) into update() — otherwise update() resets
+  // targetPos_ = lookAtTarget() = currentTarget_ every frame, discarding the
+  // accumulated pan delta before the smoothing step can act on it.
+  if (!ImGui::GetIO().WantTextInput) {
+    constexpr float kPanSpeed = 30.0f;
+    const float panDist = kPanSpeed * dt;
+    const bool w = glfwGetKey(win, GLFW_KEY_W) == GLFW_PRESS;
+    const bool s = glfwGetKey(win, GLFW_KEY_S) == GLFW_PRESS;
+    const bool a = glfwGetKey(win, GLFW_KEY_A) == GLFW_PRESS;
+    const bool d = glfwGetKey(win, GLFW_KEY_D) == GLFW_PRESS;
+    if (w || s || a || d) {
+      // Negated: pan() forward/right vectors point camera→target, so flip to
+      // get intuitive "W = move forward into the scene" behaviour.
+      camera_.pan((a ? panDist : 0.0f) + (d ? -panDist : 0.0f),
+                  (s ? panDist : 0.0f) + (w ? -panDist : 0.0f));
+    }
+  }
+  // Pass panTarget() so update()'s "targetPos_ = target" is a no-op and the
+  // smoothing correctly chases whatever pan() just wrote.
+  camera_.update(dt, win, camera_.panTarget());
 
   // ---- Tool-change overlay auto-toggle ---------------------------------
   if (activeTool_ != prevTool_) {
-    const bool wasBlocked  = (prevTool_ == EditorTool::PaintBlocked);
-    const bool wasHeight   = (prevTool_ == EditorTool::SculptRaise ||
-                               prevTool_ == EditorTool::SculptLower);
-    const bool isBlocked   = (activeTool_ == EditorTool::PaintBlocked);
-    const bool isHeight    = (activeTool_ == EditorTool::SculptRaise ||
-                               activeTool_ == EditorTool::SculptLower);
+    const bool wasBlocked  = (prevTool_ == EditorTool::PaintBlocking);
+    const bool wasHeight   = (prevTool_ == EditorTool::SculptTerrain);
+    const bool isBlocked   = (activeTool_ == EditorTool::PaintBlocking);
+    const bool isHeight    = (activeTool_ == EditorTool::SculptTerrain);
 
     // Walkability overlay
     if (wasBlocked && overlayWalkabilityAuto_) {
@@ -273,11 +291,10 @@ void EditorApp::renderFrame(float dt) {
   }
   // If user manually enabled an overlay while on the auto-tool, stop tracking it as auto
   if (showWalkabilityOverlay_ && overlayWalkabilityAuto_
-      && activeTool_ != EditorTool::PaintBlocked)
+      && activeTool_ != EditorTool::PaintBlocking)
     overlayWalkabilityAuto_ = false;
   if (showHeightOverlay_ && overlayHeightAuto_
-      && activeTool_ != EditorTool::SculptRaise
-      && activeTool_ != EditorTool::SculptLower)
+      && activeTool_ != EditorTool::SculptTerrain)
     overlayHeightAuto_ = false;
 
   // ---- Pending undo push (after brush stroke ends) ---------------------
@@ -341,10 +358,10 @@ void EditorApp::renderFrame(float dt) {
       ImGuiID vpId, gridId;
       ImGui::DockBuilderSplitNode(center, ImGuiDir_Left, 0.55f, &vpId, &gridId);
 
-      ImGui::DockBuilderDockWindow(kToolbarName,  toolbarId);
-      ImGui::DockBuilderDockWindow(kPropsName,    propsId);
+      ImGui::DockBuilderDockWindow(kToolbarName,    toolbarId);
+      ImGui::DockBuilderDockWindow(kPropsName,      propsId);
       ImGui::DockBuilderDockWindow(kViewport3dName, vpId);
-      ImGui::DockBuilderDockWindow(kGridName,     gridId);
+      ImGui::DockBuilderDockWindow(kGridName,       gridId);
       ImGui::DockBuilderFinish(dsId);
     }
 
@@ -353,6 +370,7 @@ void EditorApp::renderFrame(float dt) {
 
   drawToolbar();
   drawProperties();
+  drawPreferencesWindow();
   draw3DViewportWindow();
   drawGridView();
   drawMinimapWindow();
@@ -480,37 +498,6 @@ void EditorApp::render3DViewport(float dt) {
     entities_.render(obstacleShader_);
   }
 
-  // ---- Hover outline (yellow) ---------------------------------------
-  if (hoveredTileX_ >= 0) {
-    updateHoverMesh(hoveredTileX_, hoveredTileY_, brush_.size, brush_.size);
-    wireframeShader_.use();
-    wireframeShader_.setMat4("u_viewProj", viewProj);
-    wireframeShader_.setVec4("u_color",   glm::vec4(1.0f, 0.85f, 0.10f, 1.0f));
-    glDepthMask(GL_FALSE);
-    glBindVertexArray(hoverVao_);
-    if (hoverIsRound_)
-      glDrawArrays(GL_LINES,     0, static_cast<GLsizei>(hoverVertCount_));
-    else
-      glDrawArrays(GL_LINE_LOOP, 0, 4);
-    glBindVertexArray(0);
-    glDepthMask(GL_TRUE);
-  }
-
-  // ---- Blocked-tile X overlay (3D) ------------------------------------
-  if (showWalkabilityOverlay_) {
-    rebuildBlockedOverlay();
-    if (blockedLineCount_ > 0) {
-      wireframeShader_.use();
-      wireframeShader_.setMat4("u_viewProj", viewProj);
-      wireframeShader_.setVec4("u_color",   glm::vec4(0.95f, 0.15f, 0.15f, 1.0f));
-      glDepthMask(GL_FALSE);
-      glBindVertexArray(blockedVao_);
-      glDrawArrays(GL_LINES, 0, static_cast<GLsizei>(blockedLineCount_));
-      glBindVertexArray(0);
-      glDepthMask(GL_TRUE);
-    }
-  }
-
   // ---- Water pass -------------------------------------------------------
   // Resolve colour (for SSR) and depth (for foam intersection) before drawing
   // water.  Then re-bind the MSAA FBO, draw water on top, and resolve again.
@@ -544,6 +531,37 @@ void EditorApp::render3DViewport(float dt) {
     glDisable(GL_BLEND);
   }
 
+  // ---- Hover outline (yellow) — AFTER water so it renders on top -------
+  if (hoveredTileX_ >= 0) {
+    updateHoverMesh(hoveredTileX_, hoveredTileY_, brush_.size, brush_.size);
+    wireframeShader_.use();
+    wireframeShader_.setMat4("u_viewProj", viewProj);
+    wireframeShader_.setVec4("u_color",   glm::vec4(1.0f, 0.85f, 0.10f, 1.0f));
+    glDepthMask(GL_FALSE);
+    glBindVertexArray(hoverVao_);
+    if (hoverIsRound_)
+      glDrawArrays(GL_LINES,     0, static_cast<GLsizei>(hoverVertCount_));
+    else
+      glDrawArrays(GL_LINE_LOOP, 0, 4);
+    glBindVertexArray(0);
+    glDepthMask(GL_TRUE);
+  }
+
+  // ---- Blocked-tile X overlay — AFTER water so Xs render over water ----
+  if (showWalkabilityOverlay_) {
+    rebuildBlockedOverlay();
+    if (blockedLineCount_ > 0) {
+      wireframeShader_.use();
+      wireframeShader_.setMat4("u_viewProj", viewProj);
+      wireframeShader_.setVec4("u_color",   glm::vec4(0.95f, 0.15f, 0.15f, 1.0f));
+      glDepthMask(GL_FALSE);
+      glBindVertexArray(blockedVao_);
+      glDrawArrays(GL_LINES, 0, static_cast<GLsizei>(blockedLineCount_));
+      glBindVertexArray(0);
+      glDepthMask(GL_TRUE);
+    }
+  }
+
   viewport3dFbo_->resolve();   // final resolve for ImGui display
   (void)dt;
 }
@@ -574,6 +592,8 @@ void EditorApp::drawMenuBar() {
       waterRenderer_.rebuild(map_, waterUniforms_.waterOffset);
       minimap_.rebuild(map_, npcSpawns_);
     }
+    ImGui::Separator();
+    if (ImGui::MenuItem("Preferences...")) showPrefsWindow_ = true;
     ImGui::EndMenu();
   }
   if (ImGui::BeginMenu("Map")) {
@@ -613,13 +633,11 @@ void EditorApp::drawToolbar() {
 
   ImGui::TextDisabled("-- Tools --");
   toolBtn("Paint",     EditorTool::PaintTerrain);
-  toolBtn("Raise",     EditorTool::SculptRaise);
-  toolBtn("Lower",     EditorTool::SculptLower);
+  toolBtn("Terrain",   EditorTool::SculptTerrain);
   toolBtn("Objects",   EditorTool::PlaceObstacle);
   toolBtn("NPC",       EditorTool::PlaceNPC);
   toolBtn("Spawn",     EditorTool::PlaceSpawn);
-  toolBtn("Walkable",  EditorTool::PaintWalkable);
-  toolBtn("Blocked",   EditorTool::PaintBlocked);
+  toolBtn("Blocking",  EditorTool::PaintBlocking);
   toolBtn("Water",     EditorTool::PaintWater);
   toolBtn("Erase",     EditorTool::Erase);
 
@@ -633,16 +651,19 @@ void EditorApp::drawToolbar() {
   if (ImGui::Checkbox("Round", &isRound))
     brush_.shape = isRound ? BrushShape::Round : BrushShape::Square;
 
-  const bool isSculpt = (activeTool_ == EditorTool::SculptRaise ||
-                          activeTool_ == EditorTool::SculptLower);
-  if (isSculpt) {
+  if (activeTool_ == EditorTool::SculptTerrain) {
     ImGui::SetNextItemWidth(-1);
     ImGui::SliderFloat("##str", &brush_.strength, 0.01f, 0.5f, "Str:%.2f");
   }
 
   ImGui::Separator();
+  ImGui::TextDisabled("LMB = primary");
+  ImGui::TextDisabled("RMB = secondary");
+  ImGui::Separator();
   ImGui::TextDisabled("Ctrl+Scroll");
   ImGui::TextDisabled("= brush size");
+  ImGui::Separator();
+  ImGui::TextDisabled("WASD = pan cam");
 
   ImGui::End();
 }
@@ -697,7 +718,6 @@ void EditorApp::drawWaterSettings() {
 void EditorApp::drawProperties() {
   ImGui::Begin(kPropsName);
 
-  // Tool-specific controls
   if (activeTool_ == EditorTool::PaintTerrain) {
     ImGui::TextDisabled("Palette");
     float col[3] = { paletteR_, paletteG_, paletteB_ };
@@ -751,51 +771,105 @@ void EditorApp::drawProperties() {
     npcBtn("shopkeeper");
   }
 
-  // Water settings (always visible so the user can tune water appearance
-  // even when a different tool is selected)
-  ImGui::Separator();
-  drawWaterSettings();
-
-  ImGui::Separator();
-  ImGui::TextDisabled("Lighting");
-  ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##yaw",   &sunYawDeg_,   0.0f, 360.0f, "Yaw:%.0f");
-  ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##pitch", &sunPitchDeg_, 10.0f,  90.0f, "Pitch:%.0f");
-  ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##amb",   &ambient_,      0.0f,   1.0f, "Amb:%.2f");
-  ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##diff",  &diffuse_,      0.0f,   1.0f, "Diff:%.2f");
-
-  ImGui::Separator();
-  ImGui::TextDisabled("Fog");
-  ImGui::Checkbox("Enable fog",      &fogEnabled_);
-  ImGui::BeginDisabled(!fogEnabled_);
-  ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##fogdens", &fogDensity_, 0.0f,  0.1f,  "Density:%.4f");
-  ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##fogstart",&fogStart_,   0.0f,  120.0f, "Start:%.1f");
-  ImGui::ColorEdit3("Fog color",     reinterpret_cast<float*>(&fogColor_));
-  if (ImGui::SmallButton("Fog defaults")) {
-    fogDensity_ = 0.015f; fogStart_ = 5.0f;
-    fogColor_ = {0.58f, 0.67f, 0.78f};
-  }
-  ImGui::EndDisabled();
-
-  ImGui::Separator();
-  ImGui::TextDisabled("Ambient Occlusion");
-  ImGui::Checkbox("Enable AO",       &aoEnabled_);
-  ImGui::BeginDisabled(!aoEnabled_);
-  ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##aostr",  &aoStrength_, 0.0f, 1.0f, "Strength:%.2f");
-  if (ImGui::SmallButton("AO defaults")) { aoStrength_ = 0.50f; }
-  ImGui::EndDisabled();
-  if (aoEnabled_) ImGui::TextDisabled("AO baked — rebuild to update");
-
-  ImGui::Separator();
-  if (ImGui::Button("Save as default")) saveSettings();
-  ImGui::SameLine();
-  ImGui::TextDisabled("settings.cfg");
-
-  ImGui::Separator();
   if (currentFilePath_.empty())
     ImGui::TextDisabled("(unsaved)");
   else
     ImGui::TextWrapped("%s", std::filesystem::path(currentFilePath_).filename().string().c_str());
 
+  ImGui::End();
+}
+
+// -----------------------------------------------------------------------
+void EditorApp::drawPreferencesWindow() {
+  if (!showPrefsWindow_) return;
+
+  ImGui::SetNextWindowSize(ImVec2(620.0f, 480.0f), ImGuiCond_FirstUseEver);
+  if (!ImGui::Begin("Preferences", &showPrefsWindow_)) { ImGui::End(); return; }
+
+  // Category list on the left
+  constexpr const char* kCategories[] = { "Water", "Lighting", "Fog", "Ambient Occlusion", "Rendering" };
+  constexpr int kNumCat = static_cast<int>(std::size(kCategories));
+
+  ImGui::BeginChild("##prefs_cats", ImVec2(140.0f, 0.0f), true);
+  for (int i = 0; i < kNumCat; ++i) {
+    const bool sel = (prefsCategory_ == i);
+    if (ImGui::Selectable(kCategories[i], sel))
+      prefsCategory_ = i;
+  }
+  ImGui::EndChild();
+
+  ImGui::SameLine();
+
+  // Right panel — settings for selected category
+  ImGui::BeginChild("##prefs_content", ImVec2(0.0f, 0.0f), false);
+
+  switch (prefsCategory_) {
+    case 0: { // Water
+      drawWaterSettings();
+      break;
+    }
+    case 1: { // Lighting
+      ImGui::SeparatorText("Sun Direction");
+      ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("Yaw##lgt",   &sunYawDeg_,   0.0f, 360.0f, "%.0f°");
+      ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("Pitch##lgt", &sunPitchDeg_, 10.0f,  90.0f, "%.0f°");
+      ImGui::SeparatorText("Intensity");
+      ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("Ambient##lgt",  &ambient_, 0.0f, 1.0f, "%.2f");
+      ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("Diffuse##lgt",  &diffuse_, 0.0f, 1.0f, "%.2f");
+      ImGui::SeparatorText("Shadows");
+      ImGui::Checkbox("Enable Shadows", &shadowsEnabled_);
+      ImGui::BeginDisabled(!shadowsEnabled_);
+      ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("Half Extent##sh", &shadowHalfExtent_, 10.0f, 100.0f, "%.0f");
+      ImGui::EndDisabled();
+      break;
+    }
+    case 2: { // Fog
+      ImGui::Checkbox("Enable Fog", &fogEnabled_);
+      ImGui::BeginDisabled(!fogEnabled_);
+      ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("Density##fog", &fogDensity_, 0.0f, 0.1f,   "%.4f");
+      ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("Start##fog",   &fogStart_,   0.0f, 120.0f, "%.1f");
+      ImGui::ColorEdit3("Color##fog", reinterpret_cast<float*>(&fogColor_));
+      if (ImGui::Button("Reset Fog Defaults")) {
+        fogDensity_ = 0.015f; fogStart_ = 5.0f;
+        fogColor_ = {0.58f, 0.67f, 0.78f};
+      }
+      ImGui::EndDisabled();
+      break;
+    }
+    case 3: { // Ambient Occlusion
+      ImGui::Checkbox("Enable AO", &aoEnabled_);
+      ImGui::BeginDisabled(!aoEnabled_);
+      ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("Strength##ao", &aoStrength_, 0.0f, 1.0f, "%.2f");
+      if (ImGui::Button("Reset AO Defaults")) aoStrength_ = 0.50f;
+      ImGui::Separator();
+      ImGui::EndDisabled();
+      if (aoEnabled_) ImGui::TextDisabled("AO is baked — rebuild terrain to update.");
+      break;
+    }
+    case 4: { // Rendering
+      ImGui::Checkbox("Lighting",             &lightingEnabled_);
+      ImGui::Checkbox("Palette Quantisation", &palette_);
+      if (palette_) {
+        ImGui::SetNextItemWidth(-1); ImGui::SliderInt("Hues##pal",  &paletteHues_, 2, 128);
+        ImGui::SetNextItemWidth(-1); ImGui::SliderInt("Sats##pal",  &paletteSats_, 2, 64);
+        ImGui::SetNextItemWidth(-1); ImGui::SliderInt("Lums##pal",  &paletteLums_, 2, 96);
+      }
+      ImGui::Checkbox("Wireframe",            &showWireframe_);
+      ImGui::Separator();
+      ImGui::TextDisabled("Overlays");
+      if (ImGui::Checkbox("Height Overlay",      &showHeightOverlay_))      overlayHeightAuto_      = false;
+      if (ImGui::Checkbox("Walkability Overlay",  &showWalkabilityOverlay_)) overlayWalkabilityAuto_ = false;
+      ImGui::Checkbox("Gridmap Overlay",          &showGridmapOverlay_);
+      break;
+    }
+  }
+
+  ImGui::Spacing();
+  ImGui::Separator();
+  if (ImGui::Button("Save as Default")) saveSettings();
+  ImGui::SameLine();
+  ImGui::TextDisabled("Writes to settings.cfg");
+
+  ImGui::EndChild();
   ImGui::End();
 }
 
@@ -857,16 +931,23 @@ void EditorApp::draw3DViewportWindow() {
         hoveredTileY_ = pick.tileY;
       }
 
-      // Left-click apply tool
-      if (pick.hit && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+      // Left-click apply tool; right-click applies secondary action for
+      // Terrain (lower) and Blocking (unblock).
+      const bool lmbDown = ImGui::IsMouseDown(ImGuiMouseButton_Left);
+      const bool rmbDown = ImGui::IsMouseDown(ImGuiMouseButton_Right);
+      const bool isTerrain  = (activeTool_ == EditorTool::SculptTerrain);
+      const bool isBlocking = (activeTool_ == EditorTool::PaintBlocking);
+      const bool rmbActive  = rmbDown && pick.hit && (isTerrain || isBlocking);
+
+      if (pick.hit && (lmbDown || rmbActive)) {
         if (!mouseHeld3D_) {
           mouseHeld3D_ = true;
           if (!undoPending_) pushUndo();
           undoPending_ = true;
         }
-        applyBrush(pick.tileX, pick.tileY, io.DeltaTime);
+        applyBrush(pick.tileX, pick.tileY, io.DeltaTime, rmbDown && !lmbDown);
         hadStroke_ = true;
-      } else if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+      } else if (!lmbDown && !rmbActive) {
         mouseHeld3D_ = false;
       }
     }
@@ -1038,20 +1119,23 @@ void EditorApp::drawGridView() {
       hoveredTileX_ = tx;
       hoveredTileY_ = ty;
 
-      if (ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+      const bool lmbGrid = ImGui::IsMouseDown(ImGuiMouseButton_Left);
+      const bool rmbGrid = ImGui::IsMouseDown(ImGuiMouseButton_Right);
+      const bool isTerrain2D  = (activeTool_ == EditorTool::SculptTerrain);
+      const bool isBlocking2D = (activeTool_ == EditorTool::PaintBlocking);
+      // For Terrain and Blocking tools, right-click is the secondary action
+      const bool rmbSecondary = rmbGrid && (isTerrain2D || isBlocking2D);
+
+      if (lmbGrid || rmbSecondary) {
         if (!mouseHeldGrid_) {
           mouseHeldGrid_ = true;
           if (!undoPending_) pushUndo();
           undoPending_ = true;
         }
-        applyBrush(tx, ty, 0.016f);
+        applyBrush(tx, ty, 0.016f, rmbGrid && !lmbGrid);
         hadStroke_ = true;
-      } else {
-        mouseHeldGrid_ = false;
-      }
-
-      if (ImGui::IsMouseDown(ImGuiMouseButton_Right)) {
-        // Right-click: erase at tile
+      } else if (rmbGrid) {
+        // Right-click with other tools: erase
         if (!mouseHeldGrid_) {
           mouseHeldGrid_ = true;
           if (!undoPending_) pushUndo();
@@ -1067,6 +1151,8 @@ void EditorApp::drawGridView() {
           minimap_.rebuild(map_, npcSpawns_);
         }
         hadStroke_ = true;
+      } else {
+        mouseHeldGrid_ = false;
       }
     } else {
       mouseHeldGrid_ = false;
@@ -1095,7 +1181,7 @@ void EditorApp::drawMinimapWindow() {
 
 // -----------------------------------------------------------------------
 // Brush: collect dirty flags, do ONE rebuild after all tiles processed.
-void EditorApp::applyBrush(int cx, int cy, float dt) {
+void EditorApp::applyBrush(int cx, int cy, float dt, bool rightClick) {
   const int half = brush_.size / 2;
   const float r  = static_cast<float>(half);
 
@@ -1111,7 +1197,7 @@ void EditorApp::applyBrush(int cx, int cy, float dt) {
         if (d > r + 0.5f) continue;
       }
       const int tx = cx + dx, ty = cy + dy;
-      applyToolAt(tx, ty, dt, dirtyTerrain, dirtyObstacles, dirtyMinimap, dirtyWater);
+      applyToolAt(tx, ty, dt, rightClick, dirtyTerrain, dirtyObstacles, dirtyMinimap, dirtyWater);
     }
   }
 
@@ -1122,7 +1208,7 @@ void EditorApp::applyBrush(int cx, int cy, float dt) {
 }
 
 // -----------------------------------------------------------------------
-void EditorApp::applyToolAt(int tx, int ty, float dt,
+void EditorApp::applyToolAt(int tx, int ty, float dt, bool rightClick,
                              bool& dirtyTerrain, bool& dirtyObstacles,
                              bool& dirtyMinimap,  bool& dirtyWater) {
   if (tx < 0 || ty < 0 || tx >= map_.width || ty >= map_.height) return;
@@ -1138,9 +1224,9 @@ void EditorApp::applyToolAt(int tx, int ty, float dt,
       dirtyMinimap = true;
       break;
     }
-    case EditorTool::SculptRaise:
-    case EditorTool::SculptLower: {
-      const float dir = (activeTool_ == EditorTool::SculptRaise) ? 1.0f : -1.0f;
+    case EditorTool::SculptTerrain: {
+      // Left-click = raise, right-click = lower
+      const float dir = rightClick ? -1.0f : 1.0f;
       const int W = map_.width, H = map_.height;
       auto& vh = map_.vertexHeights;
       if (vh.empty()) break;
@@ -1186,12 +1272,9 @@ void EditorApp::applyToolAt(int tx, int ty, float dt,
       dirtyMinimap = true;
       break;
     }
-    case EditorTool::PaintWalkable: {
-      tile.walkable = true;
-      break;
-    }
-    case EditorTool::PaintBlocked: {
-      tile.walkable = false;
+    case EditorTool::PaintBlocking: {
+      // Left-click = block (non-walkable), right-click = unblock (walkable)
+      tile.walkable = rightClick;
       break;
     }
     case EditorTool::PaintWater: {
@@ -1200,9 +1283,10 @@ void EditorApp::applyToolAt(int tx, int ty, float dt,
           [tx, ty](const shared::WaterTile& w){ return w.tileX == tx && w.tileY == ty; });
       if (!already) {
         map_.waterTiles.push_back({ tx, ty });
-        tile.walkable = false;
-        // Clear any obstacle on this tile (water supersedes obstacles)
+        // Clear any obstacle first (setObstacleAtTile(none) resets walkable to
+        // true internally, so we must force it back to false afterwards).
         setObstacleAtTile(tx, ty, shared::ObstacleType::none);
+        tile.walkable = false;
         bakeWaterBank(tx, ty);
         dirtyTerrain = true;
         dirtyObstacles = true;

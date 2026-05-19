@@ -4,13 +4,11 @@ namespace editor {
 
 enum class EditorTool {
   PaintTerrain,
-  SculptRaise,
-  SculptLower,
+  SculptTerrain,    // left-click = raise, right-click = lower
   PlaceObstacle,
   PlaceNPC,
   PlaceSpawn,
-  PaintWalkable,    // marks tiles walkable (clears obstacle + sets walkable=true)
-  PaintBlocked,     // marks tiles non-walkable WITHOUT placing an obstacle
+  PaintBlocking,    // left-click = block (walkable=false), right-click = unblock (walkable=true)
   PaintWater,       // paints water tiles (non-walkable, rendered as animated water)
   Erase,
 };
