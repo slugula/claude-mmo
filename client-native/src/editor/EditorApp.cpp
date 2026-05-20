@@ -1981,6 +1981,27 @@ void EditorApp::dbLoadAll() {
     dbActions_ = dbClient_.getActions();
     dbLoaded_  = true;
     dbStatus_  = "Loaded from server.";
+
+    // Push object definitions into the obstacle system so sizeX/sizeY and
+    // collision type are up to date for new custom objects.
+    std::vector<world::ObstacleSystem::ObjectDefCache> caches;
+    caches.reserve(dbObjects_.size());
+    for (const auto& obj : dbObjects_) {
+      world::ObstacleSystem::ObjectDefCache c;
+      c.id           = obj.id;
+      c.objectType   = obj.objectType;
+      c.collision    = obj.collision;
+      c.sizeX        = obj.sizeX;
+      c.sizeY        = obj.sizeY;
+      c.modelPath    = obj.modelPath;
+      c.actionId     = obj.actionId;
+      c.dropItemId   = obj.dropItemId;
+      c.dropQuantity = obj.dropQuantity;
+      c.respawnTicks = obj.respawnTicks;
+      caches.push_back(std::move(c));
+    }
+    obstacles_.rebuildFromDefinitions(caches);
+
   } catch (const std::exception& e) {
     dbStatus_  = std::string("Load failed: ") + e.what();
     dbLoaded_  = false;

@@ -8,6 +8,8 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace world {
@@ -37,6 +39,41 @@ public:
   // rotation), and re-upload the instance VBOs. Cheap — runs in microseconds
   // for a 64x64 map.
   void rebuildFromMap(const shared::WorldMapFile& map);
+
+  // Lightweight cache of database-authored object definitions. Stores
+  // collision, sizeX, sizeY (and model_path for future model loading) keyed by
+  // object id ("tree", "bookcase_oak", etc.). Built-in enum types are seeded
+  // automatically; custom ids can coexist. The collision and size values are
+  // available for picking, pathfinding, and future data-driven rendering.
+  struct ObjectDefCache {
+    std::string id;                           // "tree", "bookcase_oak", etc.
+    std::string objectType   = "Decoration";  // "Decoration"|"ResourceNode"|"ProductionFacility"
+    std::string collision    = "full_blocking";
+    int         sizeX        = 1;
+    int         sizeY        = 1;
+    std::string modelPath;
+    std::string actionId;
+    std::string dropItemId;
+    int         dropQuantity = 1;
+    int         respawnTicks = 25;
+  };
+
+  // Populate the definitions cache from the server DB. Each entry's `id` field
+  // is the map key. The five built-in types (tree, rock, chest, fishing_spot,
+  // fence) are seeded with hardcoded defaults before overlaying the supplied
+  // defs, so they always have a fallback. Safe to call every time the DB
+  // editor refreshes.
+  void rebuildFromDefinitions(const std::vector<ObjectDefCache>& defs);
+
+  // Seed built-in definitions so the cache works without a server connection.
+  void seedBuiltinDefinitions();
+
+  // Look up a definition by object id. Returns nullptr if not found.
+  const ObjectDefCache* getDefinition(const std::string& id) const;
+
+  // Convenience: return sizeX × sizeY footprint for the given id.
+  // Returns {1,1} for unknown ids.
+  std::pair<int,int> footprint(const std::string& id) const;
 
   // Issue three instanced draws (trunks, canopies, rocks). The shader is
   // expected to have all uniforms except u_color set by the caller; this
@@ -124,6 +161,9 @@ private:
   std::size_t treeCount_  = 0;
   std::size_t rockCount_  = 0;
   std::size_t fenceCount_ = 0;
+
+  // Object definitions cache (keyed by id string)
+  std::unordered_map<std::string, ObjectDefCache> defs_;
 };
 
 }  // namespace world

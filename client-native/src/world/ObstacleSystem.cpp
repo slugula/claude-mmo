@@ -240,6 +240,8 @@ void ObstacleSystem::uploadKitMesh(Kit& kit,
 
 void ObstacleSystem::initGL() {
   destroy();
+  // Seed built-in definitions so the cache is always populated.
+  seedBuiltinDefinitions();
 
   // Reserve instance VBOs with enough room for plenty of obstacles. Storage
   // is created with DYNAMIC_STORAGE so we can re-upload contents whenever
@@ -346,6 +348,47 @@ void ObstacleSystem::rebuildFromMap(const shared::WorldMapFile& map) {
 
   std::fprintf(stdout, "[ObstacleSystem] %zu trees, %zu rocks, %zu fences\n",
                treeCount_, rockCount_, fenceCount_);
+}
+
+// ---- Data-driven definitions cache -----------------------------------------
+
+void ObstacleSystem::seedBuiltinDefinitions() {
+  // Seed hardcoded properties for the five built-in obstacle types so the
+  // definitions cache always has a fallback without a server connection.
+  auto seed = [&](const char* id, const char* type, const char* col,
+                  int sx, int sy, const char* model = "") {
+    ObjectDefCache d;
+    d.id         = id;
+    d.objectType = type;
+    d.collision  = col;
+    d.sizeX      = sx;
+    d.sizeY      = sy;
+    d.modelPath  = model;
+    defs_.emplace(id, d);
+  };
+  seed("tree",         "ResourceNode",  "full_blocking", 1, 1, "assets/models/tree.gltf");
+  seed("rock",         "ResourceNode",  "full_blocking", 1, 1);
+  seed("chest",        "Decoration",    "full_blocking", 1, 1);
+  seed("fishing_spot", "ResourceNode",  "none",          1, 1);
+  seed("fence",        "Decoration",    "half_blocking", 1, 1);
+}
+
+void ObstacleSystem::rebuildFromDefinitions(const std::vector<ObjectDefCache>& defs) {
+  // Seed built-in defaults first, then overlay with server-authored definitions.
+  seedBuiltinDefinitions();
+  for (const auto& d : defs) {
+    if (!d.id.empty()) defs_[d.id] = d;
+  }
+}
+
+const ObstacleSystem::ObjectDefCache* ObstacleSystem::getDefinition(const std::string& id) const {
+  const auto it = defs_.find(id);
+  return (it != defs_.end()) ? &it->second : nullptr;
+}
+
+std::pair<int,int> ObstacleSystem::footprint(const std::string& id) const {
+  const auto* d = getDefinition(id);
+  return d ? std::make_pair(d->sizeX, d->sizeY) : std::make_pair(1, 1);
 }
 
 void ObstacleSystem::render(render::Shader& obstacleShader) {
