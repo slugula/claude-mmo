@@ -5,6 +5,8 @@
 #include "camera/GameCamera.hpp"
 #include "editor/EditorPalette.hpp"
 #include "editor/EditorTool.hpp"
+#include "editor/EntityClient.hpp"
+#include "editor/EntityDefs.hpp"
 #include "editor/MinimapRenderer.hpp"
 #include "editor/UndoStack.hpp"
 #include "input/Picker.hpp"
@@ -234,6 +236,46 @@ private:
 
   // Minimap
   MinimapRenderer minimap_;
+
+  // ---- Database editor window
+  void drawDatabaseWindow();
+  void dbLoadAll();              // fetch all entities from server
+  void dbDrawItemsTab();
+  void dbDrawNPCsTab();
+  void dbDrawObjectsTab();
+  void dbDrawActionsTab();
+
+  // Offscreen FBO for the 3D model preview inside the DB window.
+  GLuint dbPreviewFbo_  = 0;
+  GLuint dbPreviewTex_  = 0;
+  GLuint dbPreviewRbo_  = 0;   // depth renderbuffer
+  void   dbInitPreviewFbo();
+  void   dbDestroyPreviewFbo();
+  void   dbRenderPreview(float dt);   // renders into dbPreviewFbo_, angle auto-spins
+
+  EntityClient         dbClient_;
+  bool                 showDbWindow_  = false;
+  bool                 dbLoaded_      = false;
+  int                  dbTab_         = 0;  // 0=Items 1=NPCs 2=Objects 3=Actions
+  std::string          dbStatus_;           // last save/error message
+  float                dbPreviewAngle_ = 0.0f;
+
+  // Lists (fetched from server)
+  std::vector<ItemDef>   dbItems_;
+  std::vector<NpcDef>    dbNPCs_;
+  std::vector<ObjectDef> dbObjects_;
+  std::vector<ActionDef> dbActions_;
+
+  // Selected + edit copies
+  int       dbSelItem_   = -1;
+  int       dbSelNPC_    = -1;
+  int       dbSelObject_ = -1;
+  int       dbSelAction_ = -1;
+  ItemDef   dbEditItem_;
+  NpcDef    dbEditNPC_;
+  ObjectDef dbEditObject_;
+  ActionDef dbEditAction_;
+  bool      dbEditIsNew_ = false;
 
   std::chrono::steady_clock::time_point lastFrameTime_{};
 };

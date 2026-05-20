@@ -82,7 +82,16 @@ EditorApp::~EditorApp() {
   destroyHoverMesh();
   if (blockedVao_) { glDeleteVertexArrays(1, &blockedVao_); blockedVao_ = 0; }
   if (blockedVbo_) { glDeleteBuffers(1, &blockedVbo_);      blockedVbo_ = 0; }
+  dbDestroyPreviewFbo();
 }
+
+void EditorApp::dbInitPreviewFbo()    { /* Phase 2: 3D model preview */ }
+void EditorApp::dbDestroyPreviewFbo() {
+  if (dbPreviewFbo_) { glDeleteFramebuffers(1, &dbPreviewFbo_); dbPreviewFbo_ = 0; }
+  if (dbPreviewTex_) { glDeleteTextures(1, &dbPreviewTex_);     dbPreviewTex_ = 0; }
+  if (dbPreviewRbo_) { glDeleteRenderbuffers(1, &dbPreviewRbo_); dbPreviewRbo_ = 0; }
+}
+void EditorApp::dbRenderPreview(float) { /* Phase 2: 3D model preview */ }
 
 // -----------------------------------------------------------------------
 bool EditorApp::init() {
@@ -374,6 +383,7 @@ void EditorApp::renderFrame(float dt) {
   draw3DViewportWindow();
   drawGridView();
   drawMinimapWindow();
+  if (showDbWindow_) drawDatabaseWindow();
 
   // ---- Dialogs ----------------------------------------------------------
   if (showNewMapDialog_) { ImGui::OpenPopup("New Map"); showNewMapDialog_ = false; }
@@ -598,6 +608,13 @@ void EditorApp::drawMenuBar() {
   }
   if (ImGui::BeginMenu("Map")) {
     if (ImGui::MenuItem("Resize...")) { resizeW_ = map_.width; resizeH_ = map_.height; showResizeDialog_ = true; }
+    ImGui::EndMenu();
+  }
+  if (ImGui::BeginMenu("Database")) {
+    if (ImGui::MenuItem("Edit Database...")) {
+      showDbWindow_ = true;
+      if (!dbLoaded_) dbLoadAll();
+    }
     ImGui::EndMenu();
   }
   if (ImGui::BeginMenu("View")) {
@@ -1798,6 +1815,472 @@ void EditorApp::shutdownImGui() {
   ImGui_ImplGlfw_Shutdown();
   ImGui::DestroyContext();
   imguiInited_ = false;
+}
+
+// ===========================================================================
+// Database editor window
+// ===========================================================================
+
+void EditorApp::dbLoadAll() {
+  try {
+    dbItems_   = dbClient_.getItems();
+    dbNPCs_    = dbClient_.getNPCs();
+    dbObjects_ = dbClient_.getObjects();
+    dbActions_ = dbClient_.getActions();
+    dbLoaded_  = true;
+    dbStatus_  = "Loaded from server.";
+  } catch (const std::exception& e) {
+    dbStatus_  = std::string("Load failed: ") + e.what();
+    dbLoaded_  = false;
+  }
+}
+
+// ---- Helper: small text input that writes into a std::string
+static bool dbInputText(const char* label, std::string& s, float width = -1.0f) {
+  char buf[512];
+  std::strncpy(buf, s.c_str(), sizeof(buf) - 1);
+  buf[sizeof(buf) - 1] = '\0';
+  if (width > 0.0f) ImGui::SetNextItemWidth(width);
+  else              ImGui::SetNextItemWidth(-1.0f);
+  if (ImGui::InputText(label, buf, sizeof(buf))) { s = buf; return true; }
+  return false;
+}
+
+static bool dbCombo(const char* label, std::string& val, std::initializer_list<const char*> opts) {
+  bool changed = false;
+  if (ImGui::BeginCombo(label, val.c_str())) {
+    for (const char* o : opts) {
+      bool sel = (val == o);
+      if (ImGui::Selectable(o, sel)) { val = o; changed = true; }
+      if (sel) ImGui::SetItemDefaultFocus();
+    }
+    ImGui::EndCombo();
+  }
+  return changed;
+}
+
+// ---- Items tab -------------------------------------------------------------
+
+void EditorApp::dbDrawItemsTab() {
+  // Left: list
+  ImGui::BeginChild("##item_list", ImVec2(200, 0), true);
+  if (ImGui::Button("+ New Item", ImVec2(-1, 0))) {
+    dbEditItem_   = ItemDef{};
+    dbSelItem_    = -1;
+    dbEditIsNew_  = true;
+  }
+  ImGui::Separator();
+  for (int i = 0; i < (int)dbItems_.size(); ++i) {
+    bool sel = (dbSelItem_ == i);
+    if (ImGui::Selectable(dbItems_[i].id.c_str(), sel)) {
+      dbSelItem_   = i;
+      dbEditItem_  = dbItems_[i];
+      dbEditIsNew_ = false;
+    }
+  }
+  ImGui::EndChild();
+
+  ImGui::SameLine();
+
+  // Right: edit form
+  ImGui::BeginChild("##item_edit", ImVec2(0, 0), false);
+  if (dbSelItem_ >= 0 || dbEditIsNew_) {
+    ItemDef& d = dbEditItem_;
+
+    ImGui::TextDisabled("ID (immutable after creation)");
+    if (dbEditIsNew_) dbInputText("##id", d.id);
+    else              ImGui::TextUnformatted(d.id.c_str());
+    ImGui::SetNextItemWidth(-1); dbInputText("Name##item", d.name);
+
+    ImGui::Separator();
+    dbCombo("Type##item", d.itemType, {"resource", "equipment", "food"});
+    ImGui::Checkbox("Stackable", &d.stackable); ImGui::SameLine();
+    ImGui::Checkbox("Tradable",  &d.tradable);
+    ImGui::SetNextItemWidth(120); ImGui::InputInt("Value##item", &d.value);
+
+    if (d.itemType == "equipment") {
+      ImGui::Separator();
+      ImGui::TextColored({1.f,0.55f,0.f,1.f}, "Equipment");
+      dbCombo("Equip Slot", d.equipSlot,
+        {"head","body","legs","feet","hands","neck","ring","leftHand","rightHand","ammo"});
+      ImGui::Checkbox("Two-Handed", &d.twoHanded);
+      dbCombo("Combat Style##item", d.combatStyle, {"","melee","gunner"});
+      dbCombo("Tool Type##item",    d.toolType,    {"","axe","pickaxe"});
+      ImGui::TextColored({1.f,0.55f,0.f,1.f}, "Stats");
+      ImGui::SetNextItemWidth(80); ImGui::InputInt("Melee Atk##i",  &d.meleeAttack);  ImGui::SameLine();
+      ImGui::SetNextItemWidth(80); ImGui::InputInt("Melee Str##i",  &d.meleeStrength); ImGui::SameLine();
+      ImGui::SetNextItemWidth(80); ImGui::InputInt("Melee Def##i",  &d.meleeDefense);
+      ImGui::SetNextItemWidth(80); ImGui::InputInt("Ranged Atk##i", &d.rangedAttack); ImGui::SameLine();
+      ImGui::SetNextItemWidth(80); ImGui::InputInt("Ranged Str##i", &d.rangedStrength); ImGui::SameLine();
+      ImGui::SetNextItemWidth(80); ImGui::InputInt("Ranged Def##i", &d.rangedDefense);
+      ImGui::TextColored({1.f,0.55f,0.f,1.f}, "Requirement");
+      dbCombo("Skill##item_req", d.requiredSkill,
+        {"","woodcutting","mining","warrior","defence","hitpoints","gunner"});
+      ImGui::SameLine(); ImGui::SetNextItemWidth(60);
+      ImGui::InputInt("Level##item_req", &d.requiredLevel);
+    }
+    if (d.itemType == "food") {
+      ImGui::Separator();
+      ImGui::TextColored({1.f,0.55f,0.f,1.f}, "Food");
+      ImGui::SetNextItemWidth(80); ImGui::InputInt("Heal HP##item", &d.healAmount);
+    }
+
+    ImGui::Separator();
+    ImGui::TextColored({1.f,0.55f,0.f,1.f}, "Assets");
+    dbInputText("Sprite Path##item",    d.spritePath);
+    dbInputText("Dropped Model##item",  d.modelDropped);
+    dbInputText("Equipped Model##item", d.modelEquipped);
+    dbInputText("Examine##item",        d.examineText);
+
+    ImGui::Separator();
+    if (!dbStatus_.empty()) ImGui::TextDisabled("%s", dbStatus_.c_str());
+
+    if (ImGui::Button("Save##item")) {
+      if (dbClient_.saveItem(d, dbEditIsNew_)) {
+        dbStatus_ = "Saved.";
+        dbLoadAll();
+        // Re-select by id
+        for (int i = 0; i < (int)dbItems_.size(); ++i)
+          if (dbItems_[i].id == d.id) { dbSelItem_ = i; dbEditIsNew_ = false; break; }
+      } else { dbStatus_ = "Save failed — is the server running?"; }
+    }
+    ImGui::SameLine();
+    if (!dbEditIsNew_ && ImGui::Button("Delete##item")) {
+      if (dbClient_.deleteItem(d.id)) {
+        dbStatus_ = "Deleted.";
+        dbSelItem_ = -1; dbLoadAll();
+      } else { dbStatus_ = "Delete failed."; }
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Revert##item")) {
+      if (dbSelItem_ >= 0) dbEditItem_ = dbItems_[dbSelItem_];
+    }
+  } else {
+    ImGui::TextDisabled("Select an item or click '+ New Item'.");
+  }
+  ImGui::EndChild();
+}
+
+// ---- NPCs tab --------------------------------------------------------------
+
+void EditorApp::dbDrawNPCsTab() {
+  ImGui::BeginChild("##npc_list", ImVec2(200, 0), true);
+  if (ImGui::Button("+ New NPC", ImVec2(-1, 0))) {
+    dbEditNPC_  = NpcDef{};
+    dbSelNPC_   = -1;
+    dbEditIsNew_= true;
+  }
+  ImGui::Separator();
+  for (int i = 0; i < (int)dbNPCs_.size(); ++i) {
+    bool sel = (dbSelNPC_ == i);
+    if (ImGui::Selectable(dbNPCs_[i].id.c_str(), sel)) {
+      dbSelNPC_   = i;
+      dbEditNPC_  = dbNPCs_[i];
+      dbEditIsNew_= false;
+    }
+  }
+  ImGui::EndChild();
+
+  ImGui::SameLine();
+
+  ImGui::BeginChild("##npc_edit", ImVec2(0, 0), false);
+  if (dbSelNPC_ >= 0 || dbEditIsNew_) {
+    NpcDef& d = dbEditNPC_;
+
+    ImGui::TextDisabled("ID");
+    if (dbEditIsNew_) dbInputText("##npc_id", d.id);
+    else              ImGui::TextUnformatted(d.id.c_str());
+    ImGui::SetNextItemWidth(-1); dbInputText("Name##npc", d.name);
+
+    ImGui::Separator();
+    ImGui::SetNextItemWidth(80); ImGui::InputInt("Size X##npc", &d.sizeX); ImGui::SameLine();
+    ImGui::SetNextItemWidth(80); ImGui::InputInt("Size Y##npc", &d.sizeY);
+    dbCombo("AI##npc", d.ai, {"static", "wander"});
+    dbInputText("Model Path##npc", d.modelPath);
+    dbInputText("Examine##npc",    d.examineText);
+
+    ImGui::Separator();
+    ImGui::Checkbox("Attackable##npc", &d.isAttackable);
+    if (d.isAttackable) {
+      ImGui::Indent();
+      ImGui::TextColored({1.f,0.55f,0.f,1.f}, "Combat Stats");
+      ImGui::SetNextItemWidth(80); ImGui::InputInt("Max HP##npc",      &d.maxHp);      ImGui::SameLine();
+      ImGui::SetNextItemWidth(80); ImGui::InputInt("Attack##npc",      &d.attack);     ImGui::SameLine();
+      ImGui::SetNextItemWidth(80); ImGui::InputInt("Strength##npc",    &d.strength);
+      ImGui::SetNextItemWidth(80); ImGui::InputInt("M.Def##npc",       &d.meleeDefense); ImGui::SameLine();
+      ImGui::SetNextItemWidth(80); ImGui::InputInt("R.Def##npc",       &d.rangedDefense); ImGui::SameLine();
+      ImGui::SetNextItemWidth(80); ImGui::InputInt("Spd Ticks##npc",   &d.attackSpeedTicks);
+      ImGui::SetNextItemWidth(100); ImGui::InputInt("Respawn Ticks##npc", &d.respawnTicks);
+
+      ImGui::TextColored({1.f,0.55f,0.f,1.f}, "Drop Table");
+      // Drop table
+      int removeDrop = -1;
+      for (int i = 0; i < (int)d.drops.size(); ++i) {
+        DropEntry& dr = d.drops[i];
+        ImGui::PushID(i);
+        char dbuf[64]; std::strncpy(dbuf, dr.itemId.c_str(), sizeof(dbuf)-1); dbuf[sizeof(dbuf)-1]='\0';
+        ImGui::SetNextItemWidth(120);
+        if (ImGui::InputText("##drop_item", dbuf, sizeof(dbuf))) dr.itemId = dbuf;
+        ImGui::SameLine(); ImGui::SetNextItemWidth(50);
+        ImGui::InputInt("##drop_qty", &dr.quantity);
+        ImGui::SameLine(); ImGui::SetNextItemWidth(60);
+        ImGui::InputFloat("##drop_rate", &dr.rate, 0.f, 0.f, "%.2f");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("×")) removeDrop = i;
+        ImGui::PopID();
+      }
+      if (removeDrop >= 0) d.drops.erase(d.drops.begin() + removeDrop);
+      if (ImGui::Button("+ Drop")) d.drops.push_back({"", 1, 1.0f});
+      ImGui::Unindent();
+    }
+
+    ImGui::Checkbox("Talkable##npc", &d.isTalkable);
+    if (d.isTalkable) {
+      ImGui::Indent();
+      dbInputText("Dialogue##npc", d.dialogue);
+      ImGui::Unindent();
+    }
+
+    ImGui::Separator();
+    if (!dbStatus_.empty()) ImGui::TextDisabled("%s", dbStatus_.c_str());
+    if (ImGui::Button("Save##npc")) {
+      if (dbClient_.saveNPC(d, dbEditIsNew_)) {
+        dbStatus_ = "Saved."; dbLoadAll();
+        for (int i = 0; i < (int)dbNPCs_.size(); ++i)
+          if (dbNPCs_[i].id == d.id) { dbSelNPC_ = i; dbEditIsNew_ = false; break; }
+      } else { dbStatus_ = "Save failed."; }
+    }
+    ImGui::SameLine();
+    if (!dbEditIsNew_ && ImGui::Button("Delete##npc")) {
+      if (dbClient_.deleteNPC(d.id)) { dbStatus_ = "Deleted."; dbSelNPC_ = -1; dbLoadAll(); }
+      else dbStatus_ = "Delete failed.";
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Revert##npc")) { if (dbSelNPC_ >= 0) dbEditNPC_ = dbNPCs_[dbSelNPC_]; }
+  } else {
+    ImGui::TextDisabled("Select an NPC or click '+ New NPC'.");
+  }
+  ImGui::EndChild();
+}
+
+// ---- Objects tab -----------------------------------------------------------
+
+void EditorApp::dbDrawObjectsTab() {
+  ImGui::BeginChild("##obj_list", ImVec2(200, 0), true);
+  if (ImGui::Button("+ New Object", ImVec2(-1, 0))) {
+    dbEditObject_ = ObjectDef{};
+    dbSelObject_  = -1;
+    dbEditIsNew_  = true;
+  }
+  ImGui::Separator();
+  for (int i = 0; i < (int)dbObjects_.size(); ++i) {
+    bool sel = (dbSelObject_ == i);
+    if (ImGui::Selectable(dbObjects_[i].id.c_str(), sel)) {
+      dbSelObject_  = i;
+      dbEditObject_ = dbObjects_[i];
+      dbEditIsNew_  = false;
+    }
+  }
+  ImGui::EndChild();
+
+  ImGui::SameLine();
+
+  ImGui::BeginChild("##obj_edit", ImVec2(0, 0), false);
+  if (dbSelObject_ >= 0 || dbEditIsNew_) {
+    ObjectDef& d = dbEditObject_;
+
+    ImGui::TextDisabled("ID");
+    if (dbEditIsNew_) dbInputText("##obj_id", d.id);
+    else              ImGui::TextUnformatted(d.id.c_str());
+    ImGui::SetNextItemWidth(-1); dbInputText("Name##obj", d.name);
+
+    ImGui::Separator();
+    dbCombo("Type##obj",      d.objectType, {"Decoration", "ResourceNode", "ProductionFacility"});
+    dbCombo("Collision##obj", d.collision,  {"none", "full_blocking", "half_blocking"});
+    ImGui::SetNextItemWidth(80); ImGui::InputInt("Size X##obj", &d.sizeX); ImGui::SameLine();
+    ImGui::SetNextItemWidth(80); ImGui::InputInt("Size Y##obj", &d.sizeY);
+    dbInputText("Model Path##obj",  d.modelPath);
+    dbInputText("Examine Text##obj", d.examineText);
+
+    if (d.objectType == "ResourceNode") {
+      ImGui::Separator();
+      ImGui::TextColored({1.f,0.55f,0.f,1.f}, "Resource Node");
+      // Action combo from loaded actions
+      if (ImGui::BeginCombo("Action##obj", d.actionId.c_str())) {
+        if (ImGui::Selectable("(none)", d.actionId.empty())) d.actionId = "";
+        for (const auto& a : dbActions_) {
+          bool sel = (d.actionId == a.id);
+          if (ImGui::Selectable(a.displayName.c_str(), sel)) d.actionId = a.id;
+          if (sel) ImGui::SetItemDefaultFocus();
+        }
+        ImGui::EndCombo();
+      }
+      dbCombo("Req. Skill##obj", d.requiredSkill,
+        {"","woodcutting","mining","warrior","defence","hitpoints","gunner"});
+      ImGui::SameLine(); ImGui::SetNextItemWidth(60);
+      ImGui::InputInt("Level##obj", &d.requiredLevel);
+      // Drop item combo from loaded items
+      if (ImGui::BeginCombo("Drop Item##obj", d.dropItemId.c_str())) {
+        if (ImGui::Selectable("(none)", d.dropItemId.empty())) d.dropItemId = "";
+        for (const auto& it : dbItems_) {
+          bool sel = (d.dropItemId == it.id);
+          if (ImGui::Selectable(it.name.c_str(), sel)) d.dropItemId = it.id;
+          if (sel) ImGui::SetItemDefaultFocus();
+        }
+        ImGui::EndCombo();
+      }
+      ImGui::SameLine(); ImGui::SetNextItemWidth(60);
+      ImGui::InputInt("Qty##obj",         &d.dropQuantity);
+      ImGui::SetNextItemWidth(120); ImGui::InputInt("Respawn Ticks##obj", &d.respawnTicks);
+    }
+    if (d.objectType == "ProductionFacility") {
+      ImGui::Separator();
+      ImGui::TextColored({1.f,0.55f,0.f,1.f}, "Production Facility");
+      if (ImGui::BeginCombo("Craft Action##obj", d.craftActionId.c_str())) {
+        if (ImGui::Selectable("(none)", d.craftActionId.empty())) d.craftActionId = "";
+        for (const auto& a : dbActions_) {
+          bool sel = (d.craftActionId == a.id);
+          if (ImGui::Selectable(a.displayName.c_str(), sel)) d.craftActionId = a.id;
+          if (sel) ImGui::SetItemDefaultFocus();
+        }
+        ImGui::EndCombo();
+      }
+    }
+
+    ImGui::Separator();
+    if (!dbStatus_.empty()) ImGui::TextDisabled("%s", dbStatus_.c_str());
+    if (ImGui::Button("Save##obj")) {
+      if (dbClient_.saveObject(d, dbEditIsNew_)) {
+        dbStatus_ = "Saved."; dbLoadAll();
+        for (int i = 0; i < (int)dbObjects_.size(); ++i)
+          if (dbObjects_[i].id == d.id) { dbSelObject_ = i; dbEditIsNew_ = false; break; }
+      } else { dbStatus_ = "Save failed."; }
+    }
+    ImGui::SameLine();
+    if (!dbEditIsNew_ && ImGui::Button("Delete##obj")) {
+      if (dbClient_.deleteObject(d.id)) { dbStatus_ = "Deleted."; dbSelObject_ = -1; dbLoadAll(); }
+      else dbStatus_ = "Delete failed.";
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Revert##obj")) { if (dbSelObject_ >= 0) dbEditObject_ = dbObjects_[dbSelObject_]; }
+  } else {
+    ImGui::TextDisabled("Select an object or click '+ New Object'.");
+  }
+  ImGui::EndChild();
+}
+
+// ---- Actions tab -----------------------------------------------------------
+
+void EditorApp::dbDrawActionsTab() {
+  ImGui::BeginChild("##act_list", ImVec2(200, 0), true);
+  if (ImGui::Button("+ New Action", ImVec2(-1, 0))) {
+    dbEditAction_ = ActionDef{};
+    dbSelAction_  = -1;
+    dbEditIsNew_  = true;
+  }
+  ImGui::Separator();
+  for (int i = 0; i < (int)dbActions_.size(); ++i) {
+    bool sel = (dbSelAction_ == i);
+    char lbl[128];
+    std::snprintf(lbl, sizeof(lbl), "%s  (%s)", dbActions_[i].displayName.c_str(), dbActions_[i].id.c_str());
+    if (ImGui::Selectable(lbl, sel)) {
+      dbSelAction_  = i;
+      dbEditAction_ = dbActions_[i];
+      dbEditIsNew_  = false;
+    }
+  }
+  ImGui::EndChild();
+
+  ImGui::SameLine();
+
+  ImGui::BeginChild("##act_edit", ImVec2(0, 0), false);
+  if (dbSelAction_ >= 0 || dbEditIsNew_) {
+    ActionDef& d = dbEditAction_;
+    ImGui::TextDisabled("ID (slug, e.g. 'chop')");
+    if (dbEditIsNew_) dbInputText("##act_id", d.id);
+    else              ImGui::TextUnformatted(d.id.c_str());
+    ImGui::SetNextItemWidth(-1); dbInputText("Display Name##act", d.displayName);
+    dbCombo("Handler Type##act", d.handlerType,
+      {"gather_resource", "production_facility", "equip", "eat", "talk", "bank", "examine"});
+
+    ImGui::TextDisabled(
+      "Handler type controls server behavior.\n"
+      "Display name is what the player sees in the context menu.");
+
+    ImGui::Separator();
+    if (!dbStatus_.empty()) ImGui::TextDisabled("%s", dbStatus_.c_str());
+    if (ImGui::Button("Save##act")) {
+      if (dbClient_.saveAction(d, dbEditIsNew_)) {
+        dbStatus_ = "Saved."; dbLoadAll();
+        for (int i = 0; i < (int)dbActions_.size(); ++i)
+          if (dbActions_[i].id == d.id) { dbSelAction_ = i; dbEditIsNew_ = false; break; }
+      } else { dbStatus_ = "Save failed."; }
+    }
+    ImGui::SameLine();
+    if (!dbEditIsNew_ && ImGui::Button("Delete##act")) {
+      if (dbClient_.deleteAction(d.id)) { dbStatus_ = "Deleted."; dbSelAction_ = -1; dbLoadAll(); }
+      else dbStatus_ = "Delete failed.";
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Revert##act")) { if (dbSelAction_ >= 0) dbEditAction_ = dbActions_[dbSelAction_]; }
+  } else {
+    ImGui::TextDisabled("Select an action or click '+ New Action'.");
+  }
+  ImGui::EndChild();
+}
+
+// ---- Main window -----------------------------------------------------------
+
+void EditorApp::drawDatabaseWindow() {
+  ImGui::SetNextWindowSize(ImVec2(900, 620), ImGuiCond_FirstUseEver);
+  ImGui::SetNextWindowPos(ImVec2(80, 80), ImGuiCond_FirstUseEver);
+  bool open = true;
+  if (!ImGui::Begin("Database Editor", &open,
+        ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_MenuBar)) {
+    ImGui::End();
+    showDbWindow_ = open;
+    return;
+  }
+  showDbWindow_ = open;
+
+  // Menu bar inside the window
+  if (ImGui::BeginMenuBar()) {
+    if (ImGui::MenuItem("Refresh")) dbLoadAll();
+    if (!dbStatus_.empty()) {
+      ImGui::SetCursorPosX(ImGui::GetCursorPosX() + 20.0f);
+      ImGui::TextDisabled("%s", dbStatus_.c_str());
+    }
+    ImGui::EndMenuBar();
+  }
+
+  if (!dbLoaded_) {
+    ImGui::TextColored({1,0.4f,0.4f,1}, "Not connected to server. Start the server, then click Refresh.");
+    if (ImGui::Button("Refresh Now")) dbLoadAll();
+    ImGui::End();
+    return;
+  }
+
+  // Tabs
+  if (ImGui::BeginTabBar("##db_tabs")) {
+    if (ImGui::BeginTabItem("Items")) {
+      dbDrawItemsTab();
+      ImGui::EndTabItem();
+    }
+    if (ImGui::BeginTabItem("NPCs")) {
+      dbDrawNPCsTab();
+      ImGui::EndTabItem();
+    }
+    if (ImGui::BeginTabItem("Objects")) {
+      dbDrawObjectsTab();
+      ImGui::EndTabItem();
+    }
+    if (ImGui::BeginTabItem("Actions")) {
+      dbDrawActionsTab();
+      ImGui::EndTabItem();
+    }
+    ImGui::EndTabBar();
+  }
+  ImGui::End();
 }
 
 }  // namespace editor

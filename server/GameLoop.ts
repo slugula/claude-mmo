@@ -8,6 +8,7 @@ import {
 } from '../src/shared/constants';
 import { createWorldFromTiles, findWalkableTileNear } from '../src/world/WorldState';
 import { spawnNPC } from '../src/systems/NPCSystem';
+import { loadEntitiesFromDB } from './db/EntityLoader';
 import { createDefaultSkills } from '../src/systems/SkillSystem';
 import { createEmptyInventory } from '../src/systems/InventorySystem';
 import { createEmptyBank } from '../src/systems/BankSystem';
@@ -82,6 +83,10 @@ export class GameLoop {
 
   constructor(broadcast: BroadcastFn) {
     this.broadcast = broadcast;
+
+    // Fire-and-forget DB load: JSON registries are already populated synchronously;
+    // this hot-swaps them with DB data if available.
+    void loadEntitiesFromDB();
 
     const mapData = loadWorldMap();
     this.worldTiles = mapData.tiles;

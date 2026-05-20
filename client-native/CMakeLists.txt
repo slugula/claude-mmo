@@ -121,6 +121,7 @@ add_custom_command(TARGET client-native POST_BUILD
 add_executable(level-editor
   src/editor/main.cpp
   src/editor/EditorApp.cpp
+  src/editor/EntityClient.cpp
   src/editor/MinimapRenderer.cpp
   src/editor/UndoStack.cpp
 )
