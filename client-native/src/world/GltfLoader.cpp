@@ -3,6 +3,11 @@
 #define CGLTF_IMPLEMENTATION
 #include <cgltf.h>
 
+#define GLM_ENABLE_EXPERIMENTAL
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/type_ptr.hpp>
+#include <glm/gtx/quaternion.hpp>
+
 #include <cstdio>
 #include <cstring>
 #include <unordered_map>
@@ -32,11 +37,126 @@ void readAccessorUints(const cgltf_accessor* acc, std::vector<uint32_t>& out, in
   }
 }
 
-// Index of `node` inside `data->nodes` array — cgltf uses pointer identity,
-// so we just do pointer arithmetic.
-int nodeIndex(const cgltf_data* data, const cgltf_node* node) {
-  if (!node) return -1;
-  return static_cast<int>(node - data->nodes);
+// Compute the local transform for a single cgltf_node (TRS or matrix).
+glm::mat4 nodeLocalTransform(const cgltf_node* node) {
+  glm::mat4 m(1.0f);
+  if (node->has_matrix) {
+    // glTF matrix is column-major, same as glm.
+    std::memcpy(glm::value_ptr(m), node->matrix, 16 * sizeof(float));
+    return m;
+  }
+  if (node->has_translation)
+    m = glm::translate(m, glm::vec3(node->translation[0],
+                                     node->translation[1],
+                                     node->translation[2]));
+  if (node->has_rotation)
+    m *= glm::mat4_cast(glm::quat(node->rotation[3],  // glm: (w,x,y,z)
+                                   node->rotation[0],
+                                   node->rotation[1],
+                                   node->rotation[2]));
+  if (node->has_scale)
+    m = glm::scale(m, glm::vec3(node->scale[0], node->scale[1], node->scale[2]));
+  return m;
+}
+
+// Apply worldTransform to packed float[3] positions (in-place).
+void applyTransformToPositions(std::vector<float>& pos, const glm::mat4& xf) {
+  for (size_t i = 0; i + 2 < pos.size(); i += 3) {
+    glm::vec4 v(pos[i], pos[i+1], pos[i+2], 1.0f);
+    v = xf * v;
+    pos[i] = v.x;  pos[i+1] = v.y;  pos[i+2] = v.z;
+  }
+}
+
+// Apply the normal matrix (inverse-transpose of upper-left 3×3) to normals.
+void applyTransformToNormals(std::vector<float>& nrm, const glm::mat4& xf) {
+  const glm::mat3 nm = glm::transpose(glm::inverse(glm::mat3(xf)));
+  for (size_t i = 0; i + 2 < nrm.size(); i += 3) {
+    glm::vec3 n(nrm[i], nrm[i+1], nrm[i+2]);
+    n = glm::normalize(nm * n);
+    nrm[i] = n.x;  nrm[i+1] = n.y;  nrm[i+2] = n.z;
+  }
+}
+
+// Parse all primitives of a single cgltf_mesh into `model.primitives`.
+// For static (non-skinned) meshes, `worldTransform` is baked into positions/normals.
+// For skinned meshes the transform is left alone (skinning handles it at runtime).
+void parseMeshPrimitives(
+    const cgltf_mesh& mesh,
+    const cgltf_data* data,
+    const glm::mat4&  worldTransform,
+    GltfModel&        model)
+{
+  for (size_t p = 0; p < mesh.primitives_count; ++p) {
+    const cgltf_primitive& prim = mesh.primitives[p];
+    GltfPrimitive out;
+
+    const cgltf_accessor* aPos   = nullptr;
+    const cgltf_accessor* aNorm  = nullptr;
+    const cgltf_accessor* aJoint = nullptr;
+    const cgltf_accessor* aWt    = nullptr;
+    for (size_t a = 0; a < prim.attributes_count; ++a) {
+      const cgltf_attribute& at = prim.attributes[a];
+      switch (at.type) {
+        case cgltf_attribute_type_position: aPos   = at.data; break;
+        case cgltf_attribute_type_normal:   aNorm  = at.data; break;
+        case cgltf_attribute_type_joints:   if (at.index == 0) aJoint = at.data; break;
+        case cgltf_attribute_type_weights:  if (at.index == 0) aWt    = at.data; break;
+        default: break;
+      }
+    }
+
+    readAccessorFloats(aPos,  out.positions, 3);
+    readAccessorFloats(aNorm, out.normals,   3);
+
+    // Joints
+    if (aJoint) {
+      std::vector<uint32_t> tmp;
+      readAccessorUints(aJoint, tmp, 4);
+      out.jointIndices.resize(tmp.size());
+      for (size_t i = 0; i < tmp.size(); ++i)
+        out.jointIndices[i] = static_cast<uint8_t>(tmp[i] & 0xFFu);
+    } else {
+      const size_t vcount = aPos ? aPos->count : 0;
+      out.jointIndices.assign(vcount * 4, 0);
+    }
+    // Weights
+    if (aWt) {
+      readAccessorFloats(aWt, out.jointWeights, 4);
+    } else {
+      const size_t vcount = aPos ? aPos->count : 0;
+      out.jointWeights.assign(vcount * 4, 0.0f);
+      for (size_t i = 0; i < vcount; ++i) out.jointWeights[i * 4] = 1.0f;
+    }
+
+    readAccessorUints(prim.indices, out.indices, 1);
+
+    if (prim.material)
+      out.materialIndex = static_cast<int>(prim.material - data->materials);
+
+    // For static meshes bake the world transform into geometry so the model
+    // renders correctly when placed at the origin with identity instance xf.
+    const bool isSkinned = (aJoint != nullptr && aWt != nullptr);
+    if (!isSkinned && worldTransform != glm::mat4(1.0f)) {
+      applyTransformToPositions(out.positions, worldTransform);
+      applyTransformToNormals  (out.normals,   worldTransform);
+    }
+
+    model.primitives.push_back(std::move(out));
+  }
+}
+
+// Recurse through a scene node and all its children.
+void processNode(
+    const cgltf_data*   data,
+    const cgltf_node*   node,
+    const glm::mat4&    parentWorld,
+    GltfModel&          model)
+{
+  const glm::mat4 world = parentWorld * nodeLocalTransform(node);
+  if (node->mesh) parseMeshPrimitives(*node->mesh, data, world, model);
+  for (size_t i = 0; i < node->children_count; ++i)
+    processNode(data, node->children[i], world, model);
 }
 
 }  // namespace
@@ -128,65 +248,22 @@ std::optional<GltfModel> loadGlb(const std::filesystem::path& path) {
     }
   }
 
-  // ---- Mesh primitives --------------------------------------------------
-  // We support a single mesh (first one found) since our character model
-  // only has one. Add a loop here when we move to multi-mesh entities.
-  if (data->meshes_count > 0) {
-    const cgltf_mesh& mesh = data->meshes[0];
-    model.primitives.reserve(mesh.primitives_count);
+  // ---- Mesh primitives — full scene node traversal ----------------------
+  // Walk the scene graph so every node's mesh is loaded, with each node's
+  // accumulated world transform baked into the geometry for static meshes.
+  // Skinned meshes keep geometry in bind-pose (skinning handles the xf).
+  {
+    const cgltf_scene* scene = data->scene;
+    if (!scene && data->scenes_count > 0) scene = &data->scenes[0];
 
-    for (size_t p = 0; p < mesh.primitives_count; ++p) {
-      const cgltf_primitive& prim = mesh.primitives[p];
-      GltfPrimitive out;
-
-      const cgltf_accessor* aPos   = nullptr;
-      const cgltf_accessor* aNorm  = nullptr;
-      const cgltf_accessor* aJoint = nullptr;
-      const cgltf_accessor* aWt    = nullptr;
-      for (size_t a = 0; a < prim.attributes_count; ++a) {
-        const cgltf_attribute& at = prim.attributes[a];
-        switch (at.type) {
-          case cgltf_attribute_type_position: aPos   = at.data; break;
-          case cgltf_attribute_type_normal:   aNorm  = at.data; break;
-          case cgltf_attribute_type_joints:   if (at.index == 0) aJoint = at.data; break;
-          case cgltf_attribute_type_weights:  if (at.index == 0) aWt    = at.data; break;
-          default: break;
-        }
-      }
-
-      readAccessorFloats(aPos,  out.positions, 3);
-      readAccessorFloats(aNorm, out.normals,   3);
-
-      // Joints — pack into 4-uint8 per vertex (well within our 65-joint cap).
-      if (aJoint) {
-        std::vector<uint32_t> tmp;
-        readAccessorUints(aJoint, tmp, 4);
-        out.jointIndices.resize(tmp.size());
-        for (size_t i = 0; i < tmp.size(); ++i) {
-          out.jointIndices[i] = static_cast<uint8_t>(tmp[i] & 0xFFu);
-        }
-      } else {
-        const size_t vcount = aPos ? aPos->count : 0;
-        out.jointIndices.assign(vcount * 4, 0);
-      }
-      // Weights — vec4 floats. If absent, set xyzw = (1, 0, 0, 0) so each
-      // vertex gets full influence from joint 0 (unskinned fallback).
-      if (aWt) {
-        readAccessorFloats(aWt, out.jointWeights, 4);
-      } else {
-        const size_t vcount = aPos ? aPos->count : 0;
-        out.jointWeights.assign(vcount * 4, 0.0f);
-        for (size_t i = 0; i < vcount; ++i) out.jointWeights[i * 4] = 1.0f;
-      }
-
-      readAccessorUints(prim.indices, out.indices, 1);
-
-      // Material index
-      if (prim.material) {
-        out.materialIndex = static_cast<int>(prim.material - data->materials);
-      }
-
-      model.primitives.push_back(std::move(out));
+    if (scene) {
+      for (size_t ni = 0; ni < scene->nodes_count; ++ni)
+        processNode(data, scene->nodes[ni], glm::mat4(1.0f), model);
+    } else {
+      // Fallback: process every root node (no parent) if no scene is defined.
+      for (size_t ni = 0; ni < data->nodes_count; ++ni)
+        if (!data->nodes[ni].parent)
+          processNode(data, &data->nodes[ni], glm::mat4(1.0f), model);
     }
   }
 

@@ -77,6 +77,7 @@ endif()
 add_executable(client-native
   src/main.cpp
   src/app/App.cpp
+  src/editor/EntityClient.cpp
   src/net/NetworkClient.cpp
   src/ui/Panels.cpp
   src/ui/WorldOverlays.cpp

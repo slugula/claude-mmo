@@ -1,7 +1,10 @@
 #include "app/App.hpp"
 
+#include "editor/EntityClient.hpp"
+#include "editor/EntityDefs.hpp"
 #include "render/GlDebug.hpp"
 #include "shared/SharedTypesJson.hpp"
+#include "world/GltfLoader.hpp"
 #include "world/MapGenerator.hpp"
 #include "world/TerrainBuilder.hpp"
 
@@ -357,6 +360,31 @@ bool App::init() {
     std::fprintf(stderr, "[App] tree model load failed — using procedural trees\n");
   }
   entities_.initGL();
+
+  // Fetch NPC definitions from the DB API and load custom models.
+  // This is a one-time synchronous call at startup (server is localhost).
+  {
+    editor::EntityClient dbClient;
+    try {
+      const auto npcDefs = dbClient.getNPCs();
+      for (const auto& def : npcDefs) {
+        if (def.modelPath.empty()) continue;
+        auto model = world::loadGlb(resolveFromExe(def.modelPath.c_str()));
+        if (!model) {
+          // Try with assets/ prefix.
+          model = world::loadGlb(resolveFromExe(("assets/" + def.modelPath).c_str()));
+        }
+        if (model && !model->primitives.empty()) {
+          entities_.loadNpcKindModel(def.id, model->primitives, model->materials);
+          std::fprintf(stdout, "[App] Loaded custom model for NPC '%s' (%zu prims)\n",
+                       def.id.c_str(), model->primitives.size());
+        }
+      }
+    } catch (const std::exception& e) {
+      std::fprintf(stderr, "[App] DB NPC fetch failed (server offline?): %s\n", e.what());
+    }
+  }
+
   generateAndBuildTerrain();
   initHoverMesh();
 
@@ -777,7 +805,9 @@ void App::renderFrame() {
                                      static_cast<float>(shared::kTickDurationMs),
                                      0.0f, 1.0f);
     std::vector<world::EntityRenderer::Instance> insts;
+    std::vector<std::string> kinds;
     insts.reserve(currNpcs_.size());
+    kinds.reserve(currNpcs_.size());
     for (const auto& [id, curr] : currNpcs_) {
       if (curr.dying) continue;
       float fx = static_cast<float>(curr.tileX);
@@ -792,8 +822,9 @@ void App::renderFrame() {
                                   static_cast<int>(std::round(fx)),
                                   static_cast<int>(std::round(fy)));
       insts.push_back({ fx, wy, fy, targetYaw });
+      kinds.push_back(curr.kind);
     }
-    entities_.setNpcInstances(insts);
+    entities_.setNpcInstances(insts, kinds);
   }
   entities_.render(obstacleShader_);
 

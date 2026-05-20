@@ -147,7 +147,89 @@ EntityRenderer::~EntityRenderer() {
   destroy();
 }
 
+void EntityRenderer::clearNpcKindModels() {
+  for (auto& [kind, kit] : npcKindKits_) {
+    for (auto& p : kit.prims) {
+      if (p.vao)    glDeleteVertexArrays(1, &p.vao);
+      if (p.vboPos) glDeleteBuffers(1, &p.vboPos);
+      if (p.vboNrm) glDeleteBuffers(1, &p.vboNrm);
+      if (p.ebo)    glDeleteBuffers(1, &p.ebo);
+    }
+  }
+  npcKindKits_.clear();
+}
+
+void EntityRenderer::loadNpcKindModel(const std::string&                kind,
+                                      const std::vector<GltfPrimitive>& primitives,
+                                      const std::vector<GltfMaterial>&  materials)
+{
+  // Remove any existing kit for this kind.
+  auto it = npcKindKits_.find(kind);
+  if (it != npcKindKits_.end()) {
+    for (auto& p : it->second.prims) {
+      if (p.vao)    glDeleteVertexArrays(1, &p.vao);
+      if (p.vboPos) glDeleteBuffers(1, &p.vboPos);
+      if (p.vboNrm) glDeleteBuffers(1, &p.vboNrm);
+      if (p.ebo)    glDeleteBuffers(1, &p.ebo);
+    }
+    npcKindKits_.erase(it);
+  }
+
+  CustomKit kit;
+  for (const auto& prim : primitives) {
+    if (prim.positions.empty() || prim.indices.empty()) continue;
+
+    CustomPrim cp;
+    cp.indexCount = static_cast<GLsizei>(prim.indices.size());
+    if (prim.materialIndex >= 0 && prim.materialIndex < (int)materials.size())
+      cp.color = materials[prim.materialIndex].baseColor;
+
+    glCreateBuffers(1, &cp.vboPos);
+    glNamedBufferStorage(cp.vboPos,
+      prim.positions.size() * sizeof(float), prim.positions.data(), 0);
+
+    std::vector<float> norms = prim.normals;
+    if (norms.size() < prim.positions.size())
+      norms.assign(prim.positions.size(), 0.0f);
+    glCreateBuffers(1, &cp.vboNrm);
+    glNamedBufferStorage(cp.vboNrm, norms.size() * sizeof(float), norms.data(), 0);
+
+    glCreateBuffers(1, &cp.ebo);
+    glNamedBufferStorage(cp.ebo,
+      prim.indices.size() * sizeof(uint32_t), prim.indices.data(), 0);
+
+    // VAO — same layout as Kit: positions@0, normals@1, instance@2+3.
+    // Uses customNpcInstanceVbo_ so the same shader / draw call works.
+    glCreateVertexArrays(1, &cp.vao);
+    glVertexArrayVertexBuffer(cp.vao, 0, cp.vboPos, 0, sizeof(float) * 3);
+    glEnableVertexArrayAttrib(cp.vao, 0);
+    glVertexArrayAttribFormat(cp.vao, 0, 3, GL_FLOAT, GL_FALSE, 0);
+    glVertexArrayAttribBinding(cp.vao, 0, 0);
+
+    glVertexArrayVertexBuffer(cp.vao, 1, cp.vboNrm, 0, sizeof(float) * 3);
+    glEnableVertexArrayAttrib(cp.vao, 1);
+    glVertexArrayAttribFormat(cp.vao, 1, 3, GL_FLOAT, GL_FALSE, 0);
+    glVertexArrayAttribBinding(cp.vao, 1, 1);
+
+    glVertexArrayVertexBuffer(cp.vao, 2, customNpcInstanceVbo_, 0, sizeof(Instance));
+    glVertexArrayBindingDivisor(cp.vao, 2, 1);
+    glEnableVertexArrayAttrib(cp.vao, 2);
+    glVertexArrayAttribFormat(cp.vao, 2, 3, GL_FLOAT, GL_FALSE, offsetof(Instance, x));
+    glVertexArrayAttribBinding(cp.vao, 2, 2);
+    glEnableVertexArrayAttrib(cp.vao, 3);
+    glVertexArrayAttribFormat(cp.vao, 3, 1, GL_FLOAT, GL_FALSE, offsetof(Instance, rotY));
+    glVertexArrayAttribBinding(cp.vao, 3, 2);
+
+    glVertexArrayElementBuffer(cp.vao, cp.ebo);
+    kit.prims.push_back(cp);
+  }
+
+  if (!kit.prims.empty())
+    npcKindKits_[kind] = std::move(kit);
+}
+
 void EntityRenderer::destroy() {
+  clearNpcKindModels();
   if (npcOutlineVao_)      glDeleteVertexArrays(1, &npcOutlineVao_);
   if (itemOutlineVao_)     glDeleteVertexArrays(1, &itemOutlineVao_);
   if (outlineInstanceVbo_) glDeleteBuffers(1, &outlineInstanceVbo_);
@@ -159,9 +241,10 @@ void EntityRenderer::destroy() {
     if (k->vboPos) glDeleteBuffers(1, &k->vboPos);
     *k = {};
   }
-  if (npcInstanceVbo_)  glDeleteBuffers(1, &npcInstanceVbo_);
-  if (itemInstanceVbo_) glDeleteBuffers(1, &itemInstanceVbo_);
-  npcInstanceVbo_ = itemInstanceVbo_ = 0;
+  if (npcInstanceVbo_)       glDeleteBuffers(1, &npcInstanceVbo_);
+  if (itemInstanceVbo_)      glDeleteBuffers(1, &itemInstanceVbo_);
+  if (customNpcInstanceVbo_) glDeleteBuffers(1, &customNpcInstanceVbo_);
+  npcInstanceVbo_ = itemInstanceVbo_ = customNpcInstanceVbo_ = 0;
   npcCount_ = itemCount_ = 0;
 }
 
@@ -213,8 +296,10 @@ void EntityRenderer::initGL() {
 
   glCreateBuffers(1, &npcInstanceVbo_);
   glCreateBuffers(1, &itemInstanceVbo_);
-  glNamedBufferStorage(npcInstanceVbo_,  sizeof(Instance) * kInstanceCap, nullptr, GL_DYNAMIC_STORAGE_BIT);
-  glNamedBufferStorage(itemInstanceVbo_, sizeof(Instance) * kInstanceCap, nullptr, GL_DYNAMIC_STORAGE_BIT);
+  glCreateBuffers(1, &customNpcInstanceVbo_);
+  glNamedBufferStorage(npcInstanceVbo_,        sizeof(Instance) * kInstanceCap, nullptr, GL_DYNAMIC_STORAGE_BIT);
+  glNamedBufferStorage(itemInstanceVbo_,       sizeof(Instance) * kInstanceCap, nullptr, GL_DYNAMIC_STORAGE_BIT);
+  glNamedBufferStorage(customNpcInstanceVbo_,  sizeof(Instance) * kInstanceCap, nullptr, GL_DYNAMIC_STORAGE_BIT);
 
   // Humanoid for NPCs: cylinder body + sphere head
   Mesh humanoid;
@@ -279,8 +364,15 @@ void EntityRenderer::rebuildItems(const std::vector<shared::DroppedItemState>& i
   itemCount_ = insts.size();
 }
 
-void EntityRenderer::setNpcInstances(const std::vector<Instance>& insts) {
+void EntityRenderer::setNpcInstances(const std::vector<Instance>& insts,
+                                      const std::vector<std::string>& kinds)
+{
   const std::size_t n = std::min(insts.size(), kInstanceCap);
+  // Store CPU copies for kind-based grouping in render().
+  npcInstCpu_.assign(insts.begin(), insts.begin() + static_cast<ptrdiff_t>(n));
+  npcKinds_   = kinds;
+  if (npcKinds_.size() > n) npcKinds_.resize(n);
+  // Upload everything to the default VBO (used for the humanoid fallback group).
   if (n > 0) {
     glNamedBufferSubData(npcInstanceVbo_, 0,
                          static_cast<GLsizeiptr>(n * sizeof(Instance)),
@@ -301,10 +393,43 @@ void EntityRenderer::setItemInstances(const std::vector<Instance>& insts) {
 
 void EntityRenderer::render(render::Shader& shader) {
   if (npcCount_ > 0) {
-    shader.setVec3("u_color", humanoid_.color);
-    glBindVertexArray(humanoid_.vao);
-    glDrawElementsInstanced(GL_TRIANGLES, humanoid_.indexCount, GL_UNSIGNED_INT,
-                            nullptr, static_cast<GLsizei>(npcCount_));
+    // Partition instances: custom-model kinds get their own per-kind draw;
+    // everything else falls back to the humanoid procedural geometry.
+    std::unordered_map<std::string, std::vector<Instance>> kindGroups;
+    std::vector<Instance> humanoidGroup;
+    humanoidGroup.reserve(npcCount_);
+
+    for (std::size_t i = 0; i < npcCount_; ++i) {
+      const std::string& k = (i < npcKinds_.size()) ? npcKinds_[i] : "";
+      if (!k.empty() && npcKindKits_.count(k))
+        kindGroups[k].push_back(npcInstCpu_[i]);
+      else
+        humanoidGroup.push_back(npcInstCpu_[i]);
+    }
+
+    // Humanoid fallback group.
+    if (!humanoidGroup.empty()) {
+      glNamedBufferSubData(npcInstanceVbo_, 0,
+        humanoidGroup.size() * sizeof(Instance), humanoidGroup.data());
+      shader.setVec3("u_color", humanoid_.color);
+      glBindVertexArray(humanoid_.vao);
+      glDrawElementsInstanced(GL_TRIANGLES, humanoid_.indexCount, GL_UNSIGNED_INT,
+                              nullptr, static_cast<GLsizei>(humanoidGroup.size()));
+    }
+
+    // Custom-model groups.
+    for (auto& [kind, insts] : kindGroups) {
+      const std::size_t cnt = std::min(insts.size(), kInstanceCap);
+      glNamedBufferSubData(customNpcInstanceVbo_, 0,
+        cnt * sizeof(Instance), insts.data());
+      const CustomKit& ckit = npcKindKits_.at(kind);
+      for (const auto& cp : ckit.prims) {
+        shader.setVec3("u_color", glm::vec3(cp.color));
+        glBindVertexArray(cp.vao);
+        glDrawElementsInstanced(GL_TRIANGLES, cp.indexCount, GL_UNSIGNED_INT,
+                                nullptr, static_cast<GLsizei>(cnt));
+      }
+    }
   }
   if (itemCount_ > 0) {
     shader.setVec3("u_color", itemBox_.color);

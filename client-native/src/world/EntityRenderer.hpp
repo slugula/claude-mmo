@@ -2,10 +2,13 @@
 
 #include "render/Shader.hpp"
 #include "shared/SharedTypes.hpp"
+#include "world/GltfModel.hpp"
 
 #include <glad/glad.h>
 #include <glm/glm.hpp>
 
+#include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace world {
@@ -48,8 +51,20 @@ public:
 
   // Direct upload of pre-built instance arrays — used by App when it has
   // interpolated tween data between prev/curr state snapshots.
-  void setNpcInstances (const std::vector<Instance>& insts);
+  // `kinds` is parallel to `insts` — the NPC kind string for each instance.
+  // Instances whose kind has a loaded custom model are drawn with that model;
+  // the rest fall back to the humanoid procedural geometry.
+  void setNpcInstances (const std::vector<Instance>& insts,
+                        const std::vector<std::string>& kinds = {});
   void setItemInstances(const std::vector<Instance>& insts);
+
+  // Load / clear per-kind custom model geometry.
+  // Call at startup after fetching NPC definitions from the DB API.
+  // `primitives` and `materials` come from world::loadGlb().
+  void loadNpcKindModel(const std::string&                kind,
+                        const std::vector<GltfPrimitive>& primitives,
+                        const std::vector<GltfMaterial>&  materials);
+  void clearNpcKindModels();
 
   // One instanced draw per kind, in the order NPCs then items.
   // The caller has already set u_viewProj / u_lightDir / palette uniforms;
@@ -89,6 +104,17 @@ private:
     glm::vec3 color      = glm::vec3(1.0f);
   };
 
+  // One primitive of a custom (DB-loaded) NPC model.
+  struct CustomPrim {
+    GLuint  vao        = 0;
+    GLuint  vboPos     = 0;
+    GLuint  vboNrm     = 0;
+    GLuint  ebo        = 0;
+    GLsizei indexCount = 0;
+    glm::vec4 color    = glm::vec4(0.7f, 0.7f, 0.7f, 1.0f);
+  };
+  struct CustomKit { std::vector<CustomPrim> prims; };
+
   void destroy();
   void uploadKit(Kit& dst,
                  const std::vector<float>&    positions,
@@ -99,10 +125,17 @@ private:
   Kit humanoid_;
   Kit itemBox_;
 
-  GLuint npcInstanceVbo_   = 0;
-  GLuint itemInstanceVbo_  = 0;
-  std::size_t npcCount_    = 0;
-  std::size_t itemCount_   = 0;
+  GLuint npcInstanceVbo_        = 0;
+  GLuint itemInstanceVbo_       = 0;
+  GLuint customNpcInstanceVbo_  = 0;   // scratch VBO for per-kind instanced draws
+  std::size_t npcCount_         = 0;
+  std::size_t itemCount_        = 0;
+
+  // CPU-side copies kept so render() can group by kind without a GPU readback.
+  std::vector<Instance>     npcInstCpu_;
+  std::vector<std::string>  npcKinds_;
+
+  std::unordered_map<std::string, CustomKit> npcKindKits_;
 
   // Single-instance VBO + dedicated VAOs used for the 2-pass stencil outline.
   // Separate from the batched instance VBOs so we can upload one instance
