@@ -16,6 +16,8 @@
 #include "render/ShadowMap.hpp"
 #include "shared/SharedTypes.hpp"
 #include "world/EntityRenderer.hpp"
+#include "world/GltfLoader.hpp"
+#include "world/GltfModel.hpp"
 #include "world/ObstacleSystem.hpp"
 #include "world/TerrainBuilder.hpp"
 #include "world/WaterRenderer.hpp"
@@ -252,6 +254,22 @@ private:
   void   dbInitPreviewFbo();
   void   dbDestroyPreviewFbo();
   void   dbRenderPreview(float dt);   // renders into dbPreviewFbo_, angle auto-spins
+  void   dbLoadPreviewModel(const std::string& modelPath);  // load model for preview
+
+  // Per-primitive GPU resources for the preview model.
+  struct DbPreviewPrim {
+    GLuint  vao     = 0;
+    GLuint  vboPos  = 0;
+    GLuint  vboNorm = 0;
+    GLuint  ebo     = 0;
+    GLsizei indexCount = 0;
+    glm::vec4 color    = glm::vec4(0.7f, 0.7f, 0.7f, 1.0f);
+  };
+  render::Shader              dbPreviewShader_;
+  std::vector<DbPreviewPrim>  dbPreviewPrims_;
+  std::string                 dbPreviewLoadedPath_;
+  glm::vec3                   dbPreviewCenter_ = glm::vec3(0.f);
+  float                       dbPreviewRadius_ = 1.0f;
 
   EntityClient         dbClient_;
   bool                 showDbWindow_  = false;

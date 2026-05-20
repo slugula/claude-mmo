@@ -4,6 +4,7 @@
 #include "input/Picker.hpp"
 #include "render/GlDebug.hpp"
 #include "shared/SharedTypesJson.hpp"
+#include "world/GltfLoader.hpp"
 #include "world/TerrainBuilder.hpp"
 
 #include <glad/glad.h>
@@ -85,13 +86,161 @@ EditorApp::~EditorApp() {
   dbDestroyPreviewFbo();
 }
 
-void EditorApp::dbInitPreviewFbo()    { /* Phase 2: 3D model preview */ }
-void EditorApp::dbDestroyPreviewFbo() {
-  if (dbPreviewFbo_) { glDeleteFramebuffers(1, &dbPreviewFbo_); dbPreviewFbo_ = 0; }
-  if (dbPreviewTex_) { glDeleteTextures(1, &dbPreviewTex_);     dbPreviewTex_ = 0; }
-  if (dbPreviewRbo_) { glDeleteRenderbuffers(1, &dbPreviewRbo_); dbPreviewRbo_ = 0; }
+void EditorApp::dbInitPreviewFbo() {
+  // 256×256 colour texture
+  glCreateTextures(GL_TEXTURE_2D, 1, &dbPreviewTex_);
+  glTextureStorage2D(dbPreviewTex_, 1, GL_RGBA8, 256, 256);
+  glTextureParameteri(dbPreviewTex_, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  glTextureParameteri(dbPreviewTex_, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  // Depth renderbuffer
+  glCreateRenderbuffers(1, &dbPreviewRbo_);
+  glNamedRenderbufferStorage(dbPreviewRbo_, GL_DEPTH_COMPONENT24, 256, 256);
+  // FBO
+  glCreateFramebuffers(1, &dbPreviewFbo_);
+  glNamedFramebufferTexture(dbPreviewFbo_, GL_COLOR_ATTACHMENT0, dbPreviewTex_, 0);
+  glNamedFramebufferRenderbuffer(dbPreviewFbo_, GL_DEPTH_ATTACHMENT,
+                                  GL_RENDERBUFFER, dbPreviewRbo_);
+  // Preview shader
+  dbPreviewShader_.fromFiles(resolveFromExe("shaders/preview.vert"),
+                             resolveFromExe("shaders/preview.frag"));
 }
-void EditorApp::dbRenderPreview(float) { /* Phase 2: 3D model preview */ }
+
+void EditorApp::dbDestroyPreviewFbo() {
+  // Destroy primitive GPU resources
+  for (auto& p : dbPreviewPrims_) {
+    if (p.vao)    glDeleteVertexArrays(1, &p.vao);
+    if (p.vboPos) glDeleteBuffers(1, &p.vboPos);
+    if (p.vboNorm)glDeleteBuffers(1, &p.vboNorm);
+    if (p.ebo)    glDeleteBuffers(1, &p.ebo);
+  }
+  dbPreviewPrims_.clear();
+  if (dbPreviewFbo_) { glDeleteFramebuffers(1, &dbPreviewFbo_);   dbPreviewFbo_ = 0; }
+  if (dbPreviewTex_) { glDeleteTextures(1, &dbPreviewTex_);       dbPreviewTex_ = 0; }
+  if (dbPreviewRbo_) { glDeleteRenderbuffers(1, &dbPreviewRbo_);  dbPreviewRbo_ = 0; }
+}
+
+void EditorApp::dbLoadPreviewModel(const std::string& modelPath) {
+  if (modelPath == dbPreviewLoadedPath_) return;
+
+  // Release old primitive GPU resources
+  for (auto& p : dbPreviewPrims_) {
+    if (p.vao)    glDeleteVertexArrays(1, &p.vao);
+    if (p.vboPos) glDeleteBuffers(1, &p.vboPos);
+    if (p.vboNorm)glDeleteBuffers(1, &p.vboNorm);
+    if (p.ebo)    glDeleteBuffers(1, &p.ebo);
+  }
+  dbPreviewPrims_.clear();
+  dbPreviewLoadedPath_ = modelPath;
+  dbPreviewCenter_     = glm::vec3(0.f);
+  dbPreviewRadius_     = 1.0f;
+
+  if (modelPath.empty()) return;
+
+  // Try the path as-is (relative to exe), then with assets/ prefix
+  std::optional<world::GltfModel> model;
+  for (const char* prefix : { "", "assets/" }) {
+    auto p = resolveFromExe((std::string(prefix) + modelPath).c_str());
+    model = world::loadGlb(p);
+    if (model) break;
+  }
+  if (!model || model->primitives.empty()) return;
+
+  // Compute model-space AABB from all primitives
+  glm::vec3 bmin( 1e9f), bmax(-1e9f);
+  for (const auto& prim : model->primitives) {
+    for (size_t i = 0; i + 2 < prim.positions.size(); i += 3) {
+      glm::vec3 v(prim.positions[i], prim.positions[i+1], prim.positions[i+2]);
+      bmin = glm::min(bmin, v);
+      bmax = glm::max(bmax, v);
+    }
+  }
+  if (bmin.x <= bmax.x) {
+    dbPreviewCenter_ = (bmin + bmax) * 0.5f;
+    dbPreviewRadius_ = glm::length(bmax - bmin) * 0.5f + 0.01f;
+  }
+
+  // Upload each primitive to the GPU
+  for (const auto& prim : model->primitives) {
+    if (prim.positions.empty() || prim.indices.empty()) continue;
+    DbPreviewPrim gp;
+    gp.indexCount = static_cast<GLsizei>(prim.indices.size());
+    if (prim.materialIndex >= 0 &&
+        prim.materialIndex < (int)model->materials.size())
+      gp.color = model->materials[prim.materialIndex].baseColor;
+
+    glCreateBuffers(1, &gp.vboPos);
+    glNamedBufferStorage(gp.vboPos,
+      prim.positions.size() * sizeof(float), prim.positions.data(), 0);
+
+    // Use flat normals if none supplied (some static props omit normals)
+    std::vector<float> norms = prim.normals;
+    if (norms.size() < prim.positions.size()) norms.assign(prim.positions.size(), 0.f);
+    glCreateBuffers(1, &gp.vboNorm);
+    glNamedBufferStorage(gp.vboNorm, norms.size() * sizeof(float), norms.data(), 0);
+
+    glCreateBuffers(1, &gp.ebo);
+    glNamedBufferStorage(gp.ebo,
+      prim.indices.size() * sizeof(uint32_t), prim.indices.data(), 0);
+
+    glCreateVertexArrays(1, &gp.vao);
+    // position — binding 0
+    glVertexArrayVertexBuffer(gp.vao, 0, gp.vboPos,  0, 3 * sizeof(float));
+    glEnableVertexArrayAttrib(gp.vao, 0);
+    glVertexArrayAttribFormat(gp.vao, 0, 3, GL_FLOAT, GL_FALSE, 0);
+    glVertexArrayAttribBinding(gp.vao, 0, 0);
+    // normal — binding 1
+    glVertexArrayVertexBuffer(gp.vao, 1, gp.vboNorm, 0, 3 * sizeof(float));
+    glEnableVertexArrayAttrib(gp.vao, 1);
+    glVertexArrayAttribFormat(gp.vao, 1, 3, GL_FLOAT, GL_FALSE, 0);
+    glVertexArrayAttribBinding(gp.vao, 1, 1);
+    // EBO
+    glVertexArrayElementBuffer(gp.vao, gp.ebo);
+    dbPreviewPrims_.push_back(gp);
+  }
+}
+
+void EditorApp::dbRenderPreview(float dt) {
+  if (!dbPreviewFbo_) return;
+
+  dbPreviewAngle_ += dt * 0.8f;
+  if (dbPreviewAngle_ > 6.283185f) dbPreviewAngle_ -= 6.283185f;
+
+  glBindFramebuffer(GL_FRAMEBUFFER, dbPreviewFbo_);
+  glViewport(0, 0, 256, 256);
+  glClearColor(0.10f, 0.12f, 0.15f, 1.0f);
+  glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+  if (!dbPreviewPrims_.empty() && dbPreviewShader_.isValid()) {
+    glEnable(GL_DEPTH_TEST);
+
+    // Orbit camera: fixed 20° elevation, auto-rotating azimuth
+    const float camDist = dbPreviewRadius_ * 2.8f;
+    const float elevRad = glm::radians(20.0f);
+    glm::vec3 eye = dbPreviewCenter_ + glm::vec3(
+      camDist * std::cos(dbPreviewAngle_) * std::cos(elevRad),
+      camDist * std::sin(elevRad),
+      camDist * std::sin(dbPreviewAngle_) * std::cos(elevRad));
+    glm::mat4 view     = glm::lookAt(eye, dbPreviewCenter_, glm::vec3(0, 1, 0));
+    glm::mat4 proj     = glm::perspective(glm::radians(40.0f), 1.0f,
+                                           camDist * 0.01f, camDist * 4.0f);
+    glm::mat4 viewProj = proj * view;
+
+    dbPreviewShader_.use();
+    dbPreviewShader_.setMat4("u_model",    glm::mat4(1.0f));
+    dbPreviewShader_.setMat4("u_viewProj", viewProj);
+
+    for (const auto& prim : dbPreviewPrims_) {
+      dbPreviewShader_.setVec4("u_color", prim.color);
+      glBindVertexArray(prim.vao);
+      glDrawElements(GL_TRIANGLES, prim.indexCount, GL_UNSIGNED_INT, nullptr);
+    }
+    glBindVertexArray(0);
+  }
+
+  // Restore FBO state for the rest of the frame
+  glBindFramebuffer(GL_FRAMEBUFFER, 0);
+  glViewport(0, 0, viewport3dW_, viewport3dH_);
+}
 
 // -----------------------------------------------------------------------
 bool EditorApp::init() {
@@ -314,6 +463,9 @@ void EditorApp::renderFrame(float dt) {
 
   // ---- 3D viewport FBO render ------------------------------------------
   render3DViewport(dt);
+
+  // ---- DB model preview FBO render (runs before ImGui so the texture is ready) --
+  if (showDbWindow_) dbRenderPreview(dt);
 
   // ---- ImGui frame -----------------------------------------------------
   ImGui_ImplOpenGL3_NewFrame();
@@ -1977,6 +2129,7 @@ void EditorApp::dbDrawNPCsTab() {
       dbSelNPC_   = i;
       dbEditNPC_  = dbNPCs_[i];
       dbEditIsNew_= false;
+      dbLoadPreviewModel(dbNPCs_[i].modelPath);
     }
   }
   ImGui::EndChild();
@@ -1987,16 +2140,24 @@ void EditorApp::dbDrawNPCsTab() {
   if (dbSelNPC_ >= 0 || dbEditIsNew_) {
     NpcDef& d = dbEditNPC_;
 
+    // 3D model preview
+    if (dbPreviewTex_) {
+      ImGui::Image((ImTextureID)(intptr_t)dbPreviewTex_, ImVec2(128, 128));
+      ImGui::SameLine();
+    }
+    ImGui::BeginGroup();
     ImGui::TextDisabled("ID");
     if (dbEditIsNew_) dbInputText("##npc_id", d.id);
     else              ImGui::TextUnformatted(d.id.c_str());
     ImGui::SetNextItemWidth(-1); dbInputText("Name##npc", d.name);
 
-    ImGui::Separator();
     ImGui::SetNextItemWidth(80); ImGui::InputInt("Size X##npc", &d.sizeX); ImGui::SameLine();
     ImGui::SetNextItemWidth(80); ImGui::InputInt("Size Y##npc", &d.sizeY);
     dbCombo("AI##npc", d.ai, {"static", "wander"});
-    dbInputText("Model Path##npc", d.modelPath);
+    ImGui::EndGroup();  // closes the group started beside the preview image
+
+    if (dbInputText("Model Path##npc", d.modelPath))
+      dbLoadPreviewModel(d.modelPath);
     dbInputText("Examine##npc",    d.examineText);
 
     ImGui::Separator();
@@ -2079,6 +2240,7 @@ void EditorApp::dbDrawObjectsTab() {
       dbSelObject_  = i;
       dbEditObject_ = dbObjects_[i];
       dbEditIsNew_  = false;
+      dbLoadPreviewModel(dbObjects_[i].modelPath);
     }
   }
   ImGui::EndChild();
@@ -2089,17 +2251,25 @@ void EditorApp::dbDrawObjectsTab() {
   if (dbSelObject_ >= 0 || dbEditIsNew_) {
     ObjectDef& d = dbEditObject_;
 
+    // 3D model preview
+    if (dbPreviewTex_) {
+      ImGui::Image((ImTextureID)(intptr_t)dbPreviewTex_, ImVec2(128, 128));
+      ImGui::SameLine();
+    }
+    ImGui::BeginGroup();
     ImGui::TextDisabled("ID");
     if (dbEditIsNew_) dbInputText("##obj_id", d.id);
     else              ImGui::TextUnformatted(d.id.c_str());
     ImGui::SetNextItemWidth(-1); dbInputText("Name##obj", d.name);
 
-    ImGui::Separator();
     dbCombo("Type##obj",      d.objectType, {"Decoration", "ResourceNode", "ProductionFacility"});
     dbCombo("Collision##obj", d.collision,  {"none", "full_blocking", "half_blocking"});
     ImGui::SetNextItemWidth(80); ImGui::InputInt("Size X##obj", &d.sizeX); ImGui::SameLine();
     ImGui::SetNextItemWidth(80); ImGui::InputInt("Size Y##obj", &d.sizeY);
-    dbInputText("Model Path##obj",  d.modelPath);
+    ImGui::EndGroup();  // closes the group beside the preview image
+
+    if (dbInputText("Model Path##obj", d.modelPath))
+      dbLoadPreviewModel(d.modelPath);
     dbInputText("Examine Text##obj", d.examineText);
 
     if (d.objectType == "ResourceNode") {
@@ -2232,6 +2402,9 @@ void EditorApp::dbDrawActionsTab() {
 // ---- Main window -----------------------------------------------------------
 
 void EditorApp::drawDatabaseWindow() {
+  // Lazy init of preview FBO (requires GL context to be current)
+  if (!dbPreviewFbo_) dbInitPreviewFbo();
+
   ImGui::SetNextWindowSize(ImVec2(900, 620), ImGuiCond_FirstUseEver);
   ImGui::SetNextWindowPos(ImVec2(80, 80), ImGuiCond_FirstUseEver);
   bool open = true;
