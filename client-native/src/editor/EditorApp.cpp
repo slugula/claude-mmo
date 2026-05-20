@@ -2219,9 +2219,8 @@ void EditorApp::dbDrawNPCsTab() {
     ImGui::EndGroup();  // closes the group started beside the preview image
 
     ImGui::TextUnformatted("Model Path");
-    ImGui::SetNextItemWidth(-80); dbInputText("##npc_model", d.modelPath);
-    ImGui::SameLine();
-    if (ImGui::Button("Browse##npc_model")) {
+    ImGui::SetNextItemWidth(-1); dbInputText("##npc_model", d.modelPath);
+    if (ImGui::Button("Browse Model...##npc_model", ImVec2(-1, 0))) {
       OPENFILENAMEW ofn = {};
       wchar_t buf[MAX_PATH] = {};
       ofn.lStructSize = sizeof(ofn);
@@ -2229,7 +2228,6 @@ void EditorApp::dbDrawNPCsTab() {
       ofn.lpstrFile   = buf; ofn.nMaxFile = MAX_PATH;
       ofn.Flags       = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
       if (GetOpenFileNameW(&ofn)) {
-        // Store relative path from exe dir if possible
         wchar_t exeDir[MAX_PATH] = {};
         GetModuleFileNameW(nullptr, exeDir, MAX_PATH);
         std::filesystem::path rel = std::filesystem::relative(buf, std::filesystem::path(exeDir).parent_path());
@@ -2350,9 +2348,8 @@ void EditorApp::dbDrawObjectsTab() {
     ImGui::EndGroup();  // closes the group beside the preview image
 
     ImGui::TextUnformatted("Model Path");
-    ImGui::SetNextItemWidth(-80); dbInputText("##obj_model", d.modelPath);
-    ImGui::SameLine();
-    if (ImGui::Button("Browse##obj_model")) {
+    ImGui::SetNextItemWidth(-1); dbInputText("##obj_model", d.modelPath);
+    if (ImGui::Button("Browse Model...##obj_model", ImVec2(-1, 0))) {
       OPENFILENAMEW ofn = {};
       wchar_t buf[MAX_PATH] = {};
       ofn.lStructSize = sizeof(ofn);
