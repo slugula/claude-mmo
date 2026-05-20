@@ -336,6 +336,12 @@ bool EditorApp::init() {
     }
   }
 
+  // Load recent files list.
+  loadRecentFiles();
+
+  // Set initial window title.
+  updateWindowTitle();
+
   lastFrameTime_ = std::chrono::steady_clock::now();
   return true;
 }
@@ -369,6 +375,7 @@ void EditorApp::renderFrame(float dt) {
     if (zNow && !sZ && undo_.canUndo()) {
       const auto& snap = undo_.undo();
       map_ = snap.map; npcSpawns_ = snap.npcs;
+      dirty_ = true; updateWindowTitle();
       rebuildTerrainGL(); rebuildObstacles();
       waterRenderer_.rebuild(map_, waterUniforms_.waterOffset);
       minimap_.rebuild(map_, npcSpawns_);
@@ -379,6 +386,7 @@ void EditorApp::renderFrame(float dt) {
     if (yNow && !sY && undo_.canRedo()) {
       const auto& snap = undo_.redo();
       map_ = snap.map; npcSpawns_ = snap.npcs;
+      dirty_ = true; updateWindowTitle();
       rebuildTerrainGL(); rebuildObstacles();
       waterRenderer_.rebuild(map_, waterUniforms_.waterOffset);
       minimap_.rebuild(map_, npcSpawns_);
@@ -548,6 +556,8 @@ void EditorApp::renderFrame(float dt) {
     if (ImGui::Button("Create", ImVec2(80, 0))) {
       initNewMap(newMapW_, newMapH_);
       currentFilePath_.clear();
+      dirty_ = false;
+      updateWindowTitle();
       ImGui::CloseCurrentPopup();
     }
     ImGui::SameLine();
@@ -733,6 +743,21 @@ void EditorApp::drawMenuBar() {
   if (ImGui::BeginMenu("File")) {
     if (ImGui::MenuItem("New Map...", "Ctrl+N")) showNewMapDialog_ = true;
     if (ImGui::MenuItem("Open...",   "Ctrl+O")) openFileDialog();
+    // Open Recent submenu
+    const bool hasRecent = !recentFiles_.empty();
+    if (ImGui::BeginMenu("Open Recent", hasRecent)) {
+      for (const auto& rf : recentFiles_) {
+        const std::string label = std::filesystem::path(rf).filename().string();
+        if (ImGui::MenuItem(label.c_str())) openRecentFile(rf);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", rf.c_str());
+      }
+      ImGui::Separator();
+      if (ImGui::MenuItem("Clear Recent")) {
+        recentFiles_.clear();
+        saveRecentFiles();
+      }
+      ImGui::EndMenu();
+    }
     ImGui::Separator();
     if (ImGui::MenuItem("Save",      "Ctrl+S")) saveCurrentFile();
     if (ImGui::MenuItem("Save As..."))          saveAsDialog();
@@ -744,12 +769,14 @@ void EditorApp::drawMenuBar() {
   if (ImGui::BeginMenu("Edit")) {
     if (ImGui::MenuItem("Undo", "Ctrl+Z", false, undo_.canUndo())) {
       const auto& s = undo_.undo(); map_ = s.map; npcSpawns_ = s.npcs;
+      dirty_ = true; updateWindowTitle();
       rebuildTerrainGL(); rebuildObstacles();
       waterRenderer_.rebuild(map_, waterUniforms_.waterOffset);
       minimap_.rebuild(map_, npcSpawns_);
     }
     if (ImGui::MenuItem("Redo", "Ctrl+Y", false, undo_.canRedo())) {
       const auto& s = undo_.redo(); map_ = s.map; npcSpawns_ = s.npcs;
+      dirty_ = true; updateWindowTitle();
       rebuildTerrainGL(); rebuildObstacles();
       waterRenderer_.rebuild(map_, waterUniforms_.waterOffset);
       minimap_.rebuild(map_, npcSpawns_);
@@ -806,9 +833,8 @@ void EditorApp::drawToolbar() {
   toolBtn("Objects",   EditorTool::PlaceObstacle);
   toolBtn("NPC",       EditorTool::PlaceNPC);
   toolBtn("Spawn",     EditorTool::PlaceSpawn);
-  toolBtn("Blocking",  EditorTool::PaintBlocking);
+  toolBtn("Collision", EditorTool::PaintBlocking);
   toolBtn("Water",     EditorTool::PaintWater);
-  toolBtn("Erase",     EditorTool::Erase);
 
   ImGui::Separator();
   ImGui::TextDisabled("-- Brush --");
@@ -976,11 +1002,6 @@ void EditorApp::drawProperties() {
     }
   }
 
-  if (currentFilePath_.empty())
-    ImGui::TextDisabled("(unsaved)");
-  else
-    ImGui::TextWrapped("%s", std::filesystem::path(currentFilePath_).filename().string().c_str());
-
   ImGui::End();
 }
 
@@ -1140,9 +1161,11 @@ void EditorApp::draw3DViewportWindow() {
       // Terrain (lower) and Blocking (unblock).
       const bool lmbDown = ImGui::IsMouseDown(ImGuiMouseButton_Left);
       const bool rmbDown = ImGui::IsMouseDown(ImGuiMouseButton_Right);
-      const bool isTerrain  = (activeTool_ == EditorTool::SculptTerrain);
-      const bool isBlocking = (activeTool_ == EditorTool::PaintBlocking);
-      const bool rmbActive  = rmbDown && pick.hit && (isTerrain || isBlocking);
+      // Right-click is a valid secondary action for every tool except PaintTerrain
+      // (which has no secondary action) and PlaceSpawn (single-click only).
+      const bool rmbActive = rmbDown && pick.hit &&
+                             activeTool_ != EditorTool::PaintTerrain &&
+                             activeTool_ != EditorTool::PlaceSpawn;
 
       if (pick.hit && (lmbDown || rmbActive)) {
         if (!mouseHeld3D_) {
@@ -1326,10 +1349,10 @@ void EditorApp::drawGridView() {
 
       const bool lmbGrid = ImGui::IsMouseDown(ImGuiMouseButton_Left);
       const bool rmbGrid = ImGui::IsMouseDown(ImGuiMouseButton_Right);
-      const bool isTerrain2D  = (activeTool_ == EditorTool::SculptTerrain);
-      const bool isBlocking2D = (activeTool_ == EditorTool::PaintBlocking);
-      // For Terrain and Blocking tools, right-click is the secondary action
-      const bool rmbSecondary = rmbGrid && (isTerrain2D || isBlocking2D);
+      // Right-click routes through applyBrush for all tools that handle it.
+      const bool rmbSecondary = rmbGrid &&
+                                activeTool_ != EditorTool::PaintTerrain &&
+                                activeTool_ != EditorTool::PlaceSpawn;
 
       if (lmbGrid || rmbSecondary) {
         if (!mouseHeldGrid_) {
@@ -1349,10 +1372,16 @@ void EditorApp::drawGridView() {
         if (ty < static_cast<int>(map_.tiles.size()) &&
             tx < static_cast<int>(map_.tiles[ty].size())) {
           setObstacleAtTile(tx, ty, shared::ObstacleType::none);
+          map_.tiles[ty][tx].walkable = true;
           npcSpawns_.erase(std::remove_if(npcSpawns_.begin(), npcSpawns_.end(),
             [tx, ty](const shared::NpcSpawn& n){ return n.tileX == tx && n.tileY == ty; }),
             npcSpawns_.end());
+          auto& wt = map_.waterTiles;
+          wt.erase(std::remove_if(wt.begin(), wt.end(),
+            [tx, ty](const shared::WaterTile& w){ return w.tileX == tx && w.tileY == ty; }),
+            wt.end());
           rebuildObstacles();
+          waterRenderer_.rebuild(map_, waterUniforms_.waterOffset);
           minimap_.rebuild(map_, npcSpawns_);
         }
         hadStroke_ = true;
@@ -1458,17 +1487,28 @@ void EditorApp::applyToolAt(int tx, int ty, float dt, bool rightClick,
       break;
     }
     case EditorTool::PlaceObstacle: {
-      setObstacleAtTile(tx, ty, obstacleSubtype_);
+      if (rightClick) {
+        setObstacleAtTile(tx, ty, shared::ObstacleType::none);
+        tile.walkable = true;
+      } else {
+        setObstacleAtTile(tx, ty, obstacleSubtype_);
+      }
       dirtyObstacles = true;
       dirtyMinimap   = true;
       break;
     }
     case EditorTool::PlaceNPC: {
-      npcSpawns_.erase(std::remove_if(npcSpawns_.begin(), npcSpawns_.end(),
-        [tx, ty](const shared::NpcSpawn& n){ return n.tileX == tx && n.tileY == ty; }),
-        npcSpawns_.end());
-      shared::NpcSpawn ns; ns.kind = npcSubtype_; ns.tileX = tx; ns.tileY = ty;
-      npcSpawns_.push_back(ns);
+      if (rightClick) {
+        npcSpawns_.erase(std::remove_if(npcSpawns_.begin(), npcSpawns_.end(),
+          [tx, ty](const shared::NpcSpawn& n){ return n.tileX == tx && n.tileY == ty; }),
+          npcSpawns_.end());
+      } else {
+        npcSpawns_.erase(std::remove_if(npcSpawns_.begin(), npcSpawns_.end(),
+          [tx, ty](const shared::NpcSpawn& n){ return n.tileX == tx && n.tileY == ty; }),
+          npcSpawns_.end());
+        shared::NpcSpawn ns; ns.kind = npcSubtype_; ns.tileX = tx; ns.tileY = ty;
+        npcSpawns_.push_back(ns);
+      }
       dirtyMinimap = true;
       break;
     }
@@ -1483,18 +1523,26 @@ void EditorApp::applyToolAt(int tx, int ty, float dt, bool rightClick,
       break;
     }
     case EditorTool::PaintWater: {
-      // Avoid duplicate entries
-      const bool already = std::any_of(map_.waterTiles.begin(), map_.waterTiles.end(),
-          [tx, ty](const shared::WaterTile& w){ return w.tileX == tx && w.tileY == ty; });
-      if (!already) {
-        map_.waterTiles.push_back({ tx, ty });
-        // Clear any obstacle first (setObstacleAtTile(none) resets walkable to
-        // true internally, so we must force it back to false afterwards).
-        setObstacleAtTile(tx, ty, shared::ObstacleType::none);
-        tile.walkable = false;
-        bakeWaterBank(tx, ty);
-        dirtyTerrain = true;
-        dirtyObstacles = true;
+      if (rightClick) {
+        auto& wt = map_.waterTiles;
+        wt.erase(std::remove_if(wt.begin(), wt.end(),
+            [tx, ty](const shared::WaterTile& w){ return w.tileX == tx && w.tileY == ty; }),
+            wt.end());
+        tile.walkable = true;
+      } else {
+        // Avoid duplicate entries
+        const bool already = std::any_of(map_.waterTiles.begin(), map_.waterTiles.end(),
+            [tx, ty](const shared::WaterTile& w){ return w.tileX == tx && w.tileY == ty; });
+        if (!already) {
+          map_.waterTiles.push_back({ tx, ty });
+          // Clear any obstacle first (setObstacleAtTile(none) resets walkable to
+          // true internally, so we must force it back to false afterwards).
+          setObstacleAtTile(tx, ty, shared::ObstacleType::none);
+          tile.walkable = false;
+          bakeWaterBank(tx, ty);
+          dirtyTerrain = true;
+          dirtyObstacles = true;
+        }
       }
       dirtyWater   = true;
       dirtyMinimap = true;
@@ -1506,7 +1554,6 @@ void EditorApp::applyToolAt(int tx, int ty, float dt, bool rightClick,
       npcSpawns_.erase(std::remove_if(npcSpawns_.begin(), npcSpawns_.end(),
         [tx, ty](const shared::NpcSpawn& n){ return n.tileX == tx && n.tileY == ty; }),
         npcSpawns_.end());
-      // Also erase water tile
       {
         auto& wt = map_.waterTiles;
         wt.erase(std::remove_if(wt.begin(), wt.end(),
@@ -1843,9 +1890,54 @@ void EditorApp::resizeMap(int newW, int newH) {
 }
 
 // -----------------------------------------------------------------------
-void EditorApp::pushUndo() { undo_.push(map_, npcSpawns_); }
+void EditorApp::pushUndo() {
+  undo_.push(map_, npcSpawns_);
+  dirty_ = true;
+  updateWindowTitle();
+}
 
 void EditorApp::newMapDialog()    { showNewMapDialog_ = true; }
+
+void EditorApp::updateWindowTitle() {
+  const std::string filename = currentFilePath_.empty()
+      ? "untitled"
+      : std::filesystem::path(currentFilePath_).filename().string();
+  const std::string title = (dirty_ ? "* " : "") + filename + " — Snook Editor";
+  glfwSetWindowTitle(window_.handle(), title.c_str());
+}
+
+void EditorApp::addRecentFile(const std::string& path) {
+  // Move to front, no duplicates
+  recentFiles_.erase(std::remove(recentFiles_.begin(), recentFiles_.end(), path),
+                     recentFiles_.end());
+  recentFiles_.insert(recentFiles_.begin(), path);
+  if (recentFiles_.size() > 10) recentFiles_.resize(10);
+  saveRecentFiles();
+}
+
+void EditorApp::loadRecentFiles() {
+  const auto cfgPath = resolveFromExe("recent_maps.txt");
+  FILE* f = std::fopen(cfgPath.string().c_str(), "r");
+  if (!f) return;
+  char buf[MAX_PATH];
+  while (std::fgets(buf, sizeof(buf), f)) {
+    std::string line(buf);
+    // Strip trailing newline
+    while (!line.empty() && (line.back() == '\n' || line.back() == '\r'))
+      line.pop_back();
+    if (!line.empty()) recentFiles_.push_back(line);
+  }
+  std::fclose(f);
+}
+
+void EditorApp::saveRecentFiles() {
+  const auto cfgPath = resolveFromExe("recent_maps.txt");
+  FILE* f = std::fopen(cfgPath.string().c_str(), "w");
+  if (!f) return;
+  for (const auto& p : recentFiles_)
+    std::fprintf(f, "%s\n", p.c_str());
+  std::fclose(f);
+}
 
 void EditorApp::openFileDialog() {
   const std::wstring path = winOpenDialog();
@@ -1856,6 +1948,26 @@ void EditorApp::openFileDialog() {
   map_ = std::move(loaded);
   npcSpawns_ = map_.npcSpawns;
   currentFilePath_ = std::filesystem::path(path).string();
+  dirty_ = false;
+  addRecentFile(currentFilePath_);
+  updateWindowTitle();
+  rebuildTerrainGL(); rebuildObstacles();
+  waterRenderer_.rebuild(map_, waterUniforms_.waterOffset);
+  minimap_.init(map_.width, map_.height); minimap_.rebuild(map_, npcSpawns_);
+  camera_.snapTo({ static_cast<float>(map_.width) * 0.5f, 0.0f,
+                   static_cast<float>(map_.height) * 0.5f });
+}
+
+void EditorApp::openRecentFile(const std::string& path) {
+  shared::WorldMapFile loaded;
+  if (!shared::loadWorldMap(std::filesystem::path(path), loaded)) return;
+  pushUndo();
+  map_ = std::move(loaded);
+  npcSpawns_ = map_.npcSpawns;
+  currentFilePath_ = path;
+  dirty_ = false;
+  addRecentFile(currentFilePath_);
+  updateWindowTitle();
   rebuildTerrainGL(); rebuildObstacles();
   waterRenderer_.rebuild(map_, waterUniforms_.waterOffset);
   minimap_.init(map_.width, map_.height); minimap_.rebuild(map_, npcSpawns_);
@@ -1867,6 +1979,9 @@ void EditorApp::saveCurrentFile() {
   if (currentFilePath_.empty()) { saveAsDialog(); return; }
   map_.npcSpawns = npcSpawns_;
   shared::saveWorldMap(std::filesystem::path(currentFilePath_), map_);
+  dirty_ = false;
+  addRecentFile(currentFilePath_);
+  updateWindowTitle();
 }
 
 void EditorApp::saveAsDialog() {
@@ -1876,25 +1991,43 @@ void EditorApp::saveAsDialog() {
   saveCurrentFile();
 }
 
+// Returns the canonical maps directory (public/maps/ relative to the repo root,
+// which is 3 levels above the exe: Release/ → build/ → client-native/ → root/).
+// Falls back to empty string if the directory doesn't exist.
+static std::wstring defaultMapsDir() {
+  wchar_t exePath[MAX_PATH] = {};
+  GetModuleFileNameW(nullptr, exePath, MAX_PATH);
+  std::filesystem::path dir = std::filesystem::path(exePath).parent_path()
+                              / L"../../../public/maps";
+  std::error_code ec;
+  dir = std::filesystem::canonical(dir, ec);
+  if (ec || !std::filesystem::is_directory(dir, ec)) return {};
+  return dir.wstring();
+}
+
 std::wstring EditorApp::winOpenDialog() {
   wchar_t buf[MAX_PATH] = {};
+  const std::wstring mapsDir = defaultMapsDir();
   OPENFILENAMEW ofn = {};
-  ofn.lStructSize = sizeof(ofn);
-  ofn.lpstrFilter = L"JSON Map (*.json)\0*.json\0All Files\0*.*\0";
-  ofn.lpstrFile   = buf; ofn.nMaxFile = MAX_PATH;
-  ofn.Flags       = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
-  ofn.lpstrDefExt = L"json";
+  ofn.lStructSize    = sizeof(ofn);
+  ofn.lpstrFilter    = L"JSON Map (*.json)\0*.json\0All Files\0*.*\0";
+  ofn.lpstrFile      = buf; ofn.nMaxFile = MAX_PATH;
+  ofn.lpstrInitialDir = mapsDir.empty() ? nullptr : mapsDir.c_str();
+  ofn.Flags          = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
+  ofn.lpstrDefExt    = L"json";
   return GetOpenFileNameW(&ofn) ? buf : std::wstring{};
 }
 
 std::wstring EditorApp::winSaveDialog() {
   wchar_t buf[MAX_PATH] = {};
+  const std::wstring mapsDir = defaultMapsDir();
   OPENFILENAMEW ofn = {};
-  ofn.lStructSize = sizeof(ofn);
-  ofn.lpstrFilter = L"JSON Map (*.json)\0*.json\0All Files\0*.*\0";
-  ofn.lpstrFile   = buf; ofn.nMaxFile = MAX_PATH;
-  ofn.Flags       = OFN_OVERWRITEPROMPT | OFN_NOCHANGEDIR;
-  ofn.lpstrDefExt = L"json";
+  ofn.lStructSize    = sizeof(ofn);
+  ofn.lpstrFilter    = L"JSON Map (*.json)\0*.json\0All Files\0*.*\0";
+  ofn.lpstrFile      = buf; ofn.nMaxFile = MAX_PATH;
+  ofn.lpstrInitialDir = mapsDir.empty() ? nullptr : mapsDir.c_str();
+  ofn.Flags          = OFN_OVERWRITEPROMPT | OFN_NOCHANGEDIR;
+  ofn.lpstrDefExt    = L"json";
   return GetSaveFileNameW(&ofn) ? buf : std::wstring{};
 }
 

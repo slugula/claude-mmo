@@ -346,8 +346,6 @@ void ObstacleSystem::rebuildFromMap(const shared::WorldMapFile& map) {
   rockCount_  = rocks.size();
   fenceCount_ = fences.size();
 
-  std::fprintf(stdout, "[ObstacleSystem] %zu trees, %zu rocks, %zu fences\n",
-               treeCount_, rockCount_, fenceCount_);
 }
 
 // ---- Data-driven definitions cache -----------------------------------------

@@ -48,8 +48,11 @@ const char* severityStr(GLenum severity) {
 void GLAPIENTRY debugCallback(
     GLenum source, GLenum type, GLuint id, GLenum severity,
     GLsizei /*length*/, const GLchar* message, const void* /*userParam*/) {
-  // Filter out the spammy "buffer info" notifications
+  // Suppress pure informational noise.
   if (severity == GL_DEBUG_SEVERITY_NOTIFICATION) return;
+  // 131169 — NVIDIA "driver allocated multisample storage for renderbuffer".
+  // Fires on every MSAA FBO resize; harmless and not actionable.
+  if (id == 131169) return;
   std::fprintf(stderr, "[GL %s/%s/%s id=%u] %s\n",
                sourceStr(source), typeStr(type), severityStr(severity), id, message);
 }

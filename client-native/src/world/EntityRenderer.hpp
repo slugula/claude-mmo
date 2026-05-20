@@ -94,6 +94,12 @@ public:
   std::size_t npcCount()  const { return npcCount_;  }
   std::size_t itemCount() const { return itemCount_; }
 
+  // Read-only access to the CPU-side NPC instance data (position + smoothed
+  // rotY) and their kind strings, parallel arrays. Used by App to look up the
+  // exact interpolated transform for the outline pass.
+  const std::vector<Instance>&    npcInstsCpu()  const { return npcInstCpu_; }
+  const std::vector<std::string>& npcKindsCpu()  const { return npcKinds_;  }
+
 private:
   // Maximum instances uploadable per kit (matches the cap in the .cpp).
   static constexpr std::size_t kInstanceCap = 1024;

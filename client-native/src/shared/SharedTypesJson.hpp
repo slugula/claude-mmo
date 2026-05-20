@@ -2,9 +2,9 @@
 
 // Glaze JSON adapters for the types in SharedTypes.hpp.
 //
-// All structs use plain aggregate reflection (glaze handles them automatically).
-// Only the two string-backed enums need explicit metadata so that JSON values
-// like "grass" / "tree" round-trip correctly.
+// String-backed enums (TileType, ObstacleType) need explicit enumerate() meta.
+// NpcSpawn and WaterTile also have explicit object() meta to guarantee named-key
+// JSON objects on all compilers. TileData and OnDisk use auto-reflection.
 
 #include "shared/SharedTypes.hpp"
 
@@ -34,6 +34,27 @@ struct glz::meta<shared::ObstacleType> {
     "fishing_spot", fishing_spot,
     "fence",        fence,
     "none",         none);
+};
+
+// Explicit metas for NpcSpawn and WaterTile ensure glaze always deserialises
+// them as JSON objects with named keys, matching the manual-fprintf save format.
+// Without this, glaze's auto-reflection on MSVC may silently produce a
+// positional-array reader that can't parse {"kind":"chicken","tileX":5,...}.
+template <>
+struct glz::meta<shared::NpcSpawn> {
+  using T = shared::NpcSpawn;
+  static constexpr auto value = glz::object(
+    "kind",  &T::kind,
+    "tileX", &T::tileX,
+    "tileY", &T::tileY);
+};
+
+template <>
+struct glz::meta<shared::WaterTile> {
+  using T = shared::WaterTile;
+  static constexpr auto value = glz::object(
+    "tileX", &T::tileX,
+    "tileY", &T::tileY);
 };
 
 // ---- Map serialisation / deserialisation ---------------------------------

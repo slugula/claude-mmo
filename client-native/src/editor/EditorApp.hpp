@@ -85,10 +85,15 @@ private:
   // ---- File I/O
   void newMapDialog();
   void openFileDialog();
+  void openRecentFile(const std::string& path);
   void saveCurrentFile();
   void saveAsDialog();
   std::wstring winOpenDialog();   // returns path or empty
   std::wstring winSaveDialog();   // returns path or empty
+  void updateWindowTitle();       // refresh GLFW title (filename + dirty marker)
+  void addRecentFile(const std::string& path);
+  void loadRecentFiles();
+  void saveRecentFiles();
 
   // ---- Undo helpers
   void pushUndo();  // snapshot current map + npcs
@@ -157,6 +162,8 @@ private:
   shared::WorldMapFile          map_;
   std::vector<shared::NpcSpawn> npcSpawns_;
   std::string                   currentFilePath_;  // empty = unsaved
+  bool                          dirty_          = false;
+  std::vector<std::string>      recentFiles_;   // ordered most-recently-used first
 
   // ---- Editor state
   EditorTool    activeTool_     = EditorTool::PaintTerrain;

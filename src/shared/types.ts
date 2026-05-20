@@ -90,9 +90,9 @@ export interface TileData {
 // ---------- Map file format (editor output) ----------
 
 export interface NPCSpawn {
-  kind: string;
-  x: number;
-  y: number;
+  kind:  string;
+  tileX: number;
+  tileY: number;
 }
 
 export interface PermanentItemSpawn {

@@ -135,6 +135,9 @@ private:
   // frame so 90-degree turns don't pop.
   float                                    smoothedPlayerYaw_ = 0.0f;
   bool                                     smoothedYawValid_  = false;
+  // Per-NPC smoothed yaw keyed by NPC id. Same shortest-arc lerp as the
+  // player; entries are added on first sight and pruned when the NPC leaves.
+  std::unordered_map<std::string, float>   npcSmoothedYaw_;
   ui::UiHoverState                         uiHover_;
   ui::ChatLog                              chatLog_;
   ui::WorldOverlays                        overlays_;

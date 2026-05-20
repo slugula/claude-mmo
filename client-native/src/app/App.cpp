@@ -819,6 +819,14 @@ void App::renderFrame() {
     std::vector<std::string> kinds;
     insts.reserve(currNpcs_.size());
     kinds.reserve(currNpcs_.size());
+    constexpr float kTwoPi = 6.28318531f;
+
+    // Prune yaw entries for NPCs that are no longer in the current snapshot.
+    for (auto it = npcSmoothedYaw_.begin(); it != npcSmoothedYaw_.end(); ) {
+      if (currNpcs_.find(it->first) == currNpcs_.end()) it = npcSmoothedYaw_.erase(it);
+      else ++it;
+    }
+
     for (const auto& [id, curr] : currNpcs_) {
       if (curr.dying) continue;
       float fx = static_cast<float>(curr.tileX);
@@ -832,7 +840,22 @@ void App::renderFrame() {
       const float wy = tileWorldY(map_,
                                   static_cast<int>(std::round(fx)),
                                   static_cast<int>(std::round(fy)));
-      insts.push_back({ fx, wy, fy, targetYaw });
+
+      // Smooth yaw — shortest-arc lerp, same half-life as the local player.
+      auto yawIt = npcSmoothedYaw_.find(id);
+      if (yawIt == npcSmoothedYaw_.end()) {
+        npcSmoothedYaw_[id] = targetYaw;  // first sight: snap
+        yawIt = npcSmoothedYaw_.find(id);
+      } else {
+        float& smoothYaw = yawIt->second;
+        float delta = std::fmod(targetYaw - smoothYaw + kTwoPi + 3.14159265f,
+                                kTwoPi) - 3.14159265f;
+        const float k = 1.0f - std::exp(-dt / 0.08f);
+        smoothYaw += delta * k;
+      }
+      const float smoothYaw = yawIt->second;
+
+      insts.push_back({ fx, wy, fy, smoothYaw });  // NOLINT: shadowed const below is intentional
       kinds.push_back(curr.kind);
     }
     entities_.setNpcInstances(insts, kinds);
@@ -999,13 +1022,18 @@ void App::renderFrame() {
       }
     }
     if (!hasObstacle) {
-      for (const auto& n : npcs_) {
-        if (n.tileX == htx && n.tileY == hty && !n.dying) {
-          hasNpc  = true;
-          npcInst = { static_cast<float>(n.tileX),
-                      tileWorldY(map_, n.tileX, n.tileY),
-                      static_cast<float>(n.tileY), 0.0f };
-          hoveredNpcKind = n.kind;
+      // Match against the interpolated CPU-side instance list so the outline
+      // uses the exact same position and smoothed yaw as the rendered mesh.
+      const auto& cpuInsts = entities_.npcInstsCpu();
+      const auto& cpuKinds = entities_.npcKindsCpu();
+      for (std::size_t i = 0; i < cpuInsts.size(); ++i) {
+        const auto& inst = cpuInsts[i];
+        const int itx = static_cast<int>(std::round(inst.x));
+        const int ity = static_cast<int>(std::round(inst.z));
+        if (itx == htx && ity == hty) {
+          hasNpc         = true;
+          npcInst        = inst;  // includes live rotY
+          hoveredNpcKind = (i < cpuKinds.size()) ? cpuKinds[i] : "";
           break;
         }
       }

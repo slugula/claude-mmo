@@ -36,15 +36,6 @@ interface WorldMapJSON {
   pixels?:      number[];
 }
 
-// Default NPC spawns used when map file has no npcSpawns (old format or blank map)
-const DEFAULT_NPC_SPAWNS: NPCSpawn[] = [
-  { kind: 'chicken',    x: 30, y: 38 },
-  { kind: 'chicken',    x: 32, y: 40 },
-  { kind: 'chicken',    x: 29, y: 41 },
-  { kind: 'chicken',    x: 33, y: 39 },
-  { kind: 'chicken',    x: 31, y: 42 },
-  { kind: 'shopkeeper', x: 33, y: 30 },
-];
 
 const DEFAULT_PERMANENT_ITEMS: PermanentItemSpawn[] = [];
 
@@ -68,7 +59,7 @@ function loadWorldMap(): WorldMapJSON {
         tiles[y][x] = { x, y, walkable: true, type: 'grass', obstacle: 'none', blocksRanged: false, groundColor: '#7ec850', height: 0 };
       }
     }
-    return { version: 2, width: W, height: H, tiles, npcSpawns: DEFAULT_NPC_SPAWNS, permanentItems: DEFAULT_PERMANENT_ITEMS };
+    return { version: 2, width: W, height: H, tiles, npcSpawns: [], permanentItems: DEFAULT_PERMANENT_ITEMS };
   }
 }
 
@@ -101,13 +92,11 @@ export class GameLoop {
       if (row && row[wt.tileX]) row[wt.tileX].walkable = false;
     }
 
-    // NPC spawns: use map file's list (v2) or legacy defaults
-    const npcSpawnDefs = (mapData.npcSpawns && mapData.npcSpawns.length > 0)
-      ? mapData.npcSpawns
-      : DEFAULT_NPC_SPAWNS;
+    // NPC spawns: fully data-driven from map file
+    const npcSpawnDefs = mapData.npcSpawns ?? [];
 
     const npcs = npcSpawnDefs.map((def, i) => {
-      const pos = findWalkableTileNear(world, def.x, def.y);
+      const pos = findWalkableTileNear(world, def.tileX, def.tileY);
       return spawnNPC(`${def.kind}-${i + 1}`, def.kind, pos.x, pos.y);
     });
 
