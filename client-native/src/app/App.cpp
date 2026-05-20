@@ -3,6 +3,7 @@
 #include "editor/EntityClient.hpp"
 #include "editor/EntityDefs.hpp"
 #include "render/GlDebug.hpp"
+#include "ui/NameRegistry.hpp"
 #include "shared/SharedTypesJson.hpp"
 #include "world/GltfLoader.hpp"
 #include "world/MapGenerator.hpp"
@@ -361,19 +362,21 @@ bool App::init() {
   }
   entities_.initGL();
 
-  // Fetch NPC definitions from the DB API and load custom models.
-  // This is a one-time synchronous call at startup (server is localhost).
+  // Fetch entity definitions from the DB API.
+  // Populates display name registries and loads custom NPC models.
+  // One-time synchronous call at startup (server is always localhost).
   {
     editor::EntityClient dbClient;
+    // NPC definitions — names, attackable flag, custom models.
     try {
       const auto npcDefs = dbClient.getNPCs();
       for (const auto& def : npcDefs) {
+        if (!def.name.empty())  ui::g_npcNames[def.id]     = def.name;
+        ui::g_npcAttackable[def.id] = def.isAttackable;
         if (def.modelPath.empty()) continue;
         auto model = world::loadGlb(resolveFromExe(def.modelPath.c_str()));
-        if (!model) {
-          // Try with assets/ prefix.
+        if (!model)
           model = world::loadGlb(resolveFromExe(("assets/" + def.modelPath).c_str()));
-        }
         if (model && !model->primitives.empty()) {
           entities_.loadNpcKindModel(def.id, model->primitives, model->materials);
           std::fprintf(stdout, "[App] Loaded custom model for NPC '%s' (%zu prims)\n",
@@ -382,6 +385,14 @@ bool App::init() {
       }
     } catch (const std::exception& e) {
       std::fprintf(stderr, "[App] DB NPC fetch failed (server offline?): %s\n", e.what());
+    }
+    // Item definitions — names only.
+    try {
+      const auto itemDefs = dbClient.getItems();
+      for (const auto& def : itemDefs)
+        if (!def.name.empty()) ui::g_itemNames[def.id] = def.name;
+    } catch (const std::exception& e) {
+      std::fprintf(stderr, "[App] DB item fetch failed (server offline?): %s\n", e.what());
     }
   }
 
@@ -1200,21 +1211,24 @@ void App::renderFrame() {
         else if (obs == shared::ObstacleType::chest) { verb = "Bank"; subject = "Chest"; }
       }
       // Check NPCs
+      static std::string hoveredNpcNameStr;  // stable storage for subject ptr
       if (subject[0] == '\0') {
         for (const auto& n : npcs_) {
           if (n.tileX != tx || n.tileY != ty || n.dying) continue;
-          if (n.kind == "chicken") { verb = "Attack"; }
-          else { verb = "Talk-to"; }
-          subject = n.kind.c_str();
+          verb = ui::npcIsAttackable(n.kind) ? "Attack" : "Talk-to";
+          hoveredNpcNameStr = ui::npcName(n.kind);
+          subject = hoveredNpcNameStr.c_str();
           break;
         }
       }
       // Check dropped items
+      static std::string hoveredItemNameStr;  // stable storage for subject ptr
       if (subject[0] == '\0') {
         for (const auto& it : droppedItems_) {
           if (it.tileX != tx || it.tileY != ty) continue;
-          verb    = "Take";
-          subject = it.itemId.c_str();
+          verb = "Take";
+          hoveredItemNameStr = ui::itemName(it.itemId);
+          subject = hoveredItemNameStr.c_str();
           break;
         }
       }
@@ -1267,11 +1281,14 @@ void App::renderFrame() {
         !ImGui::IsWindowHovered(ImGuiHoveredFlags_AnyWindow)) {
       const int tx = hoveredTile_.tileX;
       const int ty = hoveredTile_.tileY;
+      static std::string tooltipNameStr;  // stable storage for tooltipName ptr
       const char* tooltipName = nullptr;
       // NPC?
       for (const auto& n : npcs_) {
         if (n.tileX == tx && n.tileY == ty && !n.dying) {
-          tooltipName = n.kind.c_str(); break;
+          tooltipNameStr = ui::npcName(n.kind);
+          tooltipName = tooltipNameStr.c_str();
+          break;
         }
       }
       // Obstacle (tree/rock/chest)?
@@ -1287,7 +1304,9 @@ void App::renderFrame() {
       if (!tooltipName) {
         for (const auto& di : droppedItems_) {
           if (di.tileX == tx && di.tileY == ty) {
-            tooltipName = di.itemId.c_str(); break;
+            tooltipNameStr = ui::itemName(di.itemId);
+            tooltipName = tooltipNameStr.c_str();
+            break;
           }
         }
       }
@@ -1571,40 +1590,27 @@ void App::drawWorldContextMenu() {
   for (const auto& n : npcs_) {
     if (n.tileX != ctxMenuTileX_ || n.tileY != ctxMenuTileY_) continue;
     if (n.dying) continue;
-    const char* displayName = n.kind.empty() ? "NPC" : n.kind.c_str();
-    char buf[96];
-    if (n.kind == "chicken") {
-      std::snprintf(buf, sizeof(buf), "Attack  %s", displayName);
+    const std::string displayName = ui::npcName(n.kind);
+    char buf[128];
+    if (ui::npcIsAttackable(n.kind)) {
+      std::snprintf(buf, sizeof(buf), "Attack  %s", displayName.c_str());
       if (ImGui::Selectable(buf)) network_.sendAttackNpc(n.id);
     } else {
-      std::snprintf(buf, sizeof(buf), "Talk-to  %s", displayName);
+      std::snprintf(buf, sizeof(buf), "Talk-to  %s", displayName.c_str());
       if (ImGui::Selectable(buf)) network_.sendTalkTo(n.id);
     }
-    // Examine — client-side, no server round-trip
     const char* examineText = (n.kind == "chicken")    ? "It's a chicken."
                             : (n.kind == "shopkeeper") ? "This is a friendly shopkeeper."
                             : "An NPC.";
-    std::snprintf(buf, sizeof(buf), "Examine  %s", displayName);
+    std::snprintf(buf, sizeof(buf), "Examine  %s", displayName.c_str());
     if (ImGui::Selectable(buf)) chatLog_.appendSystem(examineText);
   }
 
   // ---- Dropped items at this tile ----------------------------------------
   for (const auto& it : droppedItems_) {
     if (it.tileX != ctxMenuTileX_ || it.tileY != ctxMenuTileY_) continue;
-    char buf[96];
-    // Pretty-print the item name (bronze_sword → Bronze sword)
-    const std::string prettyName = [&]() -> std::string {
-      if (it.itemId.empty()) return "item";
-      std::string out; out.reserve(it.itemId.size());
-      bool cap = true;
-      for (char ch : it.itemId) {
-        if (ch == '_' || ch == '-') { out.push_back(' '); cap = false; }
-        else if (cap) { out.push_back(static_cast<char>(std::toupper(static_cast<unsigned char>(ch)))); cap = false; }
-        else out.push_back(ch);
-      }
-      return out;
-    }();
-    std::snprintf(buf, sizeof(buf), "Take  %s", prettyName.c_str());
+    char buf[128];
+    std::snprintf(buf, sizeof(buf), "Take  %s", ui::itemName(it.itemId).c_str());
     if (ImGui::Selectable(buf)) network_.sendTakeItem(it.id);
   }
 

@@ -1,4 +1,5 @@
 #include "ui/Panels.hpp"
+#include "ui/NameRegistry.hpp"
 
 #include "net/NetworkClient.hpp"
 
@@ -85,18 +86,10 @@ constexpr std::array<EquipCell, 15> kEquipGrid = {{
   {4,0,"hands",    "Hands"}, {4,1,"feet",     "Feet" }, {4,2,"ring",    "Ring"},
 }};
 
-// "bronze_sword" -> "Bronze sword"
+// Returns the DB display name for an item id, falling back to prettified id.
+// Delegates to the NameRegistry populated at startup from the DB API.
 std::string prettyItemId(const std::string& id) {
-  if (id.empty()) return {};
-  std::string out;
-  out.reserve(id.size());
-  bool cap = true;
-  for (char ch : id) {
-    if (ch == '_' || ch == '-') { out.push_back(' '); cap = false; }
-    else if (cap) { out.push_back(static_cast<char>(std::toupper(static_cast<unsigned char>(ch)))); cap = false; }
-    else           out.push_back(ch);
-  }
-  return out;
+  return ui::itemName(id);
 }
 
 // Format a quantity for display: 1,500,000 → "1.5M", 2500 → "2.5k", etc.
