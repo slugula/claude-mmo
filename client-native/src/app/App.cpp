@@ -977,6 +977,7 @@ void App::renderFrame() {
     bool hasNpc      = false;
     bool hasItem     = false;
     world::EntityRenderer::Instance npcInst{}, itemInst{};
+    std::string hoveredNpcKind;
 
     if (hty >= 0 && hty < static_cast<int>(map_.tiles.size()) &&
         htx >= 0 && htx < static_cast<int>(map_.tiles[hty].size())) {
@@ -993,6 +994,7 @@ void App::renderFrame() {
           npcInst = { static_cast<float>(n.tileX),
                       tileWorldY(map_, n.tileX, n.tileY),
                       static_cast<float>(n.tileY), 0.0f };
+          hoveredNpcKind = n.kind;
           break;
         }
       }
@@ -1030,7 +1032,7 @@ void App::renderFrame() {
       glBindTextureUnit(2, msaa_->resolveDepthTexture());
 
       if (hasObstacle) obstacles_.renderGeometryAt(outlineMaskShader_, map_, htx, hty);
-      if (hasNpc)      entities_.renderNpcGeometry (outlineMaskShader_, npcInst);
+      if (hasNpc)      entities_.renderNpcGeometry (outlineMaskShader_, npcInst, hoveredNpcKind);
       if (hasItem)     entities_.renderItemGeometry(outlineMaskShader_, itemInst);
 
       glDepthMask(GL_TRUE);

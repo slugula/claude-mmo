@@ -85,7 +85,10 @@ public:
   // Render just the geometry for a single NPC or dropped item (no stencil,
   // no inflation). u_viewProj must already be set on the shader. Used by the
   // screen-space outline mask pass to build a silhouette texture.
-  void renderNpcGeometry (render::Shader& maskShader, const Instance& inst) const;
+  // `kind` selects the custom model if one was loaded for that NPC kind;
+  // falls back to the humanoid procedural geometry when empty or unknown.
+  void renderNpcGeometry (render::Shader& maskShader, const Instance& inst,
+                          const std::string& kind = "") const;
   void renderItemGeometry(render::Shader& maskShader, const Instance& inst) const;
 
   std::size_t npcCount()  const { return npcCount_;  }
@@ -112,6 +115,9 @@ private:
     GLuint  ebo        = 0;
     GLsizei indexCount = 0;
     glm::vec4 color    = glm::vec4(0.7f, 0.7f, 0.7f, 1.0f);
+    // Separate VAO wired to outlineInstanceVbo_ for the mask/geometry pass.
+    // Shares the same geometry buffers as `vao`.
+    GLuint  outlineVao = 0;
   };
   struct CustomKit { std::vector<CustomPrim> prims; };
 

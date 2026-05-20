@@ -150,10 +150,11 @@ EntityRenderer::~EntityRenderer() {
 void EntityRenderer::clearNpcKindModels() {
   for (auto& [kind, kit] : npcKindKits_) {
     for (auto& p : kit.prims) {
-      if (p.vao)    glDeleteVertexArrays(1, &p.vao);
-      if (p.vboPos) glDeleteBuffers(1, &p.vboPos);
-      if (p.vboNrm) glDeleteBuffers(1, &p.vboNrm);
-      if (p.ebo)    glDeleteBuffers(1, &p.ebo);
+      if (p.outlineVao) glDeleteVertexArrays(1, &p.outlineVao);
+      if (p.vao)        glDeleteVertexArrays(1, &p.vao);
+      if (p.vboPos)     glDeleteBuffers(1, &p.vboPos);
+      if (p.vboNrm)     glDeleteBuffers(1, &p.vboNrm);
+      if (p.ebo)        glDeleteBuffers(1, &p.ebo);
     }
   }
   npcKindKits_.clear();
@@ -221,6 +222,31 @@ void EntityRenderer::loadNpcKindModel(const std::string&                kind,
     glVertexArrayAttribBinding(cp.vao, 3, 2);
 
     glVertexArrayElementBuffer(cp.vao, cp.ebo);
+
+    // Outline VAO: same geometry buffers, but driven by outlineInstanceVbo_
+    // (the single-instance scratch VBO used by the mask/geometry pass).
+    glCreateVertexArrays(1, &cp.outlineVao);
+    glVertexArrayVertexBuffer(cp.outlineVao, 0, cp.vboPos, 0, sizeof(float) * 3);
+    glEnableVertexArrayAttrib(cp.outlineVao, 0);
+    glVertexArrayAttribFormat(cp.outlineVao, 0, 3, GL_FLOAT, GL_FALSE, 0);
+    glVertexArrayAttribBinding(cp.outlineVao, 0, 0);
+
+    glVertexArrayVertexBuffer(cp.outlineVao, 1, cp.vboNrm, 0, sizeof(float) * 3);
+    glEnableVertexArrayAttrib(cp.outlineVao, 1);
+    glVertexArrayAttribFormat(cp.outlineVao, 1, 3, GL_FLOAT, GL_FALSE, 0);
+    glVertexArrayAttribBinding(cp.outlineVao, 1, 1);
+
+    glVertexArrayVertexBuffer(cp.outlineVao, 2, outlineInstanceVbo_, 0, sizeof(Instance));
+    glVertexArrayBindingDivisor(cp.outlineVao, 2, 1);
+    glEnableVertexArrayAttrib(cp.outlineVao, 2);
+    glVertexArrayAttribFormat(cp.outlineVao, 2, 3, GL_FLOAT, GL_FALSE, offsetof(Instance, x));
+    glVertexArrayAttribBinding(cp.outlineVao, 2, 2);
+    glEnableVertexArrayAttrib(cp.outlineVao, 3);
+    glVertexArrayAttribFormat(cp.outlineVao, 3, 1, GL_FLOAT, GL_FALSE, offsetof(Instance, rotY));
+    glVertexArrayAttribBinding(cp.outlineVao, 3, 2);
+
+    glVertexArrayElementBuffer(cp.outlineVao, cp.ebo);
+
     kit.prims.push_back(cp);
   }
 
@@ -547,14 +573,27 @@ void EntityRenderer::renderItemOutline(render::Shader& outlineShader,
 }
 
 void EntityRenderer::renderNpcGeometry(render::Shader& /*maskShader*/,
-                                       const Instance& inst) const {
-  if (!npcOutlineVao_ || !outlineInstanceVbo_) return;
+                                       const Instance& inst,
+                                       const std::string& kind) const {
+  if (!outlineInstanceVbo_) return;
   glNamedBufferSubData(outlineInstanceVbo_, 0, sizeof(Instance), &inst);
   glDisable(GL_STENCIL_TEST);
   glDepthFunc(GL_LEQUAL);
   glDepthMask(GL_FALSE);
-  glBindVertexArray(npcOutlineVao_);
-  glDrawElementsInstanced(GL_TRIANGLES, humanoid_.indexCount, GL_UNSIGNED_INT, nullptr, 1);
+
+  // Use the custom model's outline VAOs if one is loaded for this kind.
+  auto it = npcKindKits_.find(kind);
+  if (it != npcKindKits_.end() && !it->second.prims.empty()) {
+    for (const auto& cp : it->second.prims) {
+      if (!cp.outlineVao) continue;
+      glBindVertexArray(cp.outlineVao);
+      glDrawElementsInstanced(GL_TRIANGLES, cp.indexCount, GL_UNSIGNED_INT, nullptr, 1);
+    }
+  } else if (npcOutlineVao_) {
+    glBindVertexArray(npcOutlineVao_);
+    glDrawElementsInstanced(GL_TRIANGLES, humanoid_.indexCount, GL_UNSIGNED_INT, nullptr, 1);
+  }
+
   glBindVertexArray(0);
   glDepthMask(GL_TRUE);
   glDepthFunc(GL_LESS);
