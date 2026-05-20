@@ -30,7 +30,11 @@ function err(res: Response, e: unknown, status = 500) {
 
 entityRouter.get('/actions', async (_req, res) => {
   try {
-    const r = await pool.query('SELECT * FROM action_definitions ORDER BY id');
+    const r = await pool.query(`
+      SELECT id,
+        COALESCE(display_name, '') AS display_name,
+        COALESCE(handler_type,  '') AS handler_type
+      FROM action_definitions ORDER BY id`);
     ok(res, r.rows);
   } catch (e) { err(res, e); }
 });
@@ -66,7 +70,23 @@ entityRouter.delete('/actions/:id', async (req, res) => {
 
 entityRouter.get('/objects', async (_req, res) => {
   try {
-    const r = await pool.query('SELECT * FROM object_definitions ORDER BY id');
+    const r = await pool.query(`
+      SELECT id,
+        COALESCE(name,           '') AS name,
+        COALESCE(model_path,     '') AS model_path,
+        COALESCE(object_type,    'Decoration')    AS object_type,
+        COALESCE(collision,      'full_blocking') AS collision,
+        COALESCE(size_x,         1)  AS size_x,
+        COALESCE(size_y,         1)  AS size_y,
+        COALESCE(action_id,      '') AS action_id,
+        COALESCE(required_skill, '') AS required_skill,
+        COALESCE(required_level, 0)  AS required_level,
+        COALESCE(drop_item_id,   '') AS drop_item_id,
+        COALESCE(drop_quantity,  1)  AS drop_quantity,
+        COALESCE(respawn_ticks,  25) AS respawn_ticks,
+        COALESCE(craft_action_id,'') AS craft_action_id,
+        COALESCE(examine_text,   '') AS examine_text
+      FROM object_definitions ORDER BY id`);
     ok(res, r.rows);
   } catch (e) { err(res, e); }
 });
@@ -121,7 +141,25 @@ entityRouter.delete('/objects/:id', async (req, res) => {
 
 entityRouter.get('/npcs', async (_req, res) => {
   try {
-    const ndefs = await pool.query('SELECT * FROM npc_definitions ORDER BY id');
+    const ndefs = await pool.query(`
+      SELECT id,
+        COALESCE(name,               '') AS name,
+        COALESCE(model_path,         '') AS model_path,
+        COALESCE(size_x,             1)  AS size_x,
+        COALESCE(size_y,             1)  AS size_y,
+        COALESCE(is_attackable,      false) AS is_attackable,
+        COALESCE(max_hp,             1)  AS max_hp,
+        COALESCE(attack,             0)  AS attack,
+        COALESCE(strength,           0)  AS strength,
+        COALESCE(melee_defense,      0)  AS melee_defense,
+        COALESCE(ranged_defense,     0)  AS ranged_defense,
+        COALESCE(attack_speed_ticks, 16) AS attack_speed_ticks,
+        COALESCE(respawn_ticks,      150)AS respawn_ticks,
+        COALESCE(is_talkable,        false) AS is_talkable,
+        COALESCE(dialogue,           '') AS dialogue,
+        COALESCE(ai,                 'static') AS ai,
+        COALESCE(examine_text,       '') AS examine_text
+      FROM npc_definitions ORDER BY id`);
     const drops = await pool.query('SELECT * FROM npc_drops');
     const dropMap = new Map<string, object[]>();
     for (const d of drops.rows) {
@@ -200,7 +238,31 @@ entityRouter.delete('/npcs/:id', async (req, res) => {
 
 entityRouter.get('/items', async (_req, res) => {
   try {
-    const r = await pool.query('SELECT * FROM item_definitions ORDER BY id');
+    const r = await pool.query(`
+      SELECT id,
+        COALESCE(name,            '') AS name,
+        COALESCE(stackable,       false) AS stackable,
+        COALESCE(tradable,        true)  AS tradable,
+        COALESCE(value,           0)  AS value,
+        COALESCE(examine_text,    '') AS examine_text,
+        COALESCE(item_type,       'resource') AS item_type,
+        COALESCE(equip_slot,      '') AS equip_slot,
+        COALESCE(two_handed,      false) AS two_handed,
+        COALESCE(melee_attack,    0)  AS melee_attack,
+        COALESCE(melee_strength,  0)  AS melee_strength,
+        COALESCE(melee_defense,   0)  AS melee_defense,
+        COALESCE(ranged_attack,   0)  AS ranged_attack,
+        COALESCE(ranged_strength, 0)  AS ranged_strength,
+        COALESCE(ranged_defense,  0)  AS ranged_defense,
+        COALESCE(required_skill,  '') AS required_skill,
+        COALESCE(required_level,  0)  AS required_level,
+        COALESCE(tool_type,       '') AS tool_type,
+        COALESCE(combat_style,    '') AS combat_style,
+        COALESCE(heal_amount,     0)  AS heal_amount,
+        COALESCE(sprite_path,     '') AS sprite_path,
+        COALESCE(model_dropped,   '') AS model_dropped,
+        COALESCE(model_equipped,  '') AS model_equipped
+      FROM item_definitions ORDER BY id`);
     ok(res, r.rows);
   } catch (e) { err(res, e); }
 });

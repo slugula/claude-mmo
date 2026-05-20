@@ -917,27 +917,63 @@ void EditorApp::drawProperties() {
   }
   else if (activeTool_ == EditorTool::PlaceObstacle) {
     ImGui::TextDisabled("Object type");
-    auto obstBtn = [&](const char* label, shared::ObstacleType t) {
-      const bool a = (obstacleSubtype_ == t);
-      if (a) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f, 0.34f, 0.10f, 1.0f));
-      if (ImGui::Button(label, ImVec2(-1, 0))) obstacleSubtype_ = t;
-      if (a) ImGui::PopStyleColor();
+    // Helper: map DB object id → ObstacleType enum (for the 5 built-in types)
+    auto idToObs = [](const std::string& id) -> shared::ObstacleType {
+      if (id == "tree")         return shared::ObstacleType::tree;
+      if (id == "rock")         return shared::ObstacleType::rock;
+      if (id == "chest")        return shared::ObstacleType::chest;
+      if (id == "fence")        return shared::ObstacleType::fence;
+      if (id == "fishing_spot") return shared::ObstacleType::fishing_spot;
+      return shared::ObstacleType::none;
     };
-    obstBtn("Tree",  shared::ObstacleType::tree);
-    obstBtn("Rock",  shared::ObstacleType::rock);
-    obstBtn("Chest", shared::ObstacleType::chest);
-    obstBtn("Fence", shared::ObstacleType::fence);
+    if (!dbObjects_.empty()) {
+      // DB-driven list
+      for (const auto& obj : dbObjects_) {
+        const auto t = idToObs(obj.id);
+        if (t == shared::ObstacleType::none) {
+          ImGui::TextDisabled("%s (not placeable yet)", obj.name.c_str());
+          continue;
+        }
+        const bool a = (obstacleSubtype_ == t);
+        if (a) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f, 0.34f, 0.10f, 1.0f));
+        if (ImGui::Button(obj.name.c_str(), ImVec2(-1, 0))) obstacleSubtype_ = t;
+        if (a) ImGui::PopStyleColor();
+      }
+    } else {
+      // Fallback when DB not loaded
+      auto obstBtn = [&](const char* label, shared::ObstacleType t) {
+        const bool a = (obstacleSubtype_ == t);
+        if (a) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f, 0.34f, 0.10f, 1.0f));
+        if (ImGui::Button(label, ImVec2(-1, 0))) obstacleSubtype_ = t;
+        if (a) ImGui::PopStyleColor();
+      };
+      obstBtn("Tree",  shared::ObstacleType::tree);
+      obstBtn("Rock",  shared::ObstacleType::rock);
+      obstBtn("Chest", shared::ObstacleType::chest);
+      obstBtn("Fence", shared::ObstacleType::fence);
+    }
   }
   else if (activeTool_ == EditorTool::PlaceNPC) {
     ImGui::TextDisabled("NPC type");
-    auto npcBtn = [&](const char* label) {
-      const bool a = (npcSubtype_ == label);
-      if (a) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f, 0.34f, 0.10f, 1.0f));
-      if (ImGui::Button(label, ImVec2(-1, 0))) npcSubtype_ = label;
-      if (a) ImGui::PopStyleColor();
-    };
-    npcBtn("chicken");
-    npcBtn("shopkeeper");
+    if (!dbNPCs_.empty()) {
+      // DB-driven list
+      for (const auto& npc : dbNPCs_) {
+        const bool a = (npcSubtype_ == npc.id);
+        if (a) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f, 0.34f, 0.10f, 1.0f));
+        if (ImGui::Button(npc.name.c_str(), ImVec2(-1, 0))) npcSubtype_ = npc.id;
+        if (a) ImGui::PopStyleColor();
+      }
+    } else {
+      // Fallback when DB not loaded
+      auto npcBtn = [&](const char* label) {
+        const bool a = (npcSubtype_ == label);
+        if (a) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f, 0.34f, 0.10f, 1.0f));
+        if (ImGui::Button(label, ImVec2(-1, 0))) npcSubtype_ = label;
+        if (a) ImGui::PopStyleColor();
+      };
+      npcBtn("chicken");
+      npcBtn("shopkeeper");
+    }
   }
 
   if (currentFilePath_.empty())
@@ -2061,9 +2097,10 @@ void EditorApp::dbDrawItemsTab() {
     ItemDef& d = dbEditItem_;
 
     ImGui::TextDisabled("ID (immutable after creation)");
-    if (dbEditIsNew_) dbInputText("##id", d.id);
+    if (dbEditIsNew_) { ImGui::SetNextItemWidth(-1); dbInputText("##item_id", d.id); }
     else              ImGui::TextUnformatted(d.id.c_str());
-    ImGui::SetNextItemWidth(-1); dbInputText("Name##item", d.name);
+    ImGui::TextUnformatted("Name");
+    ImGui::SetNextItemWidth(-1); dbInputText("##item_name", d.name);
 
     ImGui::Separator();
     dbCombo("Type##item", d.itemType, {"resource", "equipment", "food"});
@@ -2074,18 +2111,18 @@ void EditorApp::dbDrawItemsTab() {
     if (d.itemType == "equipment") {
       ImGui::Separator();
       ImGui::TextColored({1.f,0.55f,0.f,1.f}, "Equipment");
-      dbCombo("Equip Slot", d.equipSlot,
+      dbCombo("Equip Slot##item",   d.equipSlot,
         {"head","body","legs","feet","hands","neck","ring","leftHand","rightHand","ammo"});
-      ImGui::Checkbox("Two-Handed", &d.twoHanded);
+      ImGui::Checkbox("Two-Handed##item", &d.twoHanded);
       dbCombo("Combat Style##item", d.combatStyle, {"","melee","gunner"});
       dbCombo("Tool Type##item",    d.toolType,    {"","axe","pickaxe"});
       ImGui::TextColored({1.f,0.55f,0.f,1.f}, "Stats");
-      ImGui::SetNextItemWidth(80); ImGui::InputInt("Melee Atk##i",  &d.meleeAttack);  ImGui::SameLine();
-      ImGui::SetNextItemWidth(80); ImGui::InputInt("Melee Str##i",  &d.meleeStrength); ImGui::SameLine();
-      ImGui::SetNextItemWidth(80); ImGui::InputInt("Melee Def##i",  &d.meleeDefense);
-      ImGui::SetNextItemWidth(80); ImGui::InputInt("Ranged Atk##i", &d.rangedAttack); ImGui::SameLine();
-      ImGui::SetNextItemWidth(80); ImGui::InputInt("Ranged Str##i", &d.rangedStrength); ImGui::SameLine();
-      ImGui::SetNextItemWidth(80); ImGui::InputInt("Ranged Def##i", &d.rangedDefense);
+      ImGui::SetNextItemWidth(80); ImGui::InputInt("M.Atk##i",  &d.meleeAttack);  ImGui::SameLine();
+      ImGui::SetNextItemWidth(80); ImGui::InputInt("M.Str##i",  &d.meleeStrength); ImGui::SameLine();
+      ImGui::SetNextItemWidth(80); ImGui::InputInt("M.Def##i",  &d.meleeDefense);
+      ImGui::SetNextItemWidth(80); ImGui::InputInt("R.Atk##i",  &d.rangedAttack); ImGui::SameLine();
+      ImGui::SetNextItemWidth(80); ImGui::InputInt("R.Str##i",  &d.rangedStrength); ImGui::SameLine();
+      ImGui::SetNextItemWidth(80); ImGui::InputInt("R.Def##i",  &d.rangedDefense);
       ImGui::TextColored({1.f,0.55f,0.f,1.f}, "Requirement");
       dbCombo("Skill##item_req", d.requiredSkill,
         {"","woodcutting","mining","warrior","defence","hitpoints","gunner"});
@@ -2100,10 +2137,14 @@ void EditorApp::dbDrawItemsTab() {
 
     ImGui::Separator();
     ImGui::TextColored({1.f,0.55f,0.f,1.f}, "Assets");
-    dbInputText("Sprite Path##item",    d.spritePath);
-    dbInputText("Dropped Model##item",  d.modelDropped);
-    dbInputText("Equipped Model##item", d.modelEquipped);
-    dbInputText("Examine##item",        d.examineText);
+    ImGui::TextUnformatted("Sprite Path");
+    ImGui::SetNextItemWidth(-1); dbInputText("##item_sprite", d.spritePath);
+    ImGui::TextUnformatted("Dropped Model");
+    ImGui::SetNextItemWidth(-1); dbInputText("##item_dropped", d.modelDropped);
+    ImGui::TextUnformatted("Equipped Model");
+    ImGui::SetNextItemWidth(-1); dbInputText("##item_equipped", d.modelEquipped);
+    ImGui::TextUnformatted("Examine Text");
+    ImGui::SetNextItemWidth(-1); dbInputText("##item_examine", d.examineText);
 
     ImGui::Separator();
     if (!dbStatus_.empty()) ImGui::TextDisabled("%s", dbStatus_.c_str());
@@ -2168,18 +2209,37 @@ void EditorApp::dbDrawNPCsTab() {
     }
     ImGui::BeginGroup();
     ImGui::TextDisabled("ID");
-    if (dbEditIsNew_) dbInputText("##npc_id", d.id);
+    if (dbEditIsNew_) { ImGui::SetNextItemWidth(-1); dbInputText("##npc_id", d.id); }
     else              ImGui::TextUnformatted(d.id.c_str());
-    ImGui::SetNextItemWidth(-1); dbInputText("Name##npc", d.name);
-
+    ImGui::TextUnformatted("Name");
+    ImGui::SetNextItemWidth(-1); dbInputText("##npc_name", d.name);
     ImGui::SetNextItemWidth(80); ImGui::InputInt("Size X##npc", &d.sizeX); ImGui::SameLine();
     ImGui::SetNextItemWidth(80); ImGui::InputInt("Size Y##npc", &d.sizeY);
     dbCombo("AI##npc", d.ai, {"static", "wander"});
     ImGui::EndGroup();  // closes the group started beside the preview image
 
-    if (dbInputText("Model Path##npc", d.modelPath))
-      dbLoadPreviewModel(d.modelPath);
-    dbInputText("Examine##npc",    d.examineText);
+    ImGui::TextUnformatted("Model Path");
+    ImGui::SetNextItemWidth(-80); dbInputText("##npc_model", d.modelPath);
+    ImGui::SameLine();
+    if (ImGui::Button("Browse##npc_model")) {
+      OPENFILENAMEW ofn = {};
+      wchar_t buf[MAX_PATH] = {};
+      ofn.lStructSize = sizeof(ofn);
+      ofn.lpstrFilter = L"3D Model (*.glb;*.gltf)\0*.glb;*.gltf\0All Files\0*.*\0";
+      ofn.lpstrFile   = buf; ofn.nMaxFile = MAX_PATH;
+      ofn.Flags       = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
+      if (GetOpenFileNameW(&ofn)) {
+        // Store relative path from exe dir if possible
+        wchar_t exeDir[MAX_PATH] = {};
+        GetModuleFileNameW(nullptr, exeDir, MAX_PATH);
+        std::filesystem::path rel = std::filesystem::relative(buf, std::filesystem::path(exeDir).parent_path());
+        d.modelPath = rel.string();
+        dbLoadPreviewModel(d.modelPath);
+      }
+    }
+    if (d.modelPath != dbPreviewLoadedPath_) dbLoadPreviewModel(d.modelPath);
+    ImGui::TextUnformatted("Examine Text");
+    ImGui::SetNextItemWidth(-1); dbInputText("##npc_examine", d.examineText);
 
     ImGui::Separator();
     ImGui::Checkbox("Attackable##npc", &d.isAttackable);
@@ -2279,19 +2339,37 @@ void EditorApp::dbDrawObjectsTab() {
     }
     ImGui::BeginGroup();
     ImGui::TextDisabled("ID");
-    if (dbEditIsNew_) dbInputText("##obj_id", d.id);
+    if (dbEditIsNew_) { ImGui::SetNextItemWidth(-1); dbInputText("##obj_id", d.id); }
     else              ImGui::TextUnformatted(d.id.c_str());
-    ImGui::SetNextItemWidth(-1); dbInputText("Name##obj", d.name);
-
+    ImGui::TextUnformatted("Name");
+    ImGui::SetNextItemWidth(-1); dbInputText("##obj_name", d.name);
     dbCombo("Type##obj",      d.objectType, {"Decoration", "ResourceNode", "ProductionFacility"});
     dbCombo("Collision##obj", d.collision,  {"none", "full_blocking", "half_blocking"});
     ImGui::SetNextItemWidth(80); ImGui::InputInt("Size X##obj", &d.sizeX); ImGui::SameLine();
     ImGui::SetNextItemWidth(80); ImGui::InputInt("Size Y##obj", &d.sizeY);
     ImGui::EndGroup();  // closes the group beside the preview image
 
-    if (dbInputText("Model Path##obj", d.modelPath))
-      dbLoadPreviewModel(d.modelPath);
-    dbInputText("Examine Text##obj", d.examineText);
+    ImGui::TextUnformatted("Model Path");
+    ImGui::SetNextItemWidth(-80); dbInputText("##obj_model", d.modelPath);
+    ImGui::SameLine();
+    if (ImGui::Button("Browse##obj_model")) {
+      OPENFILENAMEW ofn = {};
+      wchar_t buf[MAX_PATH] = {};
+      ofn.lStructSize = sizeof(ofn);
+      ofn.lpstrFilter = L"3D Model (*.glb;*.gltf)\0*.glb;*.gltf\0All Files\0*.*\0";
+      ofn.lpstrFile   = buf; ofn.nMaxFile = MAX_PATH;
+      ofn.Flags       = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
+      if (GetOpenFileNameW(&ofn)) {
+        wchar_t exeDir[MAX_PATH] = {};
+        GetModuleFileNameW(nullptr, exeDir, MAX_PATH);
+        std::filesystem::path rel = std::filesystem::relative(buf, std::filesystem::path(exeDir).parent_path());
+        d.modelPath = rel.string();
+        dbLoadPreviewModel(d.modelPath);
+      }
+    }
+    if (d.modelPath != dbPreviewLoadedPath_) dbLoadPreviewModel(d.modelPath);
+    ImGui::TextUnformatted("Examine Text");
+    ImGui::SetNextItemWidth(-1); dbInputText("##obj_examine", d.examineText);
 
     if (d.objectType == "ResourceNode") {
       ImGui::Separator();
@@ -2388,9 +2466,10 @@ void EditorApp::dbDrawActionsTab() {
   if (dbSelAction_ >= 0 || dbEditIsNew_) {
     ActionDef& d = dbEditAction_;
     ImGui::TextDisabled("ID (slug, e.g. 'chop')");
-    if (dbEditIsNew_) dbInputText("##act_id", d.id);
+    if (dbEditIsNew_) { ImGui::SetNextItemWidth(-1); dbInputText("##act_id", d.id); }
     else              ImGui::TextUnformatted(d.id.c_str());
-    ImGui::SetNextItemWidth(-1); dbInputText("Display Name##act", d.displayName);
+    ImGui::TextUnformatted("Display Name");
+    ImGui::SetNextItemWidth(-1); dbInputText("##act_name", d.displayName);
     dbCombo("Handler Type##act", d.handlerType,
       {"gather_resource", "production_facility", "equip", "eat", "talk", "bank", "examine"});
 
