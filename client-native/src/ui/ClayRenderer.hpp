@@ -34,6 +34,7 @@ void clayFrame(const shared::PlayerState* player,
                bool rightClicked,
                const char* contextVerb,
                const char* contextSubject,
-               const char* tooltipText);
+               const char* tooltipText,
+               float wheelDelta);
 
 } // namespace ui

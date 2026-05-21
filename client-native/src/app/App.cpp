@@ -7,6 +7,7 @@
 #include "ui/ClayRenderer.hpp"
 #include "ui/ClayContextMenu.hpp"
 #include "ui/ClayClickFeedback.hpp"
+#include "ui/ClayChatLog.hpp"
 #include "shared/SharedTypesJson.hpp"
 #include "world/GltfLoader.hpp"
 #include "world/MapGenerator.hpp"
@@ -917,6 +918,7 @@ void App::renderFrame() {
     if (cur != lastNetStatus_) {
       if (cur == net::Connection::Disconnected || cur == net::Connection::Failed) {
         chatLog_.appendSystem("Disconnected from server. Use the Connect panel to reconnect.");
+        ui::chatAppendSystem("Disconnected from server. Use the Connect panel to reconnect.");
         currLocalPlayer_.reset();
         prevLocalPlayer_.reset();
         prevNpcs_.clear();
@@ -1350,9 +1352,10 @@ void App::renderFrame() {
 
     // Reset UI hover before Clay writes to it.
     uiHover_ = ui::UiHoverState{};
+    const float wheelDelta = ImGui::GetIO().MouseWheel;
     ui::clayFrame(localPlayer, &network_, &spriteCache_, &uiHover_, dt, mp.x, mp.y,
                   static_cast<float>(fbW), static_cast<float>(fbH),
-                  md, lClick, rClick, ctxVerb, ctxSubject, tooltipText);
+                  md, lClick, rClick, ctxVerb, ctxSubject, tooltipText, wheelDelta);
 
     // Dispatch Clay context menu click
     ui::CtxMenuState& cm = ui::ctxMenu();
@@ -1380,15 +1383,24 @@ void App::renderFrame() {
             const char* txt = (n.kind=="chicken")    ? "It's a chicken."
                             : (n.kind=="shopkeeper") ? "This is a friendly shopkeeper."
                             : "An NPC.";
-            chatLog_.appendSystem(txt); break;
+            chatLog_.appendSystem(txt);
+            ui::chatAppendSystem(txt);
+            break;
           }
         // Also handle obstacle examine
         if (ctxMenuTileY_ >= 0 && ctxMenuTileY_ < static_cast<int>(map_.tiles.size()) &&
             ctxMenuTileX_ >= 0 && ctxMenuTileX_ < static_cast<int>(map_.tiles[ctxMenuTileY_].size())) {
           const auto obs = map_.tiles[ctxMenuTileY_][ctxMenuTileX_].obstacle;
-          if      (obs == shared::ObstacleType::tree)  chatLog_.appendSystem("A sturdy tree.");
-          else if (obs == shared::ObstacleType::rock)  chatLog_.appendSystem("A rocky outcrop.");
-          else if (obs == shared::ObstacleType::chest) chatLog_.appendSystem("A secure bank chest.");
+          if (obs == shared::ObstacleType::tree) {
+            chatLog_.appendSystem("A sturdy tree.");
+            ui::chatAppendSystem("A sturdy tree.");
+          } else if (obs == shared::ObstacleType::rock) {
+            chatLog_.appendSystem("A rocky outcrop.");
+            ui::chatAppendSystem("A rocky outcrop.");
+          } else if (obs == shared::ObstacleType::chest) {
+            chatLog_.appendSystem("A secure bank chest.");
+            ui::chatAppendSystem("A secure bank chest.");
+          }
         }
       } else if (e.verb == "Take") {
         for (const auto& it : droppedItems_)
@@ -1413,7 +1425,8 @@ void App::renderFrame() {
     // in the clayFrame block above. Bank + chat remain ImGui (gated by toggle).
     if (showImguiUi_) {
       ui::drawBankPanel (*currLocalPlayer_, &network_, &bankOpen_);
-      chatLog_.draw     (&network_);
+      // ImGui chat: fallback when Clay UI is disabled.
+      if (!showClayUi_) chatLog_.draw(&network_);
     }
 
     // ---- Build overlay entries from per-frame interpolated positions -------
@@ -2276,6 +2289,7 @@ void App::processNetworkMessages() {
 
       // Phase 8 — feed chat + hit-splat detectors before we move-from players.
       chatLog_.observePlayers(allPlayers_);
+      ui::chatObservePlayers(allPlayers_);
       // System messages from the server (NPC dialogue, "I can't reach that", etc.)
       {
         auto mit = st.messages.find(network_.playerId());
@@ -2285,6 +2299,7 @@ void App::processNetworkMessages() {
             // already surfaced via observePlayers() from chatMessage/chatMessageTick.
             if (msg.size() >= 5 && msg.compare(0, 5, "chat:") == 0) continue;
             chatLog_.appendSystem(msg);
+            ui::chatAppendSystem(msg);
           }
         }
       }
@@ -2361,7 +2376,10 @@ void App::processNetworkMessages() {
         if (firstState) {
           if (!loginAnnounced_) {
             chatLog_.appendSystem("Welcome to Project L.");
-            chatLog_.appendSystem(std::string("Logged in as ") + network_.playerName() + ".");
+            ui::chatAppendSystem("Welcome to Project L.");
+            const std::string loginMsg = std::string("Logged in as ") + network_.playerName() + ".";
+            chatLog_.appendSystem(loginMsg);
+            ui::chatAppendSystem(loginMsg);
             loginAnnounced_ = true;
           }
           // Reset interpolation/smoothing state — the camera and yaw snap

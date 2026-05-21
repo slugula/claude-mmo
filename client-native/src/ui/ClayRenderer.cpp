@@ -17,6 +17,7 @@
 #include "ui/ClayClickFeedback.hpp"
 #include "ui/ClayContextInfo.hpp"
 #include "ui/ClayTooltip.hpp"
+#include "ui/ClayChatLog.hpp"
 #include "net/NetworkClient.hpp"
 #include "world/SpriteCache.hpp"
 
@@ -169,13 +170,17 @@ void clayFrame(const shared::PlayerState* player,
                bool rightClicked,
                const char* contextVerb,
                const char* contextSubject,
-               const char* tooltipText)
+               const char* tooltipText,
+               float wheelDelta)
 {
     Clay_SetPointerState({ mx, my }, mouseDown);
-    Clay_UpdateScrollContainers(false, { 0.f, 0.f }, dt);
+    // wheelDelta from ImGui io.MouseWheel (positive = scroll up).
+    // Clay multiplies scrollDelta by 10 internally; pass *3 for ~2 lines/notch.
+    Clay_UpdateScrollContainers(false, { 0.f, wheelDelta * 3.f }, dt);
     Clay_BeginLayout();
 
     clayHudBuildLayout(player, sprites);
+    buildChatLog(screenW, screenH, player, netc);
     buildContextMenu();
     buildClickFeedback(dt);
     buildContextInfo(contextVerb, contextSubject);
