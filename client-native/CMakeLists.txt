@@ -89,6 +89,7 @@ add_executable(client-native
   src/ui/ClayContextMenu.cpp
   src/ui/ClayClickFeedback.cpp
   src/ui/ClayContextInfo.cpp
+  src/ui/ClayTooltip.cpp
 )
 
 target_link_libraries(client-native PRIVATE

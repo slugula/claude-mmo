@@ -1315,10 +1315,44 @@ void App::renderFrame() {
       }
     }
 
+    // Compute tooltip text for this frame (world-hover name near cursor).
+    // Stable storage so the pointer survives into clayFrame.
+    static std::string s_tooltipStr;
+    const char* tooltipText = nullptr;
+    if (hoveredTile_.hit && !uiOwned2) {
+      const int tt_tx = hoveredTile_.tileX;
+      const int tt_ty = hoveredTile_.tileY;
+      for (const auto& n : npcs_) {
+        if (n.tileX == tt_tx && n.tileY == tt_ty && !n.dying) {
+          s_tooltipStr = ui::npcName(n.kind);
+          tooltipText  = s_tooltipStr.c_str();
+          break;
+        }
+      }
+      if (!tooltipText &&
+          tt_ty >= 0 && tt_ty < static_cast<int>(map_.tiles.size()) &&
+          tt_tx >= 0 && tt_tx < static_cast<int>(map_.tiles[tt_ty].size())) {
+        const auto obs = map_.tiles[tt_ty][tt_tx].obstacle;
+        if      (obs == shared::ObstacleType::tree)  tooltipText = "Tree";
+        else if (obs == shared::ObstacleType::rock)  tooltipText = "Rock";
+        else if (obs == shared::ObstacleType::chest) tooltipText = "Chest";
+      }
+      if (!tooltipText) {
+        for (const auto& di : droppedItems_) {
+          if (di.tileX == tt_tx && di.tileY == tt_ty) {
+            s_tooltipStr = ui::itemName(di.itemId);
+            tooltipText  = s_tooltipStr.c_str();
+            break;
+          }
+        }
+      }
+    }
+
     // Reset UI hover before Clay writes to it.
     uiHover_ = ui::UiHoverState{};
     ui::clayFrame(localPlayer, &network_, &spriteCache_, &uiHover_, dt, mp.x, mp.y,
-                  md, lClick, rClick, ctxVerb, ctxSubject);
+                  static_cast<float>(fbW), static_cast<float>(fbH),
+                  md, lClick, rClick, ctxVerb, ctxSubject, tooltipText);
 
     // Dispatch Clay context menu click
     ui::CtxMenuState& cm = ui::ctxMenu();
@@ -1478,19 +1512,15 @@ void App::renderFrame() {
       overlays_.draw(viewProj, fbW, fbH, &localEntry, entityEntries);
     }
 
-    // Context info is now rendered by Clay (buildContextInfo in clayFrame).
-    // The ImGui path is kept below only when Clay UI is off.
-
-    // ---- World interactable hover tooltip (cursor-following) ---------------
-    // Show the target name near the cursor when hovering a non-ground tile,
-    // suppressed when the cursor is over any ImGui panel.
-    if (hoveredTile_.hit &&
+    // Context info + tooltip are rendered by Clay when Clay UI is on.
+    // Fallback ImGui tooltip when Clay UI is disabled.
+    if (!showClayUi_ &&
+        hoveredTile_.hit &&
         !ImGui::IsWindowHovered(ImGuiHoveredFlags_AnyWindow)) {
       const int tx = hoveredTile_.tileX;
       const int ty = hoveredTile_.tileY;
-      static std::string tooltipNameStr;  // stable storage for tooltipName ptr
+      static std::string tooltipNameStr;
       const char* tooltipName = nullptr;
-      // NPC?
       for (const auto& n : npcs_) {
         if (n.tileX == tx && n.tileY == ty && !n.dying) {
           tooltipNameStr = ui::npcName(n.kind);
@@ -1498,7 +1528,6 @@ void App::renderFrame() {
           break;
         }
       }
-      // Obstacle (tree/rock/chest)?
       if (!tooltipName &&
           ty >= 0 && ty < static_cast<int>(map_.tiles.size()) &&
           tx >= 0 && tx < static_cast<int>(map_.tiles[ty].size())) {
@@ -1507,7 +1536,6 @@ void App::renderFrame() {
         else if (obs == shared::ObstacleType::rock)  tooltipName = "Rock";
         else if (obs == shared::ObstacleType::chest) tooltipName = "Chest";
       }
-      // Dropped item?
       if (!tooltipName) {
         for (const auto& di : droppedItems_) {
           if (di.tileX == tx && di.tileY == ty) {
@@ -1520,7 +1548,6 @@ void App::renderFrame() {
       if (tooltipName) {
         const ImGuiIO& io2 = ImGui::GetIO();
         ImVec2 ttPos { io2.MousePos.x + 16.0f, io2.MousePos.y + 16.0f };
-        // Bounce off right edge
         const ImVec2 textSz = ImGui::CalcTextSize(tooltipName);
         if (ttPos.x + textSz.x + 8.0f > io2.DisplaySize.x)
           ttPos.x = io2.MousePos.x - textSz.x - 8.0f;

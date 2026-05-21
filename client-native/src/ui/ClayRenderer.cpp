@@ -16,6 +16,7 @@
 #include "ui/ClayContextMenu.hpp"
 #include "ui/ClayClickFeedback.hpp"
 #include "ui/ClayContextInfo.hpp"
+#include "ui/ClayTooltip.hpp"
 #include "net/NetworkClient.hpp"
 #include "world/SpriteCache.hpp"
 
@@ -162,11 +163,13 @@ void clayFrame(const shared::PlayerState* player,
                UiHoverState*       hover,
                float dt,
                float mx, float my,
+               float screenW, float screenH,
                bool mouseDown,
                bool leftClicked,
                bool rightClicked,
                const char* contextVerb,
-               const char* contextSubject)
+               const char* contextSubject,
+               const char* tooltipText)
 {
     Clay_SetPointerState({ mx, my }, mouseDown);
     Clay_UpdateScrollContainers(false, { 0.f, 0.f }, dt);
@@ -176,6 +179,8 @@ void clayFrame(const shared::PlayerState* player,
     buildContextMenu();
     buildClickFeedback(dt);
     buildContextInfo(contextVerb, contextSubject);
+    if (tooltipText && tooltipText[0] != '\0') showTooltip(tooltipText);
+    buildTooltip(mx, my, screenW, screenH);
 
     Clay_RenderCommandArray cmds = Clay_EndLayout(dt);
 

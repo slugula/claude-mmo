@@ -20,17 +20,20 @@ void clayResize(int w, int h);
 // Single-call Clay frame: runs layout, renders output, handles input.
 // Call after ImGui::NewFrame() and before ImGui::Render().
 // contextVerb / contextSubject: pre-computed top-left context info strings.
-// Both may be nullptr or empty — buildContextInfo skips itself if both are empty.
+// tooltipText: cursor-following tooltip text (nullptr or empty = no tooltip).
+// Both may be nullptr or empty.
 void clayFrame(const shared::PlayerState* player,
                net::NetworkClient* netc,
                const SpriteCache*  sprites,
                UiHoverState*       hover,
                float dt,
                float mx, float my,
+               float screenW, float screenH,
                bool mouseDown,
                bool leftClicked,
                bool rightClicked,
                const char* contextVerb,
-               const char* contextSubject);
+               const char* contextSubject,
+               const char* tooltipText);
 
 } // namespace ui
