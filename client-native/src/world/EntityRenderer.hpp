@@ -71,6 +71,10 @@ public:
   // we set u_color per draw.
   void render(render::Shader& shader);
 
+  // Depth-only pass for shadow map generation. Caller sets u_lightViewProj;
+  // no u_color needed. Uses the same NPC VAOs as render().
+  void renderDepth(render::Shader& shader);
+
   // Two-pass stencil outline for a single hovered NPC or dropped item.
   // Sets all required uniforms on `outlineShader` and restores GL state.
   void renderNpcOutline (render::Shader& outlineShader,

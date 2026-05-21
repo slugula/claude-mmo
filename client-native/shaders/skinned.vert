@@ -17,10 +17,12 @@ layout(location = 2) in uvec4 a_jointIndices;
 layout(location = 3) in vec4  a_jointWeights;
 
 uniform mat4 u_viewProj;
+uniform mat4 u_lightViewProj;
 uniform mat4 u_model;
 uniform mat4 u_jointMatrices[80];
 
 out vec3  v_normal;
+out vec4  v_shadowPos;
 out float vLinearDepth;
 
 void main() {
@@ -39,5 +41,6 @@ void main() {
     v_normal = mat3(u_model) * mat3(skin) * a_normal;
 
     gl_Position  = u_viewProj * worldPos;
+    v_shadowPos  = u_lightViewProj * worldPos;
     vLinearDepth = gl_Position.w;
 }

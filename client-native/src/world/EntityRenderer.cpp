@@ -466,6 +466,47 @@ void EntityRenderer::render(render::Shader& shader) {
   glBindVertexArray(0);
 }
 
+void EntityRenderer::renderDepth(render::Shader& /*shader*/) {
+  // Render NPC geometry into the shadow depth buffer using the same VAOs as
+  // render(). The caller has already set u_lightViewProj; no color uniforms
+  // are needed for a depth-only pass.
+  if (npcCount_ == 0) return;
+
+  std::vector<Instance> humanoidGroup;
+  std::unordered_map<std::string, std::vector<Instance>> kindGroups;
+  humanoidGroup.reserve(npcCount_);
+
+  for (std::size_t i = 0; i < npcCount_; ++i) {
+    const std::string& k = (i < npcKinds_.size()) ? npcKinds_[i] : "";
+    if (!k.empty() && npcKindKits_.count(k))
+      kindGroups[k].push_back(npcInstCpu_[i]);
+    else
+      humanoidGroup.push_back(npcInstCpu_[i]);
+  }
+
+  if (!humanoidGroup.empty()) {
+    glNamedBufferSubData(npcInstanceVbo_, 0,
+      humanoidGroup.size() * sizeof(Instance), humanoidGroup.data());
+    glBindVertexArray(humanoid_.vao);
+    glDrawElementsInstanced(GL_TRIANGLES, humanoid_.indexCount, GL_UNSIGNED_INT,
+                            nullptr, static_cast<GLsizei>(humanoidGroup.size()));
+  }
+
+  for (auto& [kind, insts] : kindGroups) {
+    const std::size_t cnt = std::min(insts.size(), kInstanceCap);
+    glNamedBufferSubData(customNpcInstanceVbo_, 0,
+      cnt * sizeof(Instance), insts.data());
+    const CustomKit& ckit = npcKindKits_.at(kind);
+    for (const auto& cp : ckit.prims) {
+      glBindVertexArray(cp.vao);
+      glDrawElementsInstanced(GL_TRIANGLES, cp.indexCount, GL_UNSIGNED_INT,
+                              nullptr, static_cast<GLsizei>(cnt));
+    }
+  }
+
+  glBindVertexArray(0);
+}
+
 // ---------------------------------------------------------------------------
 // Outline helpers
 // ---------------------------------------------------------------------------

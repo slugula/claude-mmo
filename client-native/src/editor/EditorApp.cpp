@@ -746,10 +746,13 @@ void EditorApp::drawMenuBar() {
     // Open Recent submenu
     const bool hasRecent = !recentFiles_.empty();
     if (ImGui::BeginMenu("Open Recent", hasRecent)) {
-      for (const auto& rf : recentFiles_) {
+      for (int rfi = 0; rfi < static_cast<int>(recentFiles_.size()); ++rfi) {
+        const auto& rf = recentFiles_[rfi];
+        ImGui::PushID(rfi);
         const std::string label = std::filesystem::path(rf).filename().string();
         if (ImGui::MenuItem(label.c_str())) openRecentFile(rf);
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", rf.c_str());
+        ImGui::PopID();
       }
       ImGui::Separator();
       if (ImGui::MenuItem("Clear Recent")) {
@@ -2058,6 +2061,7 @@ void EditorApp::initImGui() {
   ImGui::CreateContext();
   ImGuiIO& io = ImGui::GetIO();
   io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+  io.ConfigDebugHighlightIdConflicts = false;
 
   const auto fontPath = resolveFromExe("assets/ProggyClean.ttf");
   if (std::filesystem::exists(fontPath))

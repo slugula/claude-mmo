@@ -118,7 +118,7 @@ struct EntityClient {
   std::vector<ItemDef> getItems() {
     auto json = entityHttpRequest(L"GET", L"/api/db/items");
     std::vector<ItemDef> out;
-    glz::read_json(out, json);
+    (void)glz::read_json(out, json);
     return out;
   }
   bool saveItem(const ItemDef& d, bool isNew) {
@@ -139,7 +139,7 @@ struct EntityClient {
   std::vector<NpcDef> getNPCs() {
     auto json = entityHttpRequest(L"GET", L"/api/db/npcs");
     std::vector<NpcDef> out;
-    glz::read_json(out, json);
+    (void)glz::read_json(out, json);
     return out;
   }
   bool saveNPC(const NpcDef& d, bool isNew) {
@@ -160,7 +160,7 @@ struct EntityClient {
   std::vector<ObjectDef> getObjects() {
     auto json = entityHttpRequest(L"GET", L"/api/db/objects");
     std::vector<ObjectDef> out;
-    glz::read_json(out, json);
+    (void)glz::read_json(out, json);
     return out;
   }
   bool saveObject(const ObjectDef& d, bool isNew) {
@@ -181,7 +181,7 @@ struct EntityClient {
   std::vector<ActionDef> getActions() {
     auto json = entityHttpRequest(L"GET", L"/api/db/actions");
     std::vector<ActionDef> out;
-    glz::read_json(out, json);
+    (void)glz::read_json(out, json);
     return out;
   }
   bool saveAction(const ActionDef& d, bool isNew) {

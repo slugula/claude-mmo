@@ -1,25 +1,27 @@
 #version 460 core
-// Obstacle fragment shader — flat base color with hemisphere-Lambert lighting
-// from a single hardcoded sun direction, then run through the same HSL
-// palette quantization as the terrain so obstacles sit visually in the same
-// palette discipline. Phase 6 will replace this stand-in lighting with the
-// real baked-vertex + shadow-map setup.
+// Obstacle fragment shader — Lambert lighting + PCF shadow map + HSL palette
+// quantization matching the terrain shader.
 
 in  vec3  v_normal;
+in  vec4  v_shadowPos;
 in  float vLinearDepth;
 out vec4  fragColor;
 
-uniform vec3  u_color;            // base RGB color for this obstacle type
-uniform vec3  u_lightDir;         // unit vector from sun -> surface (i.e. light direction)
-uniform vec3  u_paletteLevels;    // shared with terrain shader
-uniform float u_paletteEnabled;   // 0 = bypass quantize, 1 = quantize
-uniform float u_ambient;          // 0..1
-uniform float u_diffuse;          // 0..1
-uniform float u_lightingEnabled;  // 0 = flat base color, 1 = lit
-uniform float u_fogEnabled;       // 0 = off, 1 = on
-uniform vec3  u_fogColor;
-uniform float u_fogDensity;       // e.g. 0.015
-uniform float u_fogStart;         // world-units from camera before fog kicks in
+uniform vec3      u_color;            // base RGB color for this obstacle type
+uniform vec3      u_lightDir;         // unit vector from sun -> surface
+uniform vec3      u_paletteLevels;    // shared with terrain shader
+uniform float     u_paletteEnabled;   // 0 = bypass quantize, 1 = quantize
+uniform float     u_ambient;          // 0..1
+uniform float     u_diffuse;          // 0..1
+uniform float     u_lightingEnabled;  // 0 = flat base color, 1 = lit
+uniform sampler2D u_shadowMap;        // shadow depth texture (unit 1)
+uniform float     u_shadowsEnabled;   // 0 = no shadows, 1 = shadow
+uniform float     u_shadowDarkness;   // 0..1
+uniform float     u_shadowBias;       // depth bias
+uniform float     u_fogEnabled;       // 0 = off, 1 = on
+uniform vec3      u_fogColor;
+uniform float     u_fogDensity;
+uniform float     u_fogStart;
 
 // ---- HSL <-> RGB --------------------------------------------------------
 
@@ -59,6 +61,24 @@ vec3 hsl2rgb(vec3 hsl) {
     );
 }
 
+// ---- Shadow PCF (3×3 box filter, matches terrain.frag) ------------------
+
+float sampleShadow(vec4 shadowPos) {
+    vec3 proj = shadowPos.xyz / shadowPos.w;
+    proj = proj * 0.5 + 0.5;
+    if (proj.z > 1.0 || proj.z < 0.0) return 0.0;
+    if (proj.x < 0.0 || proj.x > 1.0 || proj.y < 0.0 || proj.y > 1.0) return 0.0;
+    float current  = proj.z - u_shadowBias;
+    vec2  texel    = 1.0 / vec2(textureSize(u_shadowMap, 0));
+    float occluded = 0.0;
+    for (int dy = -1; dy <= 1; ++dy)
+        for (int dx = -1; dx <= 1; ++dx) {
+            float d = texture(u_shadowMap, proj.xy + vec2(dx, dy) * texel).r;
+            occluded += (current > d) ? 1.0 : 0.0;
+        }
+    return occluded / 9.0;
+}
+
 // ---- Main ---------------------------------------------------------------
 
 void main() {
@@ -66,6 +86,10 @@ void main() {
     float nDotL  = max(dot(N, -normalize(u_lightDir)), 0.0);
     float lit    = clamp(u_ambient + u_diffuse * nDotL, 0.0, 1.0);
     vec3  rgb    = mix(u_color, u_color * lit, u_lightingEnabled);
+
+    float shadow    = sampleShadow(v_shadowPos);
+    float shadowMul = 1.0 - u_shadowDarkness * shadow * u_shadowsEnabled;
+    rgb *= shadowMul;
 
     vec3 hsl       = rgb2hsl(rgb);
     vec3 snapped   = floor(hsl * u_paletteLevels) / u_paletteLevels;

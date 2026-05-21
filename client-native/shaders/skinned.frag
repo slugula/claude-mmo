@@ -5,20 +5,25 @@
 // discipline as the terrain. Could be a shared include if GLSL had any.
 
 in  vec3  v_normal;
+in  vec4  v_shadowPos;
 in  float vLinearDepth;
 out vec4  fragColor;
 
-uniform vec3  u_color;
-uniform vec3  u_lightDir;
-uniform vec3  u_paletteLevels;
-uniform float u_paletteEnabled;
-uniform float u_ambient;
-uniform float u_diffuse;
-uniform float u_lightingEnabled;
-uniform float u_fogEnabled;       // 0 = off, 1 = on
-uniform vec3  u_fogColor;
-uniform float u_fogDensity;       // e.g. 0.015
-uniform float u_fogStart;         // world-units from camera before fog kicks in
+uniform vec3      u_color;
+uniform vec3      u_lightDir;
+uniform vec3      u_paletteLevels;
+uniform float     u_paletteEnabled;
+uniform float     u_ambient;
+uniform float     u_diffuse;
+uniform float     u_lightingEnabled;
+uniform sampler2D u_shadowMap;
+uniform float     u_shadowsEnabled;
+uniform float     u_shadowDarkness;
+uniform float     u_shadowBias;
+uniform float     u_fogEnabled;
+uniform vec3      u_fogColor;
+uniform float     u_fogDensity;
+uniform float     u_fogStart;
 
 vec3 rgb2hsl(vec3 c) {
     float maxC = max(max(c.r, c.g), c.b);
@@ -56,11 +61,31 @@ vec3 hsl2rgb(vec3 hsl) {
     );
 }
 
+float sampleShadow(vec4 shadowPos) {
+    vec3 proj = shadowPos.xyz / shadowPos.w;
+    proj = proj * 0.5 + 0.5;
+    if (proj.z > 1.0 || proj.z < 0.0) return 0.0;
+    if (proj.x < 0.0 || proj.x > 1.0 || proj.y < 0.0 || proj.y > 1.0) return 0.0;
+    float current  = proj.z - u_shadowBias;
+    vec2  texel    = 1.0 / vec2(textureSize(u_shadowMap, 0));
+    float occluded = 0.0;
+    for (int dy = -1; dy <= 1; ++dy)
+        for (int dx = -1; dx <= 1; ++dx) {
+            float d = texture(u_shadowMap, proj.xy + vec2(dx, dy) * texel).r;
+            occluded += (current > d) ? 1.0 : 0.0;
+        }
+    return occluded / 9.0;
+}
+
 void main() {
     vec3  N      = normalize(v_normal);
     float nDotL  = max(dot(N, -normalize(u_lightDir)), 0.0);
     float lit    = clamp(u_ambient + u_diffuse * nDotL, 0.0, 1.0);
     vec3  rgb    = mix(u_color, u_color * lit, u_lightingEnabled);
+
+    float shadow    = sampleShadow(v_shadowPos);
+    float shadowMul = 1.0 - u_shadowDarkness * shadow * u_shadowsEnabled;
+    rgb *= shadowMul;
 
     vec3 hsl       = rgb2hsl(rgb);
     vec3 snapped   = floor(hsl * u_paletteLevels) / u_paletteLevels;

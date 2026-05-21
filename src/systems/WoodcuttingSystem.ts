@@ -144,11 +144,19 @@ export function processWoodcutting(
           true,
         );
         if (spot) {
+          // Set facing toward the first path step immediately so the client's
+          // turn-suppression fires on the same tick the path is assigned,
+          // rather than waiting for MovementSystem to advance one step next tick.
+          const firstStep = spot.path[0];
+          const initialFacing = firstStep
+            ? directionTo(p.tileX, p.tileY, firstStep.x, firstStep.y)
+            : p.facing;
           p = {
             ...p,
             path: spot.path,
             destinationX: spot.pos.x,
             destinationY: spot.pos.y,
+            facing: initialFacing,
           };
         } else {
           messages[playerId].push("You can't reach that tree.");
@@ -162,6 +170,15 @@ export function processWoodcutting(
     // Adjacent — check for axe
     if (!findAxe(p)) {
       messages[playerId].push('You need an axe to chop this tree.');
+      nextPlayers[playerId] = { ...p, chopTargetX: null, chopTargetY: null };
+      continue;
+    }
+
+    // Check inventory space before starting to chop — prevents the gathering
+    // animation from playing and then showing "inventory full" after the fact.
+    const freeSlot = p.inventory.findIndex(s => s === null);
+    if (freeSlot === -1) {
+      messages[playerId].push('Your inventory is too full to hold any more logs.');
       nextPlayers[playerId] = { ...p, chopTargetX: null, chopTargetY: null };
       continue;
     }
@@ -184,14 +201,6 @@ export function processWoodcutting(
     // Success roll
     if (Math.random() >= SUCCESS_CHANCE) {
       nextPlayers[playerId] = { ...p, lastChopTick: tick };
-      continue;
-    }
-
-    // Check inventory space
-    const freeSlot = p.inventory.findIndex(s => s === null);
-    if (freeSlot === -1) {
-      messages[playerId].push('Your inventory is too full to hold any more logs.');
-      nextPlayers[playerId] = { ...p, chopTargetX: null, chopTargetY: null };
       continue;
     }
 
