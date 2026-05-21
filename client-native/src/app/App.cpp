@@ -5,6 +5,8 @@
 #include "render/GlDebug.hpp"
 #include "ui/NameRegistry.hpp"
 #include "ui/ClayRenderer.hpp"
+#include "ui/ClayContextMenu.hpp"
+#include "ui/ClayClickFeedback.hpp"
 #include "shared/SharedTypesJson.hpp"
 #include "world/GltfLoader.hpp"
 #include "world/MapGenerator.hpp"
@@ -287,16 +289,20 @@ bool App::init() {
           clickFeedbackColor_ = 1;  // red for blocked
         }
       }
-      // Spawn click feedback marker
-      clickFeedbackActive_ = true;
-      clickFeedbackTime_   = std::chrono::steady_clock::now();
-      double cx, cy;
-      glfwGetCursorPos(window_.handle(), &cx, &cy);
-      clickFeedbackX_ = static_cast<float>(cx);
-      clickFeedbackY_ = static_cast<float>(cy);
+      // Spawn click feedback marker (Clay + legacy ImGui fallback)
+      {
+        double cx, cy;
+        glfwGetCursorPos(window_.handle(), &cx, &cy);
+        ui::clickFeedbackSpawn(static_cast<float>(cx), static_cast<float>(cy),
+                               clickFeedbackColor_);
+        // Keep legacy state in sync so ImGui fallback still works when Clay off.
+        clickFeedbackActive_ = true;
+        clickFeedbackTime_   = std::chrono::steady_clock::now();
+        clickFeedbackX_      = static_cast<float>(cx);
+        clickFeedbackY_      = static_cast<float>(cy);
+      }
     }
-    // Right-click on world -> Phase 8b-ii context menu. Latch the picked
-    // tile so the menu's content stays stable while the cursor moves.
+    // Right-click on world -> Phase 8b-ii context menu.
     if (button == GLFW_MOUSE_BUTTON_RIGHT && action == GLFW_PRESS
         && network_.status() == net::Connection::Connected) {
       ctxMenuRequest_ = true;
@@ -304,6 +310,53 @@ bool App::init() {
       if (hoveredTile_.hit) {
         ctxMenuTileX_ = hoveredTile_.tileX;
         ctxMenuTileY_ = hoveredTile_.tileY;
+
+        // Populate Clay context menu
+        double mx2, my2;
+        glfwGetCursorPos(window_.handle(), &mx2, &my2);
+        int fw2, fh2;
+        glfwGetFramebufferSize(window_.handle(), &fw2, &fh2);
+        ui::CtxMenuState& cm = ui::ctxMenu();
+        cm.open     = true;
+        cm.x        = static_cast<float>(mx2);
+        cm.y        = static_cast<float>(my2);
+        cm.screenW  = static_cast<float>(fw2);
+        cm.screenH  = static_cast<float>(fh2);
+        cm.entries.clear();
+        cm.clickedIndex = -1;
+
+        const int tx2 = hoveredTile_.tileX;
+        const int ty2 = hoveredTile_.tileY;
+
+        // Obstacle
+        if (ty2 >= 0 && ty2 < static_cast<int>(map_.tiles.size()) &&
+            tx2 >= 0 && tx2 < static_cast<int>(map_.tiles[ty2].size())) {
+          const auto obs = map_.tiles[ty2][tx2].obstacle;
+          if      (obs == shared::ObstacleType::tree)
+            cm.entries.push_back({ "Chop down", "Tree" });
+          else if (obs == shared::ObstacleType::rock)
+            cm.entries.push_back({ "Mine", "Rock" });
+          else if (obs == shared::ObstacleType::chest) {
+            cm.entries.push_back({ "Bank", "Chest" });
+          }
+        }
+        // NPCs
+        for (const auto& n : npcs_) {
+          if (n.tileX != tx2 || n.tileY != ty2 || n.dying) continue;
+          std::string dname = ui::npcName(n.kind);
+          if (ui::npcIsAttackable(n.kind))
+            cm.entries.push_back({ "Attack", dname });
+          else
+            cm.entries.push_back({ "Talk-to", dname });
+          cm.entries.push_back({ "Examine", dname });
+        }
+        // Dropped items
+        for (const auto& it : droppedItems_) {
+          if (it.tileX != tx2 || it.tileY != ty2) continue;
+          cm.entries.push_back({ "Take", ui::itemName(it.itemId) });
+        }
+        // Walk here (always)
+        cm.entries.push_back({ "Walk here", "" });
       }
     }
   };
@@ -1204,10 +1257,114 @@ void App::renderFrame() {
     bool   rClick  = ImGui::IsMouseClicked(ImGuiMouseButton_Right);
     const shared::PlayerState* localPlayer =
         currLocalPlayer_ ? &currLocalPlayer_.value() : nullptr;
+
+    // Pre-compute context info verb/subject for this frame.
+    // Must be stable until after clayFrame returns.
+    static std::string s_ctxVerbStr, s_ctxSubjStr;
+    const char* ctxVerb    = "";
+    const char* ctxSubject = "";
+    const bool  uiOwned2   = ImGui::IsWindowHovered(ImGuiHoveredFlags_AnyWindow);
+    if (hoveredTile_.hit && !uiOwned2) {
+      const int ctx_tx = hoveredTile_.tileX;
+      const int ctx_ty = hoveredTile_.tileY;
+      ctxVerb    = "Walk here";
+      ctxSubject = "";
+      if (ctx_ty >= 0 && ctx_ty < static_cast<int>(map_.tiles.size()) &&
+          ctx_tx >= 0 && ctx_tx < static_cast<int>(map_.tiles[ctx_ty].size())) {
+        const auto obs = map_.tiles[ctx_ty][ctx_tx].obstacle;
+        if      (obs == shared::ObstacleType::tree)  { ctxVerb = "Chop"; ctxSubject = "Tree"; }
+        else if (obs == shared::ObstacleType::rock)  { ctxVerb = "Mine"; ctxSubject = "Rock"; }
+        else if (obs == shared::ObstacleType::chest) { ctxVerb = "Bank"; ctxSubject = "Chest"; }
+      }
+      if (ctxSubject[0] == '\0') {
+        for (const auto& n : npcs_) {
+          if (n.tileX != ctx_tx || n.tileY != ctx_ty || n.dying) continue;
+          ctxVerb = ui::npcIsAttackable(n.kind) ? "Attack" : "Talk-to";
+          s_ctxSubjStr = ui::npcName(n.kind);
+          ctxSubject = s_ctxSubjStr.c_str();
+          break;
+        }
+      }
+      if (ctxSubject[0] == '\0') {
+        for (const auto& it : droppedItems_) {
+          if (it.tileX != ctx_tx || it.tileY != ctx_ty) continue;
+          ctxVerb = "Take";
+          s_ctxSubjStr = ui::itemName(it.itemId);
+          ctxSubject = s_ctxSubjStr.c_str();
+          break;
+        }
+      }
+    } else if (uiHover_.kind != ui::UiHoverState::Kind::None) {
+      switch (uiHover_.kind) {
+        case ui::UiHoverState::Kind::InventoryItem:
+          s_ctxVerbStr = uiHover_.verb;
+          ctxVerb      = s_ctxVerbStr.c_str();
+          s_ctxSubjStr = uiHover_.itemName;
+          ctxSubject   = s_ctxSubjStr.c_str();
+          break;
+        case ui::UiHoverState::Kind::EquipSlot:
+          ctxVerb      = "Remove";
+          s_ctxSubjStr = uiHover_.itemName;
+          ctxSubject   = s_ctxSubjStr.c_str();
+          break;
+        case ui::UiHoverState::Kind::EmptyEquipSlot:
+          s_ctxSubjStr = uiHover_.slotLabel;
+          ctxSubject   = s_ctxSubjStr.c_str();
+          break;
+        default: break;
+      }
+    }
+
     // Reset UI hover before Clay writes to it.
     uiHover_ = ui::UiHoverState{};
     ui::clayFrame(localPlayer, &network_, &spriteCache_, &uiHover_, dt, mp.x, mp.y,
-                  md, lClick, rClick);
+                  md, lClick, rClick, ctxVerb, ctxSubject);
+
+    // Dispatch Clay context menu click
+    ui::CtxMenuState& cm = ui::ctxMenu();
+    if (cm.clickedIndex >= 0 &&
+        cm.clickedIndex < static_cast<int>(cm.entries.size())) {
+      const auto& e = cm.entries[cm.clickedIndex];
+      // Match entry by verb+subject to dispatch the correct action.
+      if (e.verb == "Chop down") {
+        network_.sendChopTree(ctxMenuTileX_, ctxMenuTileY_); oneShotClip_.clear();
+      } else if (e.verb == "Mine") {
+        network_.sendMineRock(ctxMenuTileX_, ctxMenuTileY_); oneShotClip_.clear();
+      } else if (e.verb == "Bank") {
+        network_.sendOpenBank(); bankOpen_ = true;
+      } else if (e.verb == "Attack") {
+        for (const auto& n : npcs_)
+          if (n.tileX == ctxMenuTileX_ && n.tileY == ctxMenuTileY_ && !n.dying)
+            { network_.sendAttackNpc(n.id); oneShotClip_.clear(); break; }
+      } else if (e.verb == "Talk-to") {
+        for (const auto& n : npcs_)
+          if (n.tileX == ctxMenuTileX_ && n.tileY == ctxMenuTileY_ && !n.dying)
+            { network_.sendTalkTo(n.id); oneShotClip_.clear(); break; }
+      } else if (e.verb == "Examine") {
+        for (const auto& n : npcs_)
+          if (n.tileX == ctxMenuTileX_ && n.tileY == ctxMenuTileY_ && !n.dying) {
+            const char* txt = (n.kind=="chicken")    ? "It's a chicken."
+                            : (n.kind=="shopkeeper") ? "This is a friendly shopkeeper."
+                            : "An NPC.";
+            chatLog_.appendSystem(txt); break;
+          }
+        // Also handle obstacle examine
+        if (ctxMenuTileY_ >= 0 && ctxMenuTileY_ < static_cast<int>(map_.tiles.size()) &&
+            ctxMenuTileX_ >= 0 && ctxMenuTileX_ < static_cast<int>(map_.tiles[ctxMenuTileY_].size())) {
+          const auto obs = map_.tiles[ctxMenuTileY_][ctxMenuTileX_].obstacle;
+          if      (obs == shared::ObstacleType::tree)  chatLog_.appendSystem("A sturdy tree.");
+          else if (obs == shared::ObstacleType::rock)  chatLog_.appendSystem("A rocky outcrop.");
+          else if (obs == shared::ObstacleType::chest) chatLog_.appendSystem("A secure bank chest.");
+        }
+      } else if (e.verb == "Take") {
+        for (const auto& it : droppedItems_)
+          if (it.tileX == ctxMenuTileX_ && it.tileY == ctxMenuTileY_)
+            { network_.sendTakeItem(it.id); oneShotClip_.clear(); break; }
+      } else if (e.verb == "Walk here") {
+        network_.sendMoveTo(ctxMenuTileX_, ctxMenuTileY_); oneShotClip_.clear();
+      }
+      cm.clickedIndex = -1;
+    }
   }
 
   const bool connected = (network_.status() == net::Connection::Connected);
@@ -1321,86 +1478,8 @@ void App::renderFrame() {
       overlays_.draw(viewProj, fbW, fbH, &localEntry, entityEntries);
     }
 
-    // ---- Context info (top-left) — world hover OR UI panel hover ----------
-    const bool uiOwned = ImGui::IsWindowHovered(ImGuiHoveredFlags_AnyWindow);
-
-    if (hoveredTile_.hit && !uiOwned) {
-      // World hover: show verb + subject for the tile under the cursor.
-      const int tx = hoveredTile_.tileX;
-      const int ty = hoveredTile_.tileY;
-      const char* verb    = "Walk here";
-      const char* subject = "";
-      // Determine primary action text based on what's at this tile
-      if (ty >= 0 && ty < static_cast<int>(map_.tiles.size()) &&
-          tx >= 0 && tx < static_cast<int>(map_.tiles[ty].size())) {
-        const auto obs = map_.tiles[ty][tx].obstacle;
-        if (obs == shared::ObstacleType::tree) { verb = "Chop"; subject = "Tree"; }
-        else if (obs == shared::ObstacleType::rock) { verb = "Mine"; subject = "Rock"; }
-        else if (obs == shared::ObstacleType::chest) { verb = "Bank"; subject = "Chest"; }
-      }
-      // Check NPCs
-      static std::string hoveredNpcNameStr;  // stable storage for subject ptr
-      if (subject[0] == '\0') {
-        for (const auto& n : npcs_) {
-          if (n.tileX != tx || n.tileY != ty || n.dying) continue;
-          verb = ui::npcIsAttackable(n.kind) ? "Attack" : "Talk-to";
-          hoveredNpcNameStr = ui::npcName(n.kind);
-          subject = hoveredNpcNameStr.c_str();
-          break;
-        }
-      }
-      // Check dropped items
-      static std::string hoveredItemNameStr;  // stable storage for subject ptr
-      if (subject[0] == '\0') {
-        for (const auto& it : droppedItems_) {
-          if (it.tileX != tx || it.tileY != ty) continue;
-          verb = "Take";
-          hoveredItemNameStr = ui::itemName(it.itemId);
-          subject = hoveredItemNameStr.c_str();
-          break;
-        }
-      }
-      // Draw top-left context info
-      ImDrawList* dl = ImGui::GetForegroundDrawList();
-      dl->AddText(ImVec2(12.0f, 12.0f), IM_COL32(255, 255, 255, 255), verb);
-      if (subject[0] != '\0') {
-        const ImVec2 verbSize = ImGui::CalcTextSize(verb);
-        dl->AddText(ImVec2(12.0f + verbSize.x + 4.0f, 12.0f),
-                    IM_COL32(255, 180, 50, 255), subject);
-      }
-    } else if (uiHover_.kind != ui::UiHoverState::Kind::None) {
-      // UI panel hover: show action context for inventory/equipment slots.
-      const char* verb    = "";
-      const char* subject = "";
-      switch (uiHover_.kind) {
-        case ui::UiHoverState::Kind::InventoryItem:
-          verb    = uiHover_.verb.c_str();     // "Wield", "Wear", "Eat", or ""
-          subject = uiHover_.itemName.c_str();
-          break;
-        case ui::UiHoverState::Kind::EquipSlot:
-          verb    = "Remove";
-          subject = uiHover_.itemName.c_str();
-          break;
-        case ui::UiHoverState::Kind::EmptyEquipSlot:
-          verb    = "";
-          subject = uiHover_.slotLabel.c_str();
-          break;
-        default: break;
-      }
-      if (verb[0] != '\0' || subject[0] != '\0') {
-        ImDrawList* dl = ImGui::GetForegroundDrawList();
-        if (verb[0] != '\0') {
-          dl->AddText(ImVec2(12.0f, 12.0f), IM_COL32(255, 255, 255, 255), verb);
-          if (subject[0] != '\0') {
-            const ImVec2 verbSize = ImGui::CalcTextSize(verb);
-            dl->AddText(ImVec2(12.0f + verbSize.x + 4.0f, 12.0f),
-                        IM_COL32(255, 180, 50, 255), subject);
-          }
-        } else {
-          dl->AddText(ImVec2(12.0f, 12.0f), IM_COL32(255, 180, 50, 255), subject);
-        }
-      }
-    }
+    // Context info is now rendered by Clay (buildContextInfo in clayFrame).
+    // The ImGui path is kept below only when Clay UI is off.
 
     // ---- World interactable hover tooltip (cursor-following) ---------------
     // Show the target name near the cursor when hovering a non-ground tile,
@@ -1458,8 +1537,10 @@ void App::renderFrame() {
 
   }
 
-  // ---- Click feedback marker (animated expanding circle) ------------------
-  if (clickFeedbackActive_) {
+  // ---- Click feedback marker -----------------------------------------------
+  // When Clay UI is on: rendered by buildClickFeedback() inside clayFrame.
+  // When Clay UI is off: fallback ImGui DrawList circle.
+  if (!showClayUi_ && clickFeedbackActive_) {
     const float elapsed = std::chrono::duration<float>(
         std::chrono::steady_clock::now() - clickFeedbackTime_).count();
     constexpr float kDuration = 0.45f;
@@ -1467,8 +1548,8 @@ void App::renderFrame() {
       clickFeedbackActive_ = false;
     } else {
       const float t = elapsed / kDuration;
-      const float radius = 9.0f * (1.0f + 0.6f * t);  // expand 60%
-      const float alpha = 1.0f - t;                     // fade out
+      const float radius = 9.0f * (1.0f + 0.6f * t);
+      const float alpha = 1.0f - t;
       ImU32 color = (clickFeedbackColor_ == 0)
           ? IM_COL32(255, 220, 50, static_cast<int>(alpha * 200))
           : IM_COL32(200, 50, 50, static_cast<int>(alpha * 200));
@@ -1660,7 +1741,8 @@ void App::renderFrame() {
   }
   ImGui::End();
 
-  drawWorldContextMenu();
+  // Context menu: Clay path is handled inside clayFrame; ImGui fallback when Clay off.
+  if (!showClayUi_) drawWorldContextMenu();
 
   ImGui::Render();
   ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());

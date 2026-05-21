@@ -86,6 +86,9 @@ add_executable(client-native
   src/ui/WorldOverlays.cpp
   src/ui/ClayRenderer.cpp
   src/ui/ClayHudPanel.cpp
+  src/ui/ClayContextMenu.cpp
+  src/ui/ClayClickFeedback.cpp
+  src/ui/ClayContextInfo.cpp
 )
 
 target_link_libraries(client-native PRIVATE

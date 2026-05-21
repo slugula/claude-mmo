@@ -19,6 +19,8 @@ void clayResize(int w, int h);
 
 // Single-call Clay frame: runs layout, renders output, handles input.
 // Call after ImGui::NewFrame() and before ImGui::Render().
+// contextVerb / contextSubject: pre-computed top-left context info strings.
+// Both may be nullptr or empty — buildContextInfo skips itself if both are empty.
 void clayFrame(const shared::PlayerState* player,
                net::NetworkClient* netc,
                const SpriteCache*  sprites,
@@ -27,6 +29,8 @@ void clayFrame(const shared::PlayerState* player,
                float mx, float my,
                bool mouseDown,
                bool leftClicked,
-               bool rightClicked);
+               bool rightClicked,
+               const char* contextVerb,
+               const char* contextSubject);
 
 } // namespace ui

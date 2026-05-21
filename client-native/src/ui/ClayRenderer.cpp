@@ -13,6 +13,9 @@
 
 #include "ui/ClayRenderer.hpp"
 #include "ui/ClayHudPanel.hpp"
+#include "ui/ClayContextMenu.hpp"
+#include "ui/ClayClickFeedback.hpp"
+#include "ui/ClayContextInfo.hpp"
 #include "net/NetworkClient.hpp"
 #include "world/SpriteCache.hpp"
 
@@ -161,14 +164,25 @@ void clayFrame(const shared::PlayerState* player,
                float mx, float my,
                bool mouseDown,
                bool leftClicked,
-               bool rightClicked)
+               bool rightClicked,
+               const char* contextVerb,
+               const char* contextSubject)
 {
     Clay_SetPointerState({ mx, my }, mouseDown);
     Clay_UpdateScrollContainers(false, { 0.f, 0.f }, dt);
     Clay_BeginLayout();
+
     clayHudBuildLayout(player, sprites);
+    buildContextMenu();
+    buildClickFeedback(dt);
+    buildContextInfo(contextVerb, contextSubject);
+
     Clay_RenderCommandArray cmds = Clay_EndLayout(dt);
+
+    // Input handling (after layout so PointerOver uses this frame's bounds)
     clayHudHandleInput(player, netc, hover, leftClicked, rightClicked);
+    handleContextMenuInput(leftClicked, mx, my);
+
     clayRenderInternal(cmds);
 }
 
