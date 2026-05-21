@@ -4,6 +4,7 @@
 #include "editor/EntityDefs.hpp"
 #include "render/GlDebug.hpp"
 #include "ui/NameRegistry.hpp"
+#include "ui/ClayRenderer.hpp"
 #include "shared/SharedTypesJson.hpp"
 #include "world/GltfLoader.hpp"
 #include "world/MapGenerator.hpp"
@@ -53,8 +54,9 @@ constexpr const char* kOutlineMaskVertPath    = "shaders/outline_mask.vert";
 constexpr const char* kOutlineMaskFragPath    = "shaders/outline_mask.frag";
 constexpr const char* kOutlineCompositeVertPath = "shaders/outline_composite.vert";
 constexpr const char* kOutlineCompositeFragPath = "shaders/outline_composite.frag";
-constexpr const char* kShadowInstVertPath= "shaders/shadow_instanced.vert";
-constexpr const char* kShadowFragPath    = "shaders/shadow.frag";
+constexpr const char* kShadowInstVertPath    = "shaders/shadow_instanced.vert";
+constexpr const char* kShadowSkinnedVertPath = "shaders/shadow_skinned.vert";
+constexpr const char* kShadowFragPath        = "shaders/shadow.frag";
 constexpr const char* kPlayerModelPath   = "assets/models/player.glb";
 constexpr const char* kTreeModelPath     = "assets/models/tree.gltf";
 constexpr const char* kWaterVertPath     = "shaders/water.vert";
@@ -234,6 +236,7 @@ bool App::init() {
           } else {
             network_.sendTalkTo(n.id);
           }
+          oneShotClip_.clear();
           dispatched = true;
           clickFeedbackColor_ = 1;
           break;
@@ -244,6 +247,7 @@ bool App::init() {
         for (const auto& it : droppedItems_) {
           if (it.tileX != tx || it.tileY != ty) continue;
           network_.sendTakeItem(it.id);
+          oneShotClip_.clear();
           dispatched = true;
           clickFeedbackColor_ = 1;
           break;
@@ -255,10 +259,12 @@ bool App::init() {
         const auto obs = map_.tiles[ty][tx].obstacle;
         if (obs == shared::ObstacleType::tree) {
           network_.sendChopTree(tx, ty);
+          oneShotClip_.clear();
           dispatched = true;
           clickFeedbackColor_ = 1;
         } else if (obs == shared::ObstacleType::rock) {
           network_.sendMineRock(tx, ty);
+          oneShotClip_.clear();
           dispatched = true;
           clickFeedbackColor_ = 1;
         } else if (obs == shared::ObstacleType::chest) {
@@ -274,6 +280,7 @@ bool App::init() {
             tx >= 0 && tx < static_cast<int>(map_.tiles[ty].size()) &&
             map_.tiles[ty][tx].walkable) {
           network_.sendMoveTo(tx, ty);
+          oneShotClip_.clear();
           clickFeedbackColor_ = 0;  // yellow for walk
         } else {
           clickFeedbackColor_ = 1;  // red for blocked
@@ -341,7 +348,12 @@ bool App::init() {
   }
   if (!shadowInstancedShader_.fromFiles(resolveFromExe(kShadowInstVertPath),
                                         resolveFromExe(kShadowFragPath))) {
-    std::fprintf(stderr, "[App] shadow shader load failed\n");
+    std::fprintf(stderr, "[App] shadow instanced shader load failed\n");
+    return false;
+  }
+  if (!shadowSkinnedShader_.fromFiles(resolveFromExe(kShadowSkinnedVertPath),
+                                      resolveFromExe(kShadowFragPath))) {
+    std::fprintf(stderr, "[App] shadow skinned shader load failed\n");
     return false;
   }
   if (!shadowMap_.init(kShadowMapSize)) {
@@ -421,6 +433,8 @@ bool App::init() {
   glDisable(GL_CULL_FACE);
 
   initImGui();
+
+  { int fw, fh; glfwGetFramebufferSize(window_.handle(), &fw, &fh); ui::clayInit(fw, fh); }
 
   if (!audio_.init()) {
     std::fprintf(stderr, "[App] audio init failed — proceeding without sound\n");
@@ -706,9 +720,68 @@ void App::renderFrame() {
       sunDir, mapCenter, shadowHalfExtent_);
   if (shadowsEnabled_) {
     shadowMap_.beginPass();
+
+    // Obstacles + NPCs (both use the instanced shadow shader / same VAO layout)
     shadowInstancedShader_.use();
     shadowInstancedShader_.setMat4("u_lightViewProj", lightVP);
     obstacles_.renderDepth(shadowInstancedShader_);
+    entities_.renderDepth(shadowInstancedShader_);
+
+    // Local player + remote players (skinned meshes)
+    if (playerModel_.isLoaded()) {
+      shadowSkinnedShader_.use();
+      shadowSkinnedShader_.setMat4("u_lightViewProj", lightVP);
+
+      // Local player
+      if (currLocalPlayer_) {
+        const auto shadowNow = std::chrono::steady_clock::now();
+        const auto shadowDtMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+            shadowNow - lastTickTime_).count();
+        const float shadowAlpha = std::clamp(
+            static_cast<float>(shadowDtMs) / static_cast<float>(shared::kTickDurationMs),
+            0.0f, 1.0f);
+        float sfx = static_cast<float>(currLocalPlayer_->tileX);
+        float sfy = static_cast<float>(currLocalPlayer_->tileY);
+        float syWorld = tileWorldY(map_, currLocalPlayer_->tileX, currLocalPlayer_->tileY);
+        if (prevLocalPlayer_) {
+          sfx    = std::lerp(static_cast<float>(prevLocalPlayer_->tileX), sfx, shadowAlpha);
+          sfy    = std::lerp(static_cast<float>(prevLocalPlayer_->tileY), sfy, shadowAlpha);
+          syWorld= std::lerp(tileWorldY(map_, prevLocalPlayer_->tileX, prevLocalPlayer_->tileY),
+                             syWorld, shadowAlpha);
+        }
+        glm::mat4 shadowMat = glm::translate(glm::mat4(1.0f), glm::vec3(sfx, syWorld, sfy));
+        shadowMat = glm::rotate(shadowMat, smoothedPlayerYaw_, glm::vec3(0.0f, 1.0f, 0.0f));
+        shadowMat = glm::scale(shadowMat, glm::vec3(kPlayerScale));
+        playerModel_.render(shadowSkinnedShader_, shadowMat);
+      }
+
+      // Remote players
+      {
+        const auto rpNow   = std::chrono::steady_clock::now();
+        const auto rpDtMs  = std::chrono::duration_cast<std::chrono::milliseconds>(rpNow - lastTickTime_).count();
+        const float rpAlpha= std::clamp(static_cast<float>(rpDtMs) /
+                                        static_cast<float>(shared::kTickDurationMs), 0.0f, 1.0f);
+        for (const auto& [rpId, rp] : currRemotePlayers_) {
+          if (rp.dying) continue;
+          float rfx     = static_cast<float>(rp.tileX);
+          float rfy     = static_cast<float>(rp.tileY);
+          float ryWorld = tileWorldY(map_, rp.tileX, rp.tileY);
+          auto prevIt = prevRemotePlayers_.find(rpId);
+          if (prevIt != prevRemotePlayers_.end()) {
+            rfx     = std::lerp(static_cast<float>(prevIt->second.tileX), rfx, rpAlpha);
+            rfy     = std::lerp(static_cast<float>(prevIt->second.tileY), rfy, rpAlpha);
+            ryWorld = std::lerp(tileWorldY(map_, prevIt->second.tileX, prevIt->second.tileY),
+                                ryWorld, rpAlpha);
+          }
+          const float rpYaw = remoteAnims_.count(rpId) ? remoteAnims_.at(rpId).yaw : 0.0f;
+          glm::mat4 rpMat = glm::translate(glm::mat4(1.0f), glm::vec3(rfx, ryWorld, rfy));
+          rpMat = glm::rotate(rpMat, rpYaw, glm::vec3(0.0f, 1.0f, 0.0f));
+          rpMat = glm::scale(rpMat, glm::vec3(kPlayerScale));
+          playerModel_.render(shadowSkinnedShader_, rpMat);
+        }
+      }
+    }
+
     shadowMap_.endPass();
   }
 
@@ -762,8 +835,9 @@ void App::renderFrame() {
 
   // ---- Obstacles (instanced) -------------------------------------------------
   obstacleShader_.use();
-  obstacleShader_.setMat4 ("u_viewProj",       viewProj);
-  obstacleShader_.setVec3 ("u_lightDir",       sunDir);
+  obstacleShader_.setMat4 ("u_viewProj",        viewProj);
+  obstacleShader_.setMat4 ("u_lightViewProj",   lightVP);
+  obstacleShader_.setVec3 ("u_lightDir",        sunDir);
   obstacleShader_.setVec3 ("u_paletteLevels",
                            glm::vec3(static_cast<float>(paletteHues_),
                                      static_cast<float>(paletteSats_),
@@ -772,6 +846,10 @@ void App::renderFrame() {
   obstacleShader_.setFloat("u_ambient",         ambient_);
   obstacleShader_.setFloat("u_diffuse",         diffuse_);
   obstacleShader_.setFloat("u_lightingEnabled", lightingEnabled_ ? 1.0f : 0.0f);
+  obstacleShader_.setInt  ("u_shadowMap",        1);
+  obstacleShader_.setFloat("u_shadowsEnabled",  shadowsEnabled_ ? 1.0f : 0.0f);
+  obstacleShader_.setFloat("u_shadowDarkness",  shadowDarkness_);
+  obstacleShader_.setFloat("u_shadowBias",      shadowBias_);
   obstacleShader_.setFloat("u_fogEnabled", fogEnabled_  ? 1.0f : 0.0f);
   obstacleShader_.setVec3 ("u_fogColor",   fogColor_);
   obstacleShader_.setFloat("u_fogDensity", fogDensity_);
@@ -875,20 +953,25 @@ void App::renderFrame() {
                                      0.0f, 1.0f);
 
     skinnedShader_.use();
-    skinnedShader_.setMat4 ("u_viewProj", viewProj);
-    skinnedShader_.setVec3 ("u_lightDir", sunDir);
+    skinnedShader_.setMat4 ("u_viewProj",       viewProj);
+    skinnedShader_.setMat4 ("u_lightViewProj",  lightVP);
+    skinnedShader_.setVec3 ("u_lightDir",       sunDir);
     skinnedShader_.setVec3 ("u_paletteLevels",
                             glm::vec3(static_cast<float>(paletteHues_),
                                       static_cast<float>(paletteSats_),
                                       static_cast<float>(paletteLums_)));
-    skinnedShader_.setFloat("u_paletteEnabled", palette_ ? 1.0f : 0.0f);
-    skinnedShader_.setFloat("u_ambient",        ambient_);
-    skinnedShader_.setFloat("u_diffuse",        diffuse_);
+    skinnedShader_.setFloat("u_paletteEnabled",  palette_ ? 1.0f : 0.0f);
+    skinnedShader_.setFloat("u_ambient",         ambient_);
+    skinnedShader_.setFloat("u_diffuse",         diffuse_);
     skinnedShader_.setFloat("u_lightingEnabled", lightingEnabled_ ? 1.0f : 0.0f);
-    skinnedShader_.setFloat("u_fogEnabled", fogEnabled_  ? 1.0f : 0.0f);
-    skinnedShader_.setVec3 ("u_fogColor",   fogColor_);
-    skinnedShader_.setFloat("u_fogDensity", fogDensity_);
-    skinnedShader_.setFloat("u_fogStart",   fogStart_);
+    skinnedShader_.setInt  ("u_shadowMap",       1);
+    skinnedShader_.setFloat("u_shadowsEnabled",  shadowsEnabled_ ? 1.0f : 0.0f);
+    skinnedShader_.setFloat("u_shadowDarkness",  shadowDarkness_);
+    skinnedShader_.setFloat("u_shadowBias",      shadowBias_);
+    skinnedShader_.setFloat("u_fogEnabled",  fogEnabled_  ? 1.0f : 0.0f);
+    skinnedShader_.setVec3 ("u_fogColor",    fogColor_);
+    skinnedShader_.setFloat("u_fogDensity",  fogDensity_);
+    skinnedShader_.setFloat("u_fogStart",    fogStart_);
     constexpr glm::vec3 kRemoteColor{0.50f, 0.38f, 0.28f};
     skinnedShader_.setVec3 ("u_color", kRemoteColor);
 
@@ -1111,6 +1194,20 @@ void App::renderFrame() {
   ImGui_ImplGlfw_NewFrame();
   ImGui::NewFrame();
 
+  // ---- Clay UI pass ----------------------------------------------------------
+  if (showClayUi_) {
+    ImVec2 mp      = ImGui::GetMousePos();
+    bool   md      = ImGui::IsMouseDown(ImGuiMouseButton_Left);
+    bool   lClick  = ImGui::IsMouseClicked(ImGuiMouseButton_Left);
+    bool   rClick  = ImGui::IsMouseClicked(ImGuiMouseButton_Right);
+    const shared::PlayerState* localPlayer =
+        currLocalPlayer_ ? &currLocalPlayer_.value() : nullptr;
+    // Reset UI hover before Clay writes to it.
+    uiHover_ = ui::UiHoverState{};
+    ui::clayFrame(localPlayer, &network_, &uiHover_, dt, mp.x, mp.y,
+                  md, lClick, rClick);
+  }
+
   const bool connected = (network_.status() == net::Connection::Connected);
   drawLoginUi();   // no-op when connected
 
@@ -1119,11 +1216,12 @@ void App::renderFrame() {
   }
 
   if (connected && currLocalPlayer_) {
-    // Reset UI hover state before panels write to it.
-    uiHover_ = ui::UiHoverState{};
-    ui::drawHudPanel  (*currLocalPlayer_, &network_, &uiHover_);
-    ui::drawBankPanel (*currLocalPlayer_, &network_, &bankOpen_);
-    chatLog_.draw     (&network_);
+    // HUD panel (inventory / skills / equipment) is now rendered by Clay
+    // in the clayFrame block above. Bank + chat remain ImGui (gated by toggle).
+    if (showImguiUi_) {
+      ui::drawBankPanel (*currLocalPlayer_, &network_, &bankOpen_);
+      chatLog_.draw     (&network_);
+    }
 
     // ---- Build overlay entries from per-frame interpolated positions -------
     // All positions are lerped with the same tick alpha used for entity render,
@@ -1522,6 +1620,12 @@ void App::renderFrame() {
     ImGui::TextDisabled("Writes settings.cfg next to exe");
 
     ImGui::Separator();
+    ImGui::TextUnformatted("UI Layer");
+    ImGui::Checkbox("ImGui UI", &showImguiUi_);
+    ImGui::SameLine();
+    ImGui::Checkbox("Clay UI", &showClayUi_);
+
+    ImGui::Separator();
     ImGui::TextUnformatted("Network (Phase 4)");
     const auto status = network_.status();
     const char* statusText = "Disconnected";
@@ -1592,14 +1696,18 @@ void App::drawWorldContextMenu() {
   }
   switch (obstacle) {
     case shared::ObstacleType::tree:
-      if (ImGui::Selectable("Chop down  Tree"))
+      if (ImGui::Selectable("Chop down  Tree")) {
         network_.sendChopTree(ctxMenuTileX_, ctxMenuTileY_);
+        oneShotClip_.clear();
+      }
       if (ImGui::Selectable("Examine  Tree"))
         chatLog_.appendSystem("A sturdy tree.");
       break;
     case shared::ObstacleType::rock:
-      if (ImGui::Selectable("Mine  Rock"))
+      if (ImGui::Selectable("Mine  Rock")) {
         network_.sendMineRock(ctxMenuTileX_, ctxMenuTileY_);
+        oneShotClip_.clear();
+      }
       if (ImGui::Selectable("Examine  Rock"))
         chatLog_.appendSystem("A rocky outcrop.");
       break;
@@ -1622,10 +1730,10 @@ void App::drawWorldContextMenu() {
     char buf[128];
     if (ui::npcIsAttackable(n.kind)) {
       std::snprintf(buf, sizeof(buf), "Attack  %s", displayName.c_str());
-      if (ImGui::Selectable(buf)) network_.sendAttackNpc(n.id);
+      if (ImGui::Selectable(buf)) { network_.sendAttackNpc(n.id); oneShotClip_.clear(); }
     } else {
       std::snprintf(buf, sizeof(buf), "Talk-to  %s", displayName.c_str());
-      if (ImGui::Selectable(buf)) network_.sendTalkTo(n.id);
+      if (ImGui::Selectable(buf)) { network_.sendTalkTo(n.id); oneShotClip_.clear(); }
     }
     const char* examineText = (n.kind == "chicken")    ? "It's a chicken."
                             : (n.kind == "shopkeeper") ? "This is a friendly shopkeeper."
@@ -1637,14 +1745,18 @@ void App::drawWorldContextMenu() {
   // ---- Dropped items at this tile ----------------------------------------
   for (const auto& it : droppedItems_) {
     if (it.tileX != ctxMenuTileX_ || it.tileY != ctxMenuTileY_) continue;
+    ImGui::PushID(it.id.c_str());
     char buf[128];
     std::snprintf(buf, sizeof(buf), "Take  %s", ui::itemName(it.itemId).c_str());
-    if (ImGui::Selectable(buf)) network_.sendTakeItem(it.id);
+    if (ImGui::Selectable(buf)) { network_.sendTakeItem(it.id); oneShotClip_.clear(); }
+    ImGui::PopID();
   }
 
   // ---- Always available --------------------------------------------------
-  if (ImGui::Selectable("Walk here"))
+  if (ImGui::Selectable("Walk here")) {
     network_.sendMoveTo(ctxMenuTileX_, ctxMenuTileY_);
+    oneShotClip_.clear();
+  }
 
   ImGui::EndPopup();
 }
@@ -1730,7 +1842,10 @@ void App::exportWorldMap() {
 
 void App::onResize(int width, int height) {
   if (msaa_) msaa_->resize(width, height);
-  if (width > 0 && height > 0) initOutlineMaskFbo(width, height);
+  if (width > 0 && height > 0) {
+    initOutlineMaskFbo(width, height);
+    ui::clayResize(width, height);
+  }
 }
 
 void App::initOutlineMaskFbo(int w, int h) {
@@ -1753,6 +1868,7 @@ void App::initImGui() {
   ImGui::CreateContext();
   ImGuiIO& io = ImGui::GetIO();
   io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
+  io.ConfigDebugHighlightIdConflicts = false;
 
   // OSRS pixel font — ProggyClean at 13px gives a retro game feel.
   // Falls back gracefully to ImGui's built-in bitmap font if the file isn't found.
@@ -1891,11 +2007,11 @@ void App::renderPlayer(const glm::mat4& viewProj, float dt) {
     const shared::PlayerState* prevPtr =
       prevLocalPlayer_.has_value() ? &*prevLocalPlayer_ : nullptr;
     desired = clipForPlayer(&*currLocalPlayer_, prevPtr);
-    // Suppress movement clips while the character is still turning significantly.
-    // This prevents running-in-place in the wrong direction when pathfinding
-    // behind the player.  ~60° threshold: small turns start immediately, large
-    // turns wait until the model has visibly pivoted toward the destination.
-    constexpr float kTurnThreshold = 1.05f;  // ≈ 60°
+    // Suppress movement clips until the model has nearly finished turning.
+    // Threshold of ~20° means the walk/run animation only starts once the
+    // character is visually pointing at the destination, giving a clear
+    // "turn first, then run" read at all turn angles.
+    constexpr float kTurnThreshold = 0.35f;  // ≈ 20°
     if (isMovementClip(desired) &&
         std::abs(yawDelta(smoothedPlayerYaw_, targetYaw)) > kTurnThreshold) {
       desired = "Idle_Loop";
@@ -1917,7 +2033,7 @@ void App::renderPlayer(const glm::mat4& viewProj, float dt) {
     constexpr float kTwoPi = 6.28318531f;
     float delta = std::fmod(targetYaw - smoothedPlayerYaw_ + kTwoPi + 3.14159265f,
                             kTwoPi) - 3.14159265f;
-    const float k = 1.0f - std::exp(-dt / 0.08f);   // 80 ms half-life-ish
+    const float k = 1.0f - std::exp(-dt / 0.045f);  // ~45 ms half-life — snappy turn
     smoothedPlayerYaw_ += delta * k;
   }
   glm::mat4 modelMatrix = glm::translate(glm::mat4(1.0f), glm::vec3(fx, yWorld, fy));
@@ -1925,8 +2041,11 @@ void App::renderPlayer(const glm::mat4& viewProj, float dt) {
   modelMatrix = glm::scale(modelMatrix, glm::vec3(kPlayerScale));
 
   const glm::vec3 sunDir = sunDirectionFromYawPitch(sunYawDeg_, sunPitchDeg_);
+  const glm::mat4 localLightVP = render::ShadowMap::lightViewProj(
+      sunDir, followTargetForMap(terrainTileW_, terrainTileH_), shadowHalfExtent_);
   skinnedShader_.use();
   skinnedShader_.setMat4 ("u_viewProj",        viewProj);
+  skinnedShader_.setMat4 ("u_lightViewProj",   localLightVP);
   skinnedShader_.setVec3 ("u_lightDir",        sunDir);
   skinnedShader_.setVec3 ("u_paletteLevels",
                           glm::vec3(static_cast<float>(paletteHues_),
@@ -1936,10 +2055,14 @@ void App::renderPlayer(const glm::mat4& viewProj, float dt) {
   skinnedShader_.setFloat("u_ambient",         ambient_);
   skinnedShader_.setFloat("u_diffuse",         diffuse_);
   skinnedShader_.setFloat("u_lightingEnabled", lightingEnabled_ ? 1.0f : 0.0f);
-  skinnedShader_.setFloat("u_fogEnabled", fogEnabled_  ? 1.0f : 0.0f);
-  skinnedShader_.setVec3 ("u_fogColor",   fogColor_);
-  skinnedShader_.setFloat("u_fogDensity", fogDensity_);
-  skinnedShader_.setFloat("u_fogStart",   fogStart_);
+  skinnedShader_.setInt  ("u_shadowMap",        1);
+  skinnedShader_.setFloat("u_shadowsEnabled",  shadowsEnabled_ ? 1.0f : 0.0f);
+  skinnedShader_.setFloat("u_shadowDarkness",  shadowDarkness_);
+  skinnedShader_.setFloat("u_shadowBias",      shadowBias_);
+  skinnedShader_.setFloat("u_fogEnabled",  fogEnabled_  ? 1.0f : 0.0f);
+  skinnedShader_.setVec3 ("u_fogColor",    fogColor_);
+  skinnedShader_.setFloat("u_fogDensity",  fogDensity_);
+  skinnedShader_.setFloat("u_fogStart",    fogStart_);
   skinnedShader_.setVec3 ("u_color",           kPlayerColor);
   playerModel_.render(skinnedShader_, modelMatrix);
 }

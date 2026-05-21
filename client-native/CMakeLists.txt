@@ -55,6 +55,7 @@ target_include_directories(game_core PUBLIC
   ${CGLTF_INCLUDE_DIR}
   ${MINIAUDIO_INCLUDE_DIR}
   ${STB_INCLUDE_DIR}
+  vendor/clay
 )
 
 target_link_libraries(game_core PUBLIC
@@ -68,6 +69,7 @@ target_link_libraries(game_core PUBLIC
 if (MSVC)
   target_compile_options(game_core PRIVATE
     /W4 /permissive- /Zc:preprocessor
+    /D_CRT_SECURE_NO_WARNINGS
     $<$<CONFIG:Release>:/O2>
   )
 endif()
@@ -81,6 +83,8 @@ add_executable(client-native
   src/net/NetworkClient.cpp
   src/ui/Panels.cpp
   src/ui/WorldOverlays.cpp
+  src/ui/ClayRenderer.cpp
+  src/ui/ClayHudPanel.cpp
 )
 
 target_link_libraries(client-native PRIVATE
@@ -98,6 +102,7 @@ endif()
 if (MSVC)
   target_compile_options(client-native PRIVATE
     /W4 /permissive- /Zc:preprocessor
+    /D_CRT_SECURE_NO_WARNINGS
     $<$<CONFIG:Release>:/O2>
   )
   set_target_properties(client-native PROPERTIES
@@ -132,6 +137,7 @@ target_link_libraries(level-editor PRIVATE game_core)
 if (MSVC)
   target_compile_options(level-editor PRIVATE
     /W4 /permissive- /Zc:preprocessor
+    /D_CRT_SECURE_NO_WARNINGS
     $<$<CONFIG:Release>:/O2>
   )
   set_target_properties(level-editor PROPERTIES

@@ -76,6 +76,7 @@ private:
   render::Shader                           outlineMaskShader_;      // renders silhouette to mask FBO
   render::Shader                           outlineCompositeShader_; // composites border over scene
   render::Shader                           shadowInstancedShader_;
+  render::Shader                           shadowSkinnedShader_;
   render::ShadowMap                        shadowMap_;
   render::Mesh                             terrainMesh_;
   world::ObstacleSystem                    obstacles_;
@@ -228,6 +229,12 @@ private:
   float                                    shadowBias_      = 0.0025f;
   float                                    shadowHalfExtent_ = 40.0f;
   bool                                     imguiInited_     = false;
+
+  // Debug UI layer toggles — visible in the Debug panel.
+  // showImguiUi_ gates ImGui game panels (bank, chat); excludes the debug panel itself.
+  // showClayUi_  gates the entire clayFrame() call.
+  bool                                     showImguiUi_     = false;
+  bool                                     showClayUi_      = true;
 };
 
 }  // namespace app
