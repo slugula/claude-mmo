@@ -4,7 +4,8 @@
 // App.cpp never needs to include clay.h.
 
 #include "shared/SharedTypes.hpp"
-#include "ui/Panels.hpp"    // UiHoverState
+#include "ui/Panels.hpp"       // UiHoverState
+#include "world/SpriteCache.hpp"
 
 namespace net { class NetworkClient; }
 
@@ -20,6 +21,7 @@ void clayResize(int w, int h);
 // Call after ImGui::NewFrame() and before ImGui::Render().
 void clayFrame(const shared::PlayerState* player,
                net::NetworkClient* netc,
+               const SpriteCache*  sprites,
                UiHoverState*       hover,
                float dt,
                float mx, float my,

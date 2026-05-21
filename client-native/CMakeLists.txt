@@ -48,6 +48,7 @@ add_library(game_core STATIC
   src/world/TerrainBuilder.cpp
   src/world/WaterMesh.cpp
   src/world/WaterRenderer.cpp
+  src/world/SpriteCache.cpp
 )
 
 target_include_directories(game_core PUBLIC

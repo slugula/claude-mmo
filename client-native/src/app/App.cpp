@@ -195,6 +195,7 @@ const char* clipForPlayer(const shared::PlayerState* p,
 }  // namespace
 
 App::~App() {
+  spriteCache_.destroy();
   if (imguiInited_) shutdownImGui();
   destroyHoverMesh();
   if (outlineMaskFbo_) glDeleteFramebuffers(1, &outlineMaskFbo_);
@@ -435,6 +436,7 @@ bool App::init() {
   initImGui();
 
   { int fw, fh; glfwGetFramebufferSize(window_.handle(), &fw, &fh); ui::clayInit(fw, fh); }
+  spriteCache_.init();
 
   if (!audio_.init()) {
     std::fprintf(stderr, "[App] audio init failed — proceeding without sound\n");
@@ -1204,7 +1206,7 @@ void App::renderFrame() {
         currLocalPlayer_ ? &currLocalPlayer_.value() : nullptr;
     // Reset UI hover before Clay writes to it.
     uiHover_ = ui::UiHoverState{};
-    ui::clayFrame(localPlayer, &network_, &uiHover_, dt, mp.x, mp.y,
+    ui::clayFrame(localPlayer, &network_, &spriteCache_, &uiHover_, dt, mp.x, mp.y,
                   md, lClick, rClick);
   }
 

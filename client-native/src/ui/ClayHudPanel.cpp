@@ -165,7 +165,8 @@ static Clay_String clayStr(const std::string& s) {
 }
 
 // ── Inventory tab ─────────────────────────────────────────────────────────────
-static void buildInventoryTab(const shared::PlayerState* player) {
+static void buildInventoryTab(const shared::PlayerState* player,
+                              const SpriteCache* sprites) {
     CLAY(CLAY_ID("InvContent"), {
         .layout = {
             .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) },
@@ -207,12 +208,27 @@ static void buildInventoryTab(const shared::PlayerState* player) {
                         }
                     }) {
                         if (filled) {
-                            // Item name (centered)
-                            std::string name = prettyId(item->itemId);
-                            CLAY_TEXT(clayStr(name), CLAY_TEXT_CONFIG({
-                                .textColor = kItemText,
-                                .fontSize  = 9,
-                            }));
+                            if (sprites) {
+                                // Sprite image (fills most of the slot)
+                                GLuint tex = sprites->get(item->itemId);
+                                CLAY(CLAY_IDI("InvSprite", idx), {
+                                    .layout = {
+                                        .sizing = { CLAY_SIZING_FIXED(kCellSize - 6),
+                                                    CLAY_SIZING_FIXED(kCellSize - 6) },
+                                    },
+                                    .image = {
+                                        .imageData = reinterpret_cast<void*>(
+                                            static_cast<uintptr_t>(tex)),
+                                    }
+                                }) {}
+                            } else {
+                                // Fallback: item name text
+                                std::string name = prettyId(item->itemId);
+                                CLAY_TEXT(clayStr(name), CLAY_TEXT_CONFIG({
+                                    .textColor = kItemText,
+                                    .fontSize  = 9,
+                                }));
+                            }
 
                             // Quantity: floating top-left overlay
                             if (item->quantity > 1) {
@@ -391,7 +407,8 @@ static ItemStats statsForItem(const std::string& id) {
     return {};
 }
 
-static void buildEquipmentTab(const shared::PlayerState* player) {
+static void buildEquipmentTab(const shared::PlayerState* player,
+                              const SpriteCache* sprites) {
     CLAY(CLAY_ID("EquipContent"), {
         .layout = {
             .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) },
@@ -450,11 +467,25 @@ static void buildEquipmentTab(const shared::PlayerState* player) {
                         }
                     }) {
                         if (item) {
-                            std::string name = prettyId(item->itemId);
-                            CLAY_TEXT(clayStr(name), CLAY_TEXT_CONFIG({
-                                .textColor = kItemText,
-                                .fontSize  = 9,
-                            }));
+                            if (sprites) {
+                                GLuint tex = sprites->get(item->itemId);
+                                CLAY(CLAY_IDI("EqSprite", gridIdx), {
+                                    .layout = {
+                                        .sizing = { CLAY_SIZING_FIXED(kCellSize - 6),
+                                                    CLAY_SIZING_FIXED(kCellSize - 6) },
+                                    },
+                                    .image = {
+                                        .imageData = reinterpret_cast<void*>(
+                                            static_cast<uintptr_t>(tex)),
+                                    }
+                                }) {}
+                            } else {
+                                std::string name = prettyId(item->itemId);
+                                CLAY_TEXT(clayStr(name), CLAY_TEXT_CONFIG({
+                                    .textColor = kItemText,
+                                    .fontSize  = 9,
+                                }));
+                            }
                         } else {
                             // Slot label letter (e.g. "H" for Head)
                             char letter[2] = { m->label[0], '\0' };
@@ -513,7 +544,8 @@ static void buildEquipmentTab(const shared::PlayerState* player) {
 }
 
 // ── Public: build layout ──────────────────────────────────────────────────────
-void clayHudBuildLayout(const shared::PlayerState* player) {
+void clayHudBuildLayout(const shared::PlayerState* player,
+                        const SpriteCache* sprites) {
     // Reset string scratch buffer every frame.
     s_strOff   = 0;
     s_hovInvSlot  = -1;
@@ -589,9 +621,9 @@ void clayHudBuildLayout(const shared::PlayerState* player) {
             }
 
             // ── Tab content ───────────────────────────────────────────────────
-            if      (s_activeTab == 0) buildInventoryTab(player);
+            if      (s_activeTab == 0) buildInventoryTab(player, sprites);
             else if (s_activeTab == 1) buildSkillsTab(player);
-            else                       buildEquipmentTab(player);
+            else                       buildEquipmentTab(player, sprites);
         }
     }
 }

@@ -14,6 +14,7 @@
 #include "ui/ClayRenderer.hpp"
 #include "ui/ClayHudPanel.hpp"
 #include "net/NetworkClient.hpp"
+#include "world/SpriteCache.hpp"
 
 #include <imgui.h>
 #include <cfloat>   // FLT_MAX
@@ -129,6 +130,14 @@ static void clayRenderInternal(Clay_RenderCommandArray commands)
             break;
         }
 
+        case CLAY_RENDER_COMMAND_TYPE_IMAGE: {
+            // imageData carries a GLuint cast to void* via uintptr_t.
+            GLuint tex = static_cast<GLuint>(
+                reinterpret_cast<uintptr_t>(cmd->renderData.image.imageData));
+            dl->AddImage((ImTextureID)(uintptr_t)tex, p0, p1);
+            break;
+        }
+
         case CLAY_RENDER_COMMAND_TYPE_SCISSOR_START:
             dl->PushClipRect(p0, p1, /*intersect_with_current=*/true);
             break;
@@ -146,6 +155,7 @@ static void clayRenderInternal(Clay_RenderCommandArray commands)
 // ── Frame ─────────────────────────────────────────────────────────────────────
 void clayFrame(const shared::PlayerState* player,
                net::NetworkClient* netc,
+               const SpriteCache*  sprites,
                UiHoverState*       hover,
                float dt,
                float mx, float my,
@@ -156,7 +166,7 @@ void clayFrame(const shared::PlayerState* player,
     Clay_SetPointerState({ mx, my }, mouseDown);
     Clay_UpdateScrollContainers(false, { 0.f, 0.f }, dt);
     Clay_BeginLayout();
-    clayHudBuildLayout(player);
+    clayHudBuildLayout(player, sprites);
     Clay_RenderCommandArray cmds = Clay_EndLayout(dt);
     clayHudHandleInput(player, netc, hover, leftClicked, rightClicked);
     clayRenderInternal(cmds);

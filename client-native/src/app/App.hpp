@@ -16,6 +16,7 @@
 #include "world/EntityRenderer.hpp"
 #include "world/ObstacleSystem.hpp"
 #include "world/SkinnedMesh.hpp"
+#include "world/SpriteCache.hpp"
 #include "world/WaterRenderer.hpp"
 
 #include <glad/glad.h>
@@ -82,6 +83,7 @@ private:
   world::ObstacleSystem                    obstacles_;
   world::WaterRenderer                     waterRenderer_;
   world::WaterUniforms                     waterUniforms_;
+  ui::SpriteCache                          spriteCache_;
   world::SkinnedMesh                       playerModel_;
   world::EntityRenderer                    entities_;
   camera::GameCamera                       camera_;
