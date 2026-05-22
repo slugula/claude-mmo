@@ -85,7 +85,9 @@ void buildChatLog(float /*screenW*/, float screenH,
                   net::NetworkClient* netc)
 {
     // ── Keyboard capture ──────────────────────────────────────────────────────
-    if (netc) {
+    // Only capture keys when in-game (player != nullptr) so the login/join
+    // modals can own the keyboard before the player has connected.
+    if (netc && player) {
         const ImGuiIO& io = ImGui::GetIO();
         // Only steal input when no ImGui widget is actively focused.
         if (!ImGui::IsAnyItemActive()) {
@@ -182,7 +184,7 @@ void buildChatLog(float /*screenW*/, float screenH,
                     }) {
                         CLAY_TEXT(cs, CLAY_TEXT_CONFIG({
                             .textColor = col,
-                            .fontSize  = 11,
+                            .fontSize  = 0,
                         }));
                     }
                 }
@@ -211,7 +213,7 @@ void buildChatLog(float /*screenW*/, float screenH,
                     Clay_String inputCs = cstr(s_inputDisplay.c_str());
                     CLAY_TEXT(inputCs, CLAY_TEXT_CONFIG({
                         .textColor = kPlayerText,
-                        .fontSize  = 11,
+                        .fontSize  = 0,
                     }));
                 }
             }

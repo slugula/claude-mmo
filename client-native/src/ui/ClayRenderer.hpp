@@ -17,6 +17,14 @@ void clayInit(int w, int h);
 // Call whenever the framebuffer is resized.
 void clayResize(int w, int h);
 
+// Returns true if the mouse cursor was over a Clay UI element during the
+// most recent clayFrame() call. Use to suppress world hover/click events.
+bool clayIsPointerOverUI();
+
+// Toggle Clay's built-in debug overlay (shows element IDs, bounding boxes,
+// layout info). Call before clayFrame() each frame when the toggle is live.
+void claySetDebugMode(bool enabled);
+
 // Single-call Clay frame: runs layout, renders output, handles input.
 // Call after ImGui::NewFrame() and before ImGui::Render().
 // contextVerb / contextSubject: pre-computed top-left context info strings.
@@ -34,7 +42,9 @@ void clayFrame(const shared::PlayerState* player,
                bool rightClicked,
                const char* contextVerb,
                const char* contextSubject,
-               const char* tooltipText,
-               float wheelDelta);
+               float wheelDelta,
+               bool showLoginModal,
+               bool showJoinModal,
+               bool bankOpen);
 
 } // namespace ui

@@ -91,7 +91,10 @@ add_executable(client-native
   src/ui/ClayContextInfo.cpp
   src/ui/ClayTooltip.cpp
   src/ui/ClayChatLog.cpp
+  src/ui/ClayLoginModal.cpp
+  src/ui/ClayBankPanel.cpp
 )
+
 
 target_link_libraries(client-native PRIVATE
   game_core

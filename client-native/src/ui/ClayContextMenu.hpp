@@ -24,7 +24,18 @@ struct CtxMenuState {
     float                      screenW = 1920.f;
     float                      screenH = 1080.f;
     std::vector<CtxMenuEntry>  entries;
-    int                        clickedIndex = -1;  // set by handleContextMenuInput
+    int                        clickedIndex    = -1;  // set by handleContextMenuInput
+    // Set by the HUD panel when it owns the current menu.
+    // -1 = world/global menu; >=0 = inventory slot index.
+    int                        inventoryCtxSlot = -1;
+    // Non-empty when an equipment slot owns the menu (slot id like "rightHand").
+    std::string                equipCtxSlot;
+    // Raw item id for Examine dispatch (set alongside inventoryCtxSlot / equipCtxSlot).
+    std::string                contextItemId;
+    // Bank-panel grid slot index (>= 0 when a bank item was right-clicked).
+    int                        bankGridCtxSlot = -1;
+    // Bank-panel inventory slot index (>= 0 when an inventory item in bank was right-clicked).
+    int                        bankInvCtxSlot  = -1;
 };
 
 // Global accessor — zero-initialised on first use.

@@ -12,6 +12,8 @@
 #endif
 
 #include "ui/ClayHudPanel.hpp"
+#include "ui/ClayContextMenu.hpp"
+#include "ui/ClayTooltip.hpp"
 #include "ui/NameRegistry.hpp"
 #include "net/NetworkClient.hpp"
 
@@ -40,7 +42,7 @@ static constexpr Clay_Color kSlotHover    = { 255, 152,  31, 255 };
 static constexpr Clay_Color kItemText     = { 240, 206,  96, 255 };
 static constexpr Clay_Color kQtyText      = { 255, 221,  68, 255 };
 static constexpr Clay_Color kSlotLabel    = { 120, 100,  60, 200 };
-static constexpr Clay_Color kSkillCard    = {  18,  10,   3, 230 };
+static constexpr Clay_Color kSkillCard    = {  30,  17,   5, 255 };  // visibly lighter than panel
 static constexpr Clay_Color kXpBarBg      = {  20,  10,   0, 200 };
 static constexpr Clay_Color kXpBarFill    = {  40, 180,  50, 230 };
 static constexpr Clay_Color kOrange       = { 255, 140,  20, 255 };
@@ -89,8 +91,10 @@ static int xpForLevel(int lvl) {
 }
 
 // ── Layout constants ──────────────────────────────────────────────────────────
-static constexpr int   kPanelW    = 232;
-static constexpr int   kPanelH    = 460;
+// kPanelW:  1px border + 8px pad + 4×44 slots + 3×3 gaps + 8px pad + 1px border = 203
+// kPanelH:  28px tab bar + 8px pad + 7×44 rows + 6×3 gaps + 8px pad + 2px border = 372
+static constexpr int   kPanelW    = 203;
+static constexpr int   kPanelH    = 372;
 static constexpr int   kTabH      =  28;
 static constexpr int   kPad       =   8;
 static constexpr int   kCellSize  =  44;
@@ -104,8 +108,13 @@ static constexpr int   kEquipRows =   5;
 static int  s_activeTab      =  0;   // 0=inventory 1=skills 2=equipment
 static int  s_hovInvSlot     = -1;   // inventory slot under pointer
 static int  s_hovEquipIdx    = -1;   // kEquipGrid index under pointer
-static int  s_ctxInvSlot     = -1;   // right-clicked inventory slot (-1 = none)
-static int  s_ctxEquipIdx    = -1;   // right-clicked equip slot (-1 = none)
+
+// ── Drag-and-drop state ────────────────────────────────────────────────────────
+static int   s_dragSlot      = -1;   // slot being dragged (-1 = none)
+static int   s_pressedSlot   = -1;   // slot pressed but not yet dragged
+static float s_pressX        =  0.f; // mouse position at press
+static float s_pressY        =  0.f;
+static bool  s_prevMouseDown = false;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 static std::string prettyId(const std::string& id) { return ui::itemName(id); }
@@ -117,6 +126,16 @@ static std::string fmtQty(int q) {
     else if (q >=    10000) std::snprintf(buf,sizeof(buf),"%dk",  q/1000);
     else if (q >=     1000) std::snprintf(buf,sizeof(buf),"%.1fk",q/1000.0f);
     else                    std::snprintf(buf,sizeof(buf),"%d",   q);
+    return buf;
+}
+
+static std::string fmtNum(int n) {
+    char buf[24];
+    if      (n >= 1000000) std::snprintf(buf, sizeof(buf), "%d,%03d,%03d",
+                               n/1000000, (n/1000)%1000, n%1000);
+    else if (n >= 1000)    std::snprintf(buf, sizeof(buf), "%d,%03d",
+                               n/1000, n%1000);
+    else                   std::snprintf(buf, sizeof(buf), "%d", n);
     return buf;
 }
 
@@ -166,7 +185,8 @@ static Clay_String clayStr(const std::string& s) {
 
 // ── Inventory tab ─────────────────────────────────────────────────────────────
 static void buildInventoryTab(const shared::PlayerState* player,
-                              const SpriteCache* sprites) {
+                              const SpriteCache* sprites,
+                              float mx, float my) {
     CLAY(CLAY_ID("InvContent"), {
         .layout = {
             .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) },
@@ -175,6 +195,53 @@ static void buildInventoryTab(const shared::PlayerState* player,
             .layoutDirection = CLAY_TOP_TO_BOTTOM,
         }
     }) {
+        // Ghost sprite follows cursor while dragging
+        if (s_dragSlot >= 0) {
+            const shared::ItemStack* dragItem = nullptr;
+            if (player && s_dragSlot < static_cast<int>(player->inventory.size())) {
+                const auto& opt = player->inventory[s_dragSlot];
+                if (opt.has_value()) dragItem = &opt.value();
+            }
+            if (dragItem) {
+                constexpr int kGhostSize = 28;
+                CLAY(CLAY_ID("DragGhost"), {
+                    .floating = {
+                        .offset  = { mx - kGhostSize / 2.f, my - kGhostSize / 2.f },
+                        .zIndex  = 50,
+                        .attachPoints = {
+                            .element = CLAY_ATTACH_POINT_LEFT_TOP,
+                            .parent  = CLAY_ATTACH_POINT_LEFT_TOP,
+                        },
+                        .attachTo = CLAY_ATTACH_TO_ROOT,
+                    }
+                }) {
+                    CLAY(CLAY_ID("DragGhostInner"), {
+                        .layout = {
+                            .sizing         = { CLAY_SIZING_FIXED(kGhostSize),
+                                                CLAY_SIZING_FIXED(kGhostSize) },
+                            .childAlignment = { .x = CLAY_ALIGN_X_CENTER,
+                                                .y = CLAY_ALIGN_Y_CENTER },
+                        },
+                        .backgroundColor = { 30, 16, 4, 160 },
+                    }) {
+                        if (sprites) {
+                            GLuint tex = sprites->get(dragItem->itemId);
+                            CLAY(CLAY_ID("DragGhostSprite"), {
+                                .layout = {
+                                    .sizing = { CLAY_SIZING_FIXED(kGhostSize),
+                                                CLAY_SIZING_FIXED(kGhostSize) },
+                                },
+                                .image = {
+                                    .imageData = reinterpret_cast<void*>(
+                                        static_cast<uintptr_t>(tex)),
+                                }
+                            }) {}
+                        }
+                    }
+                }
+            }
+        }
+
         for (int row = 0; row < kInvRows; ++row) {
             CLAY(CLAY_IDI("InvRow", row), {
                 .layout = {
@@ -190,8 +257,11 @@ static void buildInventoryTab(const shared::PlayerState* player,
                         const auto& opt = player->inventory[idx];
                         if (opt.has_value()) item = &opt.value();
                     }
-                    bool filled  = (item != nullptr);
-                    bool hovered = (s_hovInvSlot == idx);
+                    bool filled   = (item != nullptr);
+                    bool hovered  = (s_hovInvSlot == idx);
+                    bool dragging = (s_dragSlot == idx);  // source slot while dragging
+
+                    static constexpr Clay_Color kSlotDragging = { 12, 6, 1, 120 };
 
                     CLAY(CLAY_IDI("InvSlot", idx), {
                         .layout = {
@@ -201,7 +271,8 @@ static void buildInventoryTab(const shared::PlayerState* player,
                                                  .y = CLAY_ALIGN_Y_CENTER },
                             .layoutDirection = CLAY_TOP_TO_BOTTOM,
                         },
-                        .backgroundColor = filled ? kSlotFilled : kSlotEmpty,
+                        .backgroundColor = dragging ? kSlotDragging :
+                                           filled   ? kSlotFilled   : kSlotEmpty,
                         .border = {
                             .color = hovered ? kSlotHover : kSlotBorder,
                             .width = CLAY_BORDER_ALL(1),
@@ -226,7 +297,7 @@ static void buildInventoryTab(const shared::PlayerState* player,
                                 std::string name = prettyId(item->itemId);
                                 CLAY_TEXT(clayStr(name), CLAY_TEXT_CONFIG({
                                     .textColor = kItemText,
-                                    .fontSize  = 9,
+                                    .fontSize  = 0,
                                 }));
                             }
 
@@ -245,7 +316,7 @@ static void buildInventoryTab(const shared::PlayerState* player,
                                 }) {
                                     CLAY_TEXT(clayStr(qs), CLAY_TEXT_CONFIG({
                                         .textColor = kQtyText,
-                                        .fontSize  = 9,
+                                        .fontSize  = 0,
                                     }));
                                 }
                             }
@@ -309,21 +380,18 @@ static void buildSkillsTab(const shared::PlayerState* player) {
                     float progress = (lvl >= 99) ? 1.0f :
                         std::clamp(float(xp - xpThis) / float(xpRange), 0.0f, 1.0f);
 
-                    // Card
+                    // Card — background colour distinguishes it; no individual border
                     CLAY(CLAY_IDI("SkillCard", si), {
                         .layout = {
                             .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) },
-                            .padding         = { 4, 4, 4, 4 },
-                            .childGap        = 2,
+                            .padding         = { 5, 5, 4, 4 },
+                            .childGap        = 0,
                             .childAlignment  = { .x = CLAY_ALIGN_X_CENTER,
-                                                 .y = CLAY_ALIGN_Y_TOP },
+                                                 .y = CLAY_ALIGN_Y_CENTER },
                             .layoutDirection = CLAY_TOP_TO_BOTTOM,
                         },
                         .backgroundColor = kSkillCard,
-                        .border = {
-                            .color = kPanelBorder,
-                            .width = CLAY_BORDER_ALL(1),
-                        }
+                        .cornerRadius    = CLAY_CORNER_RADIUS(2),
                     }) {
                         // Colored icon
                         CLAY(CLAY_IDI("SkillIcon", si), {
@@ -336,7 +404,7 @@ static void buildSkillsTab(const shared::PlayerState* player) {
                         // Skill name
                         CLAY_TEXT(clayStr(prettyId(skillId)), CLAY_TEXT_CONFIG({
                             .textColor = { 200, 170, 90, 255 },
-                            .fontSize  = 9,
+                            .fontSize  = 0,
                         }));
 
                         // Level number
@@ -344,7 +412,7 @@ static void buildSkillsTab(const shared::PlayerState* player) {
                         std::snprintf(lvlBuf, sizeof(lvlBuf), "%d", lvl);
                         CLAY_TEXT(clayStr(lvlBuf), CLAY_TEXT_CONFIG({
                             .textColor = kItemText,
-                            .fontSize  = 11,
+                            .fontSize  = 0,
                         }));
 
                         // XP bar background (grows to fill remaining width)
@@ -380,7 +448,7 @@ static void buildSkillsTab(const shared::PlayerState* player) {
                           totalLevel, 99 * 5);
             CLAY_TEXT(clayStr(totalBuf), CLAY_TEXT_CONFIG({
                 .textColor = kOrange,
-                .fontSize  = 10,
+                .fontSize  = 0,
             }));
         }
     }
@@ -483,7 +551,7 @@ static void buildEquipmentTab(const shared::PlayerState* player,
                                 std::string name = prettyId(item->itemId);
                                 CLAY_TEXT(clayStr(name), CLAY_TEXT_CONFIG({
                                     .textColor = kItemText,
-                                    .fontSize  = 9,
+                                    .fontSize  = 0,
                                 }));
                             }
                         } else {
@@ -491,7 +559,7 @@ static void buildEquipmentTab(const shared::PlayerState* player,
                             char letter[2] = { m->label[0], '\0' };
                             CLAY_TEXT(clayStr(letter), CLAY_TEXT_CONFIG({
                                 .textColor = kSlotLabel,
-                                .fontSize  = 11,
+                                .fontSize  = 0,
                             }));
                         }
                     }
@@ -521,31 +589,32 @@ static void buildEquipmentTab(const shared::PlayerState* player,
         static const Clay_String kDefBonuses = CLAY_STRING("Defence Bonuses");
         CLAY(CLAY_ID("StatBlock"), {
             .layout = {
-                .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) },
+                .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
                 .padding         = { 2, 2, 4, 2 },
                 .childGap        = 3,
                 .layoutDirection = CLAY_TOP_TO_BOTTOM,
             }
         }) {
-            CLAY_TEXT(kAtkBonuses, CLAY_TEXT_CONFIG({ .textColor=kOrange, .fontSize=10 }));
+            CLAY_TEXT(kAtkBonuses, CLAY_TEXT_CONFIG({ .textColor=kOrange, .fontSize=0 }));
 
             char buf[64];
             std::snprintf(buf,sizeof(buf),"Melee  Atk: %+d   Str: %+d", tot.mAtk, tot.mStr);
-            CLAY_TEXT(clayStr(buf),  CLAY_TEXT_CONFIG({ .textColor=kWhite, .fontSize=9 }));
+            CLAY_TEXT(clayStr(buf),  CLAY_TEXT_CONFIG({ .textColor=kWhite, .fontSize=0 }));
             std::snprintf(buf,sizeof(buf),"Ranged Atk: %+d   Str: %+d", tot.rAtk, tot.rStr);
-            CLAY_TEXT(clayStr(buf),  CLAY_TEXT_CONFIG({ .textColor=kWhite, .fontSize=9 }));
+            CLAY_TEXT(clayStr(buf),  CLAY_TEXT_CONFIG({ .textColor=kWhite, .fontSize=0 }));
 
-            CLAY_TEXT(kDefBonuses, CLAY_TEXT_CONFIG({ .textColor=kOrange, .fontSize=10 }));
+            CLAY_TEXT(kDefBonuses, CLAY_TEXT_CONFIG({ .textColor=kOrange, .fontSize=0 }));
 
             std::snprintf(buf,sizeof(buf),"Melee Def:  %+d   Ranged: %+d", tot.mDef, tot.rDef);
-            CLAY_TEXT(clayStr(buf),  CLAY_TEXT_CONFIG({ .textColor=kWhite, .fontSize=9 }));
+            CLAY_TEXT(clayStr(buf),  CLAY_TEXT_CONFIG({ .textColor=kWhite, .fontSize=0 }));
         }
     }
 }
 
 // ── Public: build layout ──────────────────────────────────────────────────────
 void clayHudBuildLayout(const shared::PlayerState* player,
-                        const SpriteCache* sprites) {
+                        const SpriteCache* sprites,
+                        float mx, float my) {
     // Reset string scratch buffer every frame.
     s_strOff   = 0;
     s_hovInvSlot  = -1;
@@ -614,14 +683,14 @@ void clayHudBuildLayout(const shared::PlayerState* player,
                     }) {
                         CLAY_TEXT(kTabs[i], CLAY_TEXT_CONFIG({
                             .textColor = active ? kTabTextActive : kTabText,
-                            .fontSize  = 10,
+                            .fontSize  = 0,
                         }));
                     }
                 }
             }
 
             // ── Tab content ───────────────────────────────────────────────────
-            if      (s_activeTab == 0) buildInventoryTab(player, sprites);
+            if      (s_activeTab == 0) buildInventoryTab(player, sprites, mx, my);
             else if (s_activeTab == 1) buildSkillsTab(player);
             else                       buildEquipmentTab(player, sprites);
         }
@@ -633,7 +702,9 @@ void clayHudHandleInput(const shared::PlayerState* player,
                         net::NetworkClient*         netc,
                         UiHoverState*               hover,
                         bool leftClicked,
-                        bool rightClicked) {
+                        bool rightClicked,
+                        bool mouseDown,
+                        float mx, float my) {
     // ── Tab switching ────────────────────────────────────────────────────────
     if (leftClicked) {
         for (int i = 0; i < 3; ++i) {
@@ -644,8 +715,127 @@ void clayHudHandleInput(const shared::PlayerState* player,
         }
     }
 
-    // ── Inventory interactions ────────────────────────────────────────────────
-    if (s_activeTab == 0 && s_hovInvSlot >= 0) {
+    // ── Skills hover ──────────────────────────────────────────────────────────
+    if (s_activeTab == 1 && hover && player) {
+        for (int si = 0; si < static_cast<int>(kSkillOrder.size()); ++si) {
+            if (!Clay_PointerOver(CLAY_IDI("SkillCard", si))) continue;
+            const char* skillId = kSkillOrder[si];
+            int lvl = 1, xp = 0;
+            auto it = player->skills.find(skillId);
+            if (it != player->skills.end()) { lvl = it->second.level; xp = it->second.xp; }
+            int xpNext    = (lvl < 99) ? xpForLevel(lvl + 1) : xpForLevel(99);
+            int remaining = std::max(0, xpNext - xp);
+
+            // Skill color for the skill name line
+            TipColor skillTip = { kSkillColors[si].r, kSkillColors[si].g,
+                                  kSkillColors[si].b, kSkillColors[si].a };
+
+            std::vector<TooltipLine> lines;
+
+            // Line 1: skill name in skill color + " (level X)" in white
+            {
+                std::string name = prettyId(skillId);
+                std::string lvlStr = " (level " + std::to_string(lvl) + ")";
+                lines.push_back({ { name, skillTip }, { lvlStr, TipColor::White() } });
+            }
+
+            // Line 2 (hitpoints only): HP: current/max
+            if (std::strcmp(skillId, "hitpoints") == 0) {
+                int maxHp = 10 + (lvl - 1) * 2;  // approximate; server sends level only
+                lines.push_back({
+                    { "HP: ", TipColor::Grey() },
+                    { std::to_string(lvl) + "/" + std::to_string(maxHp), TipColor::White() }
+                });
+            }
+
+            // Line 3: XP
+            lines.push_back({
+                { "XP: ", TipColor::Grey() },
+                { fmtNum(xp), TipColor::White() }
+            });
+
+            if (lvl < 99) {
+                // Line 4: Next level at
+                lines.push_back({
+                    { "Next level at: ", TipColor::Grey() },
+                    { fmtNum(xpNext) + " XP", TipColor::Gold() }
+                });
+                // Line 5: Remaining
+                lines.push_back({
+                    { "Remaining: ", TipColor::Grey() },
+                    { fmtNum(remaining) + " XP", TipColor::White() }
+                });
+            } else {
+                lines.push_back({ { "Maximum level reached", TipColor::Gold() } });
+            }
+
+            hover->kind         = UiHoverState::Kind::SkillCard;
+            hover->tooltipLines = std::move(lines);
+            break;
+        }
+    }
+
+    // ── Drag-and-drop mouse state tracking ───────────────────────────────────
+    if (s_activeTab != 0) {
+        // Cancel any drag when switching away from inventory tab
+        s_dragSlot   = -1;
+        s_pressedSlot = -1;
+    }
+    {
+        const bool mouseWasDown = s_prevMouseDown;
+        s_prevMouseDown         = mouseDown;
+        const bool downEdge     = (mouseDown && !mouseWasDown);
+        const bool upEdge       = (!mouseDown && mouseWasDown);
+
+        if (s_activeTab == 0) {
+            // Press: record which filled slot was pressed
+            if (downEdge && s_hovInvSlot >= 0 && player &&
+                s_hovInvSlot < static_cast<int>(player->inventory.size()) &&
+                player->inventory[s_hovInvSlot].has_value()) {
+                s_pressedSlot = s_hovInvSlot;
+                s_pressX = mx;
+                s_pressY = my;
+            }
+
+            // Held: promote to drag once mouse moves > threshold
+            constexpr float kDragThresh = 5.f;
+            if (mouseDown && s_pressedSlot >= 0 && s_dragSlot < 0) {
+                float dx = mx - s_pressX, dy = my - s_pressY;
+                if (dx*dx + dy*dy > kDragThresh*kDragThresh)
+                    s_dragSlot = s_pressedSlot;
+            }
+
+            // Release: complete drag or perform click action
+            if (upEdge) {
+                if (s_dragSlot >= 0) {
+                    // Drop onto target slot
+                    for (int i = 0; i < kInvCols * kInvRows; ++i) {
+                        if (Clay_PointerOver(CLAY_IDI("InvSlot", i)) && i != s_dragSlot) {
+                            if (netc) netc->sendMoveSlot(s_dragSlot, i);
+                            break;
+                        }
+                    }
+                    s_dragSlot = -1;
+                } else if (s_pressedSlot >= 0 && !ctxMenu().open && netc && player &&
+                           s_pressedSlot < static_cast<int>(player->inventory.size())) {
+                    // Click: equip if equippable
+                    const auto& opt = player->inventory[s_pressedSlot];
+                    if (opt.has_value() && equipSlotForItem(opt->itemId)[0])
+                        netc->sendEquipItem(s_pressedSlot);
+                }
+                s_pressedSlot = -1;
+            }
+
+            // Cancel drag/press if right-clicked
+            if (rightClicked) {
+                s_dragSlot    = -1;
+                s_pressedSlot = -1;
+            }
+        }
+    }
+
+    // ── Inventory hover info and right-click context menu ─────────────────────
+    if (s_activeTab == 0 && s_hovInvSlot >= 0 && s_dragSlot < 0) {
         if (hover && player && s_hovInvSlot < static_cast<int>(player->inventory.size())) {
             const auto& opt = player->inventory[s_hovInvSlot];
             if (opt.has_value()) {
@@ -655,21 +845,28 @@ void clayHudHandleInput(const shared::PlayerState* player,
             }
         }
 
-        if (leftClicked && netc && player &&
-            s_hovInvSlot < static_cast<int>(player->inventory.size())) {
-            const auto& opt = player->inventory[s_hovInvSlot];
-            if (opt.has_value() && equipSlotForItem(opt->itemId)[0])
-                netc->sendEquipItem(s_hovInvSlot);
-        }
-
         if (rightClicked && player &&
             s_hovInvSlot < static_cast<int>(player->inventory.size())) {
             const auto& opt = player->inventory[s_hovInvSlot];
             if (opt.has_value()) {
-                s_ctxInvSlot = s_hovInvSlot;
-                char popupId[32];
-                std::snprintf(popupId, sizeof(popupId), "##cctx_inv%d", s_ctxInvSlot);
-                ImGui::OpenPopup(popupId);
+                auto& cm = ctxMenu();
+                cm.open             = true;
+                cm.inventoryCtxSlot = s_hovInvSlot;
+                cm.equipCtxSlot.clear();
+                cm.contextItemId    = opt->itemId;
+                ImVec2 mp = ImGui::GetIO().MousePos;
+                cm.x = mp.x;
+                cm.y = mp.y;
+                ImVec2 ds = ImGui::GetIO().DisplaySize;
+                cm.screenW = ds.x;
+                cm.screenH = ds.y;
+                cm.entries.clear();
+                cm.clickedIndex = -1;
+                std::string name = prettyId(opt->itemId);
+                const char* pv   = primaryVerb(opt->itemId);
+                if (pv[0]) cm.entries.push_back({ pv, name });
+                cm.entries.push_back({ "Drop",    name });
+                cm.entries.push_back({ "Examine", name });
             }
         }
     }
@@ -696,69 +893,28 @@ void clayHudHandleInput(const shared::PlayerState* player,
                 hover->slotLabel = m->label;
             }
 
-            if (leftClicked && netc && item)
+            if (leftClicked && !ctxMenu().open && netc && item)
                 netc->sendUnequipItem(m->slotId);
 
             if (rightClicked && item) {
-                s_ctxEquipIdx = s_hovEquipIdx;
-                char popupId[32];
-                std::snprintf(popupId, sizeof(popupId), "##cctx_eq%d", s_ctxEquipIdx);
-                ImGui::OpenPopup(popupId);
+                // Open Clay context menu for this equipment slot
+                auto& cm = ctxMenu();
+                cm.open             = true;
+                cm.equipCtxSlot     = m->slotId;
+                cm.inventoryCtxSlot = -1;
+                cm.contextItemId    = item->itemId;
+                ImVec2 mp = ImGui::GetIO().MousePos;
+                cm.x = mp.x;
+                cm.y = mp.y;
+                ImVec2 ds = ImGui::GetIO().DisplaySize;
+                cm.screenW = ds.x;
+                cm.screenH = ds.y;
+                cm.entries.clear();
+                cm.clickedIndex = -1;
+                std::string name = prettyId(item->itemId);
+                cm.entries.push_back({ "Remove",  name });
+                cm.entries.push_back({ "Examine", name });
             }
-        }
-    }
-
-    // ── ImGui context-menu popups ─────────────────────────────────────────────
-    // Inventory slot right-click menu
-    if (s_ctxInvSlot >= 0) {
-        char popupId[32];
-        std::snprintf(popupId, sizeof(popupId), "##cctx_inv%d", s_ctxInvSlot);
-        if (ImGui::BeginPopup(popupId)) {
-            if (player && s_ctxInvSlot < static_cast<int>(player->inventory.size())) {
-                const auto& opt = player->inventory[s_ctxInvSlot];
-                if (opt.has_value()) {
-                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.94f, 0.82f, 0.50f, 1.0f));
-                    ImGui::TextUnformatted(prettyId(opt->itemId).c_str());
-                    ImGui::PopStyleColor();
-                    ImGui::Separator();
-                    const char* pv = primaryVerb(opt->itemId);
-                    if (pv[0] && netc) {
-                        if (ImGui::Selectable(pv)) netc->sendEquipItem(s_ctxInvSlot);
-                    }
-                    if (netc && ImGui::Selectable("Drop"))    netc->sendDropItem(s_ctxInvSlot);
-                    if (netc && ImGui::Selectable("Examine")) netc->sendExamine(opt->itemId);
-                }
-            }
-            ImGui::EndPopup();
-        } else {
-            s_ctxInvSlot = -1;
-        }
-    }
-
-    // Equipment slot right-click menu
-    if (s_ctxEquipIdx >= 0) {
-        char popupId[32];
-        std::snprintf(popupId, sizeof(popupId), "##cctx_eq%d", s_ctxEquipIdx);
-        if (ImGui::BeginPopup(popupId)) {
-            int row = s_ctxEquipIdx / kEquipCols;
-            int col = s_ctxEquipIdx % kEquipCols;
-            const EquipCell* m = nullptr;
-            for (const auto& e : kEquipGrid)
-                if (e.row == row && e.col == col) { m = &e; break; }
-            if (m && m->slotId && player) {
-                auto it = player->equipped.find(m->slotId);
-                if (it != player->equipped.end()) {
-                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.94f, 0.82f, 0.50f, 1.0f));
-                    ImGui::TextUnformatted(prettyId(it->second.itemId).c_str());
-                    ImGui::PopStyleColor();
-                    ImGui::Separator();
-                    if (netc && ImGui::Selectable("Remove"))  netc->sendUnequipItem(m->slotId);
-                    if (netc && ImGui::Selectable("Examine")) netc->sendExamine(it->second.itemId);
-                }
-            }
-            ImGui::EndPopup();
-        } else {
-            s_ctxEquipIdx = -1;
         }
     }
 }

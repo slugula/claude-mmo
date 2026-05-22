@@ -76,7 +76,13 @@ void buildContextMenu() {
     if (ox < 0) ox = 0;
     if (oy < 0) oy = 0;
 
-    CLAY(CLAY_ID("CtxMenuAnchor"), {
+    // ── Border shell — background + border only, no children ─────────────────
+    CLAY(CLAY_ID("CtxMenuPanel"), {
+        .layout = {
+            .sizing = { CLAY_SIZING_FIXED(kMenuW), CLAY_SIZING_FIXED(menuH) },
+        },
+        .backgroundColor = kBg,
+        .cornerRadius    = CLAY_CORNER_RADIUS(3),
         .floating = {
             .offset       = { ox, oy },
             .zIndex       = 50,
@@ -85,101 +91,101 @@ void buildContextMenu() {
                 .parent  = CLAY_ATTACH_POINT_LEFT_TOP,
             },
             .attachTo = CLAY_ATTACH_TO_ROOT,
-        }
-    }) {
-        CLAY(CLAY_ID("CtxMenuPanel"), {
-            .layout = {
-                .sizing          = { CLAY_SIZING_FIXED(kMenuW), CLAY_SIZING_GROW(0) },
-                .padding         = { 0, 0, 4, 4 },
-                .childGap        = 0,
-                .layoutDirection = CLAY_TOP_TO_BOTTOM,
+        },
+        .border = { .color = kBorder, .width = CLAY_BORDER_ALL(1) },
+    }) {}
+
+    // ── Content — separate floating element on top, no border ────────────────
+    CLAY(CLAY_ID("ContextMenu"), {
+        .layout = {
+            .sizing          = { CLAY_SIZING_FIXED(kMenuW), CLAY_SIZING_FIT(0) },
+            .padding         = { 0, 0, 4, 4 },
+            .childGap        = 0,
+            .layoutDirection = CLAY_TOP_TO_BOTTOM,
+        },
+        .floating = {
+            .offset       = { ox, oy },
+            .zIndex       = 51,
+            .attachPoints = {
+                .element = CLAY_ATTACH_POINT_LEFT_TOP,
+                .parent  = CLAY_ATTACH_POINT_LEFT_TOP,
             },
-            .backgroundColor = kBg,
-            .cornerRadius    = CLAY_CORNER_RADIUS(3),
-            .border = {
-                .color = kBorder,
-                .width = CLAY_BORDER_ALL(1),
+            .attachTo = CLAY_ATTACH_TO_ROOT,
+        },
+    }) {
+        // Header
+        CLAY(CLAY_ID("CtxHeader"), {
+            .layout = {
+                .sizing         = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(kHeaderH) },
+                .padding        = { (uint16_t)kPadX, (uint16_t)kPadX, 0, 0 },
+                .childAlignment = { .x = CLAY_ALIGN_X_LEFT, .y = CLAY_ALIGN_Y_CENTER },
             }
         }) {
-            // Header
-            CLAY(CLAY_ID("CtxHeader"), {
+            CLAY_TEXT(CLAY_STRING("Choose Option"), CLAY_TEXT_CONFIG({
+                .textColor = kHeader,
+                .fontSize  = 0,
+            }));
+        }
+
+        // Separator
+        CLAY(CLAY_ID("CtxSep"), {
+            .layout = {
+                .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(kSepH) },
+            },
+            .backgroundColor = kSeparator,
+        }) {}
+
+        // Entries
+        int entryCount = static_cast<int>(m.entries.size());
+        for (int i = 0; i < entryCount; ++i) {
+            const auto& e  = m.entries[i];
+            bool hovered   = Clay_PointerOver(CLAY_IDI("CtxEntry", i));
+
+            CLAY(CLAY_IDI("CtxEntry", i), {
                 .layout = {
-                    .sizing         = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(kHeaderH) },
+                    .sizing         = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(kEntryH) },
                     .padding        = { (uint16_t)kPadX, (uint16_t)kPadX, 0, 0 },
+                    .childGap       = 4,
                     .childAlignment = { .x = CLAY_ALIGN_X_LEFT, .y = CLAY_ALIGN_Y_CENTER },
-                }
+                    .layoutDirection= CLAY_LEFT_TO_RIGHT,
+                },
+                .backgroundColor = hovered ? kEntryHover : kEntryBg,
             }) {
-                CLAY_TEXT(CLAY_STRING("Choose Option"), CLAY_TEXT_CONFIG({
-                    .textColor = kHeader,
-                    .fontSize  = 11,
-                }));
-            }
-
-            // Separator
-            CLAY(CLAY_ID("CtxSep"), {
-                .layout = {
-                    .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(kSepH) },
-                },
-                .backgroundColor = kSeparator,
-            }) {}
-
-            // Entries
-            int entryCount = static_cast<int>(m.entries.size());
-            for (int i = 0; i < entryCount; ++i) {
-                const auto& e  = m.entries[i];
-                bool hovered   = Clay_PointerOver(CLAY_IDI("CtxEntry", i));
-
-                CLAY(CLAY_IDI("CtxEntry", i), {
-                    .layout = {
-                        .sizing         = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(kEntryH) },
-                        .padding        = { (uint16_t)kPadX, (uint16_t)kPadX, 0, 0 },
-                        .childGap       = 4,
-                        .childAlignment = { .x = CLAY_ALIGN_X_LEFT, .y = CLAY_ALIGN_Y_CENTER },
-                        .layoutDirection= CLAY_LEFT_TO_RIGHT,
-                    },
-                    .backgroundColor = hovered ? kEntryHover : kEntryBg,
-                }) {
-                    // Verb (white)
-                    if (!e.verb.empty()) {
-                        CLAY_TEXT(cs(e.verb), CLAY_TEXT_CONFIG({
-                            .textColor = kVerbColor,
-                            .fontSize  = 11,
-                        }));
-                    }
-                    // Subject (orange)
-                    if (!e.subject.empty()) {
-                        CLAY_TEXT(cs(e.subject), CLAY_TEXT_CONFIG({
-                            .textColor = kSubjColor,
-                            .fontSize  = 11,
-                        }));
-                    }
-                }
-            }
-
-            // Separator before Cancel
-            CLAY(CLAY_ID("CtxSep2"), {
-                .layout = {
-                    .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(kSepH) },
-                },
-                .backgroundColor = kSeparator,
-            }) {}
-
-            // Cancel entry
-            {
-                bool hovered = Clay_PointerOver(CLAY_ID("CtxCancel"));
-                CLAY(CLAY_ID("CtxCancel"), {
-                    .layout = {
-                        .sizing         = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(kEntryH) },
-                        .padding        = { (uint16_t)kPadX, (uint16_t)kPadX, 0, 0 },
-                        .childAlignment = { .x = CLAY_ALIGN_X_LEFT, .y = CLAY_ALIGN_Y_CENTER },
-                    },
-                    .backgroundColor = hovered ? kEntryHover : kEntryBg,
-                }) {
-                    CLAY_TEXT(CLAY_STRING("Cancel"), CLAY_TEXT_CONFIG({
-                        .textColor = kCancelColor,
-                        .fontSize  = 11,
+                if (!e.verb.empty()) {
+                    CLAY_TEXT(cs(e.verb), CLAY_TEXT_CONFIG({
+                        .textColor = kVerbColor, .fontSize = 0,
                     }));
                 }
+                if (!e.subject.empty()) {
+                    CLAY_TEXT(cs(e.subject), CLAY_TEXT_CONFIG({
+                        .textColor = kSubjColor, .fontSize = 0,
+                    }));
+                }
+            }
+        }
+
+        // Separator before Cancel
+        CLAY(CLAY_ID("CtxSep2"), {
+            .layout = {
+                .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(kSepH) },
+            },
+            .backgroundColor = kSeparator,
+        }) {}
+
+        // Cancel entry
+        {
+            bool hovered = Clay_PointerOver(CLAY_ID("CtxCancel"));
+            CLAY(CLAY_ID("CtxCancel"), {
+                .layout = {
+                    .sizing         = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(kEntryH) },
+                    .padding        = { (uint16_t)kPadX, (uint16_t)kPadX, 0, 0 },
+                    .childAlignment = { .x = CLAY_ALIGN_X_LEFT, .y = CLAY_ALIGN_Y_CENTER },
+                },
+                .backgroundColor = hovered ? kEntryHover : kEntryBg,
+            }) {
+                CLAY_TEXT(CLAY_STRING("Cancel"), CLAY_TEXT_CONFIG({
+                    .textColor = kCancelColor, .fontSize = 0,
+                }));
             }
         }
     }

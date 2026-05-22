@@ -8,6 +8,8 @@
 #include "ui/ClayContextMenu.hpp"
 #include "ui/ClayClickFeedback.hpp"
 #include "ui/ClayChatLog.hpp"
+#include "ui/ClayLoginModal.hpp"
+#include "ui/ClayBankPanel.hpp"
 #include "shared/SharedTypesJson.hpp"
 #include "world/GltfLoader.hpp"
 #include "world/MapGenerator.hpp"
@@ -218,8 +220,10 @@ bool App::init() {
   // ImGui's GLFW backend chains these — its handlers run first, then ours.
   // We bail when ImGui claims the mouse so clicks on UI don't rotate the
   // camera and scroll over a slider zooms it instead of the world.
+  // Also bail when a Clay UI element owns the pointer (s_clayOwned from prev frame).
   window_.onMouseButton = [this](int button, int action, int mods) {
     if (ImGui::GetIO().WantCaptureMouse) return;
+    if (showClayUi_ && ui::clayIsPointerOverUI()) return;
     (void)mods;
     camera_.onMouseButton(button, action);
     // Left-click dispatches the primary action for the hovered tile.
@@ -227,7 +231,8 @@ bool App::init() {
     // server-authoritative and always work; obstacles depend on map sync).
     if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_PRESS
         && hoveredTile_.hit
-        && network_.status() == net::Connection::Connected) {
+        && network_.status() == net::Connection::Connected
+        && !ui::ctxMenu().open) {
       const int tx = hoveredTile_.tileX;
       const int ty = hoveredTile_.tileY;
       bool dispatched = false;
@@ -318,13 +323,16 @@ bool App::init() {
         int fw2, fh2;
         glfwGetFramebufferSize(window_.handle(), &fw2, &fh2);
         ui::CtxMenuState& cm = ui::ctxMenu();
-        cm.open     = true;
-        cm.x        = static_cast<float>(mx2);
-        cm.y        = static_cast<float>(my2);
-        cm.screenW  = static_cast<float>(fw2);
-        cm.screenH  = static_cast<float>(fh2);
+        cm.open             = true;
+        cm.x                = static_cast<float>(mx2);
+        cm.y                = static_cast<float>(my2);
+        cm.screenW          = static_cast<float>(fw2);
+        cm.screenH          = static_cast<float>(fh2);
         cm.entries.clear();
-        cm.clickedIndex = -1;
+        cm.clickedIndex     = -1;
+        cm.inventoryCtxSlot = -1;
+        cm.equipCtxSlot.clear();
+        cm.contextItemId.clear();
 
         const int tx2 = hoveredTile_.tileX;
         const int ty2 = hoveredTile_.tileY;
@@ -364,6 +372,12 @@ bool App::init() {
   window_.onScroll = [this](double /*xoffset*/, double yoffset) {
     if (ImGui::GetIO().WantCaptureMouse) return;
     camera_.onScroll(yoffset);
+  };
+  window_.onKey = [this](int key, int action, int /*mods*/) {
+    if (key == GLFW_KEY_F1 && action == GLFW_PRESS) {
+      showClayDebug_ = !showClayDebug_;
+      ui::claySetDebugMode(showClayDebug_);
+    }
   };
 
   if (!terrainShader_.fromFiles(resolveFromExe(kTerrainVertPath),
@@ -644,8 +658,9 @@ void App::renderFrame() {
   const float aspect = (fbH > 0) ? static_cast<float>(fbW) / static_cast<float>(fbH) : 1.0f;
   const glm::mat4 viewProj = camera_.viewProjection(aspect);
 
-  // ---- Hover pick (skip if ImGui owns the mouse) ----------------------------
-  if (!ImGui::GetIO().WantCaptureMouse && fbW > 0 && fbH > 0) {
+  // ---- Hover pick (skip if ImGui or Clay UI owns the mouse) -------------------
+  const bool claySteals = showClayUi_ && ui::clayIsPointerOverUI();
+  if (!ImGui::GetIO().WantCaptureMouse && !claySteals && fbW > 0 && fbH > 0) {
     glm::vec3 rayOrigin, rayDir;
     input::screenToRay(cursorX, cursorY, fbW, fbH, viewProj, &rayOrigin, &rayDir);
     hoveredTile_ = input::pickTile(rayOrigin, rayDir, map_.vertexHeights,
@@ -1266,7 +1281,7 @@ void App::renderFrame() {
     const char* ctxVerb    = "";
     const char* ctxSubject = "";
     const bool  uiOwned2   = ImGui::IsWindowHovered(ImGuiHoveredFlags_AnyWindow);
-    if (hoveredTile_.hit && !uiOwned2) {
+    if (hoveredTile_.hit && !uiOwned2 && !claySteals) {
       const int ctx_tx = hoveredTile_.tileX;
       const int ctx_ty = hoveredTile_.tileY;
       ctxVerb    = "Walk here";
@@ -1317,34 +1332,61 @@ void App::renderFrame() {
       }
     }
 
-    // Compute tooltip text for this frame (world-hover name near cursor).
-    // Stable storage so the pointer survives into clayFrame.
-    static std::string s_tooltipStr;
-    const char* tooltipText = nullptr;
-    if (hoveredTile_.hit && !uiOwned2) {
-      const int tt_tx = hoveredTile_.tileX;
-      const int tt_ty = hoveredTile_.tileY;
-      for (const auto& n : npcs_) {
-        if (n.tileX == tt_tx && n.tileY == tt_ty && !n.dying) {
-          s_tooltipStr = ui::npcName(n.kind);
-          tooltipText  = s_tooltipStr.c_str();
-          break;
+    // ── Build tooltip for this frame ─────────────────────────────────────────
+    // UI hover uses PREVIOUS frame's uiHover_ (consistent with PointerOver 1-frame delay).
+    // World hover uses current frame's hoveredTile_.
+    // showTooltip() must be called BEFORE clayFrame (which calls buildTooltip).
+    {
+      using TL = ui::TooltipLine;
+      using TS = ui::TooltipSeg;
+      using TC = ui::TipColor;
+
+      // UI hover tooltip (prev frame uiHover_)
+      if (uiHover_.kind == ui::UiHoverState::Kind::SkillCard &&
+          !uiHover_.tooltipLines.empty()) {
+        ui::showTooltip(uiHover_.tooltipLines);
+      } else if (uiHover_.kind == ui::UiHoverState::Kind::InventoryItem) {
+        if (!uiHover_.verb.empty()) {
+          ui::showTooltip({ TL{ {uiHover_.verb + " ", TC::White()},
+                                {uiHover_.itemName,   TC::Orange()} } });
+        } else {
+          ui::showTooltip({ TL{ {uiHover_.itemName, TC::Orange()} } });
         }
-      }
-      if (!tooltipText &&
-          tt_ty >= 0 && tt_ty < static_cast<int>(map_.tiles.size()) &&
-          tt_tx >= 0 && tt_tx < static_cast<int>(map_.tiles[tt_ty].size())) {
-        const auto obs = map_.tiles[tt_ty][tt_tx].obstacle;
-        if      (obs == shared::ObstacleType::tree)  tooltipText = "Tree";
-        else if (obs == shared::ObstacleType::rock)  tooltipText = "Rock";
-        else if (obs == shared::ObstacleType::chest) tooltipText = "Chest";
-      }
-      if (!tooltipText) {
-        for (const auto& di : droppedItems_) {
-          if (di.tileX == tt_tx && di.tileY == tt_ty) {
-            s_tooltipStr = ui::itemName(di.itemId);
-            tooltipText  = s_tooltipStr.c_str();
+      } else if (uiHover_.kind == ui::UiHoverState::Kind::EquipSlot) {
+        ui::showTooltip({ TL{ {"Remove ", TC::White()},
+                              {uiHover_.itemName, TC::Orange()} } });
+      } else if (uiHover_.kind == ui::UiHoverState::Kind::EmptyEquipSlot &&
+                 !uiHover_.slotLabel.empty()) {
+        ui::showTooltip({ TL{ {uiHover_.slotLabel + " slot", TC::White()} } });
+      } else if (hoveredTile_.hit && !uiOwned2 && !claySteals) {
+        // World hover tooltip
+        const int tt_tx = hoveredTile_.tileX;
+        const int tt_ty = hoveredTile_.tileY;
+        bool shown = false;
+        for (const auto& n : npcs_) {
+          if (n.tileX == tt_tx && n.tileY == tt_ty && !n.dying) {
+            ui::showTooltip({ TL{ {ui::npcName(n.kind), TC::White()} } });
+            shown = true;
             break;
+          }
+        }
+        if (!shown &&
+            tt_ty >= 0 && tt_ty < static_cast<int>(map_.tiles.size()) &&
+            tt_tx >= 0 && tt_tx < static_cast<int>(map_.tiles[tt_ty].size())) {
+          const auto obs = map_.tiles[tt_ty][tt_tx].obstacle;
+          if      (obs == shared::ObstacleType::tree)
+            { ui::showTooltip({ TL{ {"Tree",  TC::White()} } }); shown = true; }
+          else if (obs == shared::ObstacleType::rock)
+            { ui::showTooltip({ TL{ {"Rock",  TC::White()} } }); shown = true; }
+          else if (obs == shared::ObstacleType::chest)
+            { ui::showTooltip({ TL{ {"Chest", TC::White()} } }); shown = true; }
+        }
+        if (!shown) {
+          for (const auto& di : droppedItems_) {
+            if (di.tileX == tt_tx && di.tileY == tt_ty) {
+              ui::showTooltip({ TL{ {ui::itemName(di.itemId), TC::White()} } });
+              break;
+            }
           }
         }
       }
@@ -1353,17 +1395,92 @@ void App::renderFrame() {
     // Reset UI hover before Clay writes to it.
     uiHover_ = ui::UiHoverState{};
     const float wheelDelta = ImGui::GetIO().MouseWheel;
+    const bool connected2  = (network_.status() == net::Connection::Connected);
+    const bool showLogin   = !connected2;
+    const bool showJoin    = connected2 && isNewPlayer_;
     ui::clayFrame(localPlayer, &network_, &spriteCache_, &uiHover_, dt, mp.x, mp.y,
                   static_cast<float>(fbW), static_cast<float>(fbH),
-                  md, lClick, rClick, ctxVerb, ctxSubject, tooltipText, wheelDelta);
+                  md, lClick, rClick, ctxVerb, ctxSubject, wheelDelta,
+                  showLogin, showJoin, bankOpen_);
 
     // Dispatch Clay context menu click
     ui::CtxMenuState& cm = ui::ctxMenu();
     if (cm.clickedIndex >= 0 &&
         cm.clickedIndex < static_cast<int>(cm.entries.size())) {
       const auto& e = cm.entries[cm.clickedIndex];
-      // Match entry by verb+subject to dispatch the correct action.
-      if (e.verb == "Chop down") {
+
+      // ── Inventory slot context menu ────────────────────────────────────────
+      if (cm.inventoryCtxSlot >= 0) {
+        int slot = cm.inventoryCtxSlot;
+        if (e.verb == "Drop") {
+          network_.sendDropItem(slot);
+        } else if (e.verb == "Examine") {
+          if (!cm.contextItemId.empty()) {
+            const std::string msg = "It's a " + ui::itemName(cm.contextItemId) + ".";
+            chatLog_.appendSystem(msg);
+            ui::chatAppendSystem(msg);
+          }
+        } else {
+          // Primary verb: Wield / Wear / Eat → equip
+          network_.sendEquipItem(slot);
+        }
+        cm.inventoryCtxSlot = -1;
+        cm.contextItemId.clear();
+        cm.clickedIndex = -1;
+      }
+      // ── Equipment slot context menu ────────────────────────────────────────
+      else if (!cm.equipCtxSlot.empty()) {
+        if (e.verb == "Remove") {
+          network_.sendUnequipItem(cm.equipCtxSlot);
+        } else if (e.verb == "Examine") {
+          if (!cm.contextItemId.empty()) {
+            const std::string msg = "It's a " + ui::itemName(cm.contextItemId) + ".";
+            chatLog_.appendSystem(msg);
+            ui::chatAppendSystem(msg);
+          }
+        }
+        cm.equipCtxSlot.clear();
+        cm.contextItemId.clear();
+        cm.clickedIndex = -1;
+      }
+      // ── Bank grid slot context menu ────────────────────────────────────────
+      else if (cm.bankGridCtxSlot >= 0) {
+        int slot = cm.bankGridCtxSlot;
+        if (e.verb == "Withdraw 1") {
+          network_.sendWithdrawItem(slot, 1);
+        } else if (e.verb == "Withdraw All") {
+          if (currLocalPlayer_ && slot < static_cast<int>(currLocalPlayer_->bank.size())) {
+            const auto& opt = currLocalPlayer_->bank[slot];
+            if (opt.has_value()) network_.sendWithdrawItem(slot, opt->quantity);
+          }
+        } else if (e.verb == "Examine") {
+          if (!cm.contextItemId.empty()) {
+            const std::string msg = "It's a " + ui::itemName(cm.contextItemId) + ".";
+            chatLog_.appendSystem(msg);
+            ui::chatAppendSystem(msg);
+          }
+        }
+        cm.bankGridCtxSlot = -1;
+        cm.contextItemId.clear();
+        cm.clickedIndex = -1;
+      }
+      // ── Bank inventory slot context menu ───────────────────────────────────
+      else if (cm.bankInvCtxSlot >= 0) {
+        int slot = cm.bankInvCtxSlot;
+        if (e.verb == "Deposit 1") {
+          network_.sendDepositItem(slot, 1);
+        } else if (e.verb == "Deposit All") {
+          if (currLocalPlayer_ && slot < static_cast<int>(currLocalPlayer_->inventory.size())) {
+            const auto& opt = currLocalPlayer_->inventory[slot];
+            if (opt.has_value()) network_.sendDepositItem(slot, opt->quantity);
+          }
+        }
+        cm.bankInvCtxSlot = -1;
+        cm.contextItemId.clear();
+        cm.clickedIndex = -1;
+      }
+      // ── World context menu ─────────────────────────────────────────────────
+      else if (e.verb == "Chop down") {
         network_.sendChopTree(ctxMenuTileX_, ctxMenuTileY_); oneShotClip_.clear();
       } else if (e.verb == "Mine") {
         network_.sendMineRock(ctxMenuTileX_, ctxMenuTileY_); oneShotClip_.clear();
@@ -1414,19 +1531,49 @@ void App::renderFrame() {
   }
 
   const bool connected = (network_.status() == net::Connection::Connected);
-  drawLoginUi();   // no-op when connected
 
-  if (connected && isNewPlayer_) {
-    drawJoinModal();
+  // ── Dispatch Clay modal results ─────────────────────────────────────────────
+  if (showClayUi_) {
+    // Login modal: submitted → call network
+    const auto& lf = ui::loginFormState();
+    if (lf.submitted) {
+      if (lf.registerMode)
+        network_.registerAndConnect(lf.host, lf.port, lf.username, lf.password);
+      else
+        network_.loginAndConnect(lf.host, lf.port, lf.username, lf.password);
+    }
+    // Join modal: submitted → send SET_NAME
+    const auto& jf = ui::joinFormState();
+    if (jf.submitted && jf.name[0] != '\0') {
+      char buf[80];
+      std::snprintf(buf, sizeof(buf),
+                    "{\"type\":\"SET_NAME\",\"playerName\":\"%s\"}", jf.name);
+      network_.sendActionRaw(buf);
+      isNewPlayer_ = false;
+    }
+  }
+
+  // ImGui modals: only shown when Clay UI is off (debug fallback)
+  if (!showClayUi_) {
+    drawLoginUi();
+    if (connected && isNewPlayer_) drawJoinModal();
+  }
+
+  // ── Clay bank close ──────────────────────────────────────────────────────────
+  if (showClayUi_ && ui::bankWantsClose()) {
+    bankOpen_ = false;
+    network_.sendCloseBank();
   }
 
   if (connected && currLocalPlayer_) {
-    // HUD panel (inventory / skills / equipment) is now rendered by Clay
-    // in the clayFrame block above. Bank + chat remain ImGui (gated by toggle).
-    if (showImguiUi_) {
+    // Bank panel is now rendered by Clay when Clay UI is on.
+    // Fall back to ImGui bank only when Clay UI is disabled.
+    if (showImguiUi_ && !showClayUi_) {
       ui::drawBankPanel (*currLocalPlayer_, &network_, &bankOpen_);
-      // ImGui chat: fallback when Clay UI is disabled.
-      if (!showClayUi_) chatLog_.draw(&network_);
+    }
+    // ImGui chat: fallback when Clay UI is disabled.
+    if (showImguiUi_ && !showClayUi_) {
+      chatLog_.draw(&network_);
     }
 
     // ---- Build overlay entries from per-frame interpolated positions -------

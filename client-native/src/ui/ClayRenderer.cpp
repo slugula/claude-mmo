@@ -18,6 +18,8 @@
 #include "ui/ClayContextInfo.hpp"
 #include "ui/ClayTooltip.hpp"
 #include "ui/ClayChatLog.hpp"
+#include "ui/ClayLoginModal.hpp"
+#include "ui/ClayBankPanel.hpp"
 #include "net/NetworkClient.hpp"
 #include "world/SpriteCache.hpp"
 
@@ -30,6 +32,14 @@ namespace ui {
 // ── Arena ─────────────────────────────────────────────────────────────────────
 static uint8_t* s_clayMem  = nullptr;
 static size_t   s_arenaSize = 0;
+
+// ── Clay UI ownership tracking ────────────────────────────────────────────────
+// Set after Clay_EndLayout to gate world hover/click suppression next frame.
+static bool s_clayOwned = false;
+
+bool clayIsPointerOverUI() { return s_clayOwned; }
+
+void claySetDebugMode(bool enabled) { Clay_SetDebugModeEnabled(enabled); }
 
 // ── Text measurement callback (called by Clay during layout) ──────────────────
 static Clay_Dimensions measureText(Clay_StringSlice text,
@@ -99,13 +109,15 @@ static void clayRenderInternal(Clay_RenderCommandArray commands)
 
         case CLAY_RENDER_COMMAND_TYPE_BORDER: {
             const auto& bd = cmd->renderData.border;
-            ImU32 col      = toImU32(bd.color);
-            float r        = bd.cornerRadius.topLeft;
+            // Guard: only draw if at least one side has a non-zero width.
+            const uint16_t maxW = std::max({bd.width.top, bd.width.bottom,
+                                            bd.width.left, bd.width.right});
+            if (maxW == 0) break;
+            ImU32 col = toImU32(bd.color);
+            float r   = bd.cornerRadius.topLeft;
+            float t   = static_cast<float>(maxW);
             if (r > 0.f) {
-                // Rounded border: draw as outlined rect
-                float t = static_cast<float>(
-                    bd.width.top ? bd.width.top :
-                    bd.width.left ? bd.width.left : 1);
+                // Rounded border: draw as a single outlined rect.
                 dl->AddRect(p0, p1, col, r, 0, t);
             } else {
                 if (bd.width.top)
@@ -170,8 +182,10 @@ void clayFrame(const shared::PlayerState* player,
                bool rightClicked,
                const char* contextVerb,
                const char* contextSubject,
-               const char* tooltipText,
-               float wheelDelta)
+               float wheelDelta,
+               bool showLoginModal,
+               bool showJoinModal,
+               bool bankOpen)
 {
     Clay_SetPointerState({ mx, my }, mouseDown);
     // wheelDelta from ImGui io.MouseWheel (positive = scroll up).
@@ -179,18 +193,34 @@ void clayFrame(const shared::PlayerState* player,
     Clay_UpdateScrollContainers(false, { 0.f, wheelDelta * 3.f }, dt);
     Clay_BeginLayout();
 
-    clayHudBuildLayout(player, sprites);
+    clayHudBuildLayout(player, sprites, mx, my);
     buildChatLog(screenW, screenH, player, netc);
     buildContextMenu();
     buildClickFeedback(dt);
     buildContextInfo(contextVerb, contextSubject);
-    if (tooltipText && tooltipText[0] != '\0') showTooltip(tooltipText);
     buildTooltip(mx, my, screenW, screenH);
+
+    // Bank panel (rendered above HUD, below modals)
+    buildBankPanel(screenW, screenH, player, netc, sprites,
+                   bankOpen, leftClicked, rightClicked);
+
+    // Modals render last (highest z-index — cover all other UI)
+    if (showJoinModal)  buildJoinModal(screenW, screenH, leftClicked);
+    if (showLoginModal) buildLoginModal(screenW, screenH, leftClicked, netc);
 
     Clay_RenderCommandArray cmds = Clay_EndLayout(dt);
 
+    // Track which major containers the pointer was over this frame.
+    // Used next frame to suppress world hover/click events when Clay owns the mouse.
+    s_clayOwned = Clay_PointerOver(CLAY_ID("HudPanel"))
+               || Clay_PointerOver(CLAY_ID("ChatBox"))
+               || Clay_PointerOver(CLAY_ID("BkPanel"))
+               || Clay_PointerOver(CLAY_ID("LoginOverlay"))
+               || Clay_PointerOver(CLAY_ID("JoinOverlay"))
+               || Clay_PointerOver(CLAY_ID("ContextMenu"));
+
     // Input handling (after layout so PointerOver uses this frame's bounds)
-    clayHudHandleInput(player, netc, hover, leftClicked, rightClicked);
+    clayHudHandleInput(player, netc, hover, leftClicked, rightClicked, mouseDown, mx, my);
     handleContextMenuInput(leftClicked, mx, my);
 
     clayRenderInternal(cmds);

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "shared/SharedTypes.hpp"
+#include "ui/ClayTooltip.hpp"
 
 #include <deque>
 #include <string>
@@ -14,10 +15,11 @@ namespace ui {
 // and read by App to render the top-left context info when the cursor is over
 // a UI panel (overrides world-hover context when the HUD owns the mouse).
 struct UiHoverState {
-  enum class Kind { None, InventoryItem, EquipSlot, EmptyEquipSlot } kind = Kind::None;
-  std::string verb;       // e.g. "Wield", "Wear", "Eat" — empty for no primary action
-  std::string itemName;   // e.g. "Bronze sword"
-  std::string slotLabel;  // e.g. "Head"
+  enum class Kind { None, InventoryItem, EquipSlot, EmptyEquipSlot, SkillCard } kind = Kind::None;
+  std::string verb;          // e.g. "Wield", "Wear", "Eat" — empty for no primary action
+  std::string itemName;      // e.g. "Bronze sword"
+  std::string slotLabel;     // e.g. "Head"
+  std::vector<TooltipLine> tooltipLines; // multi-line, multi-colour floating tooltip
 };
 
 // Right-side HUD: fixed window containing Inventory / Skills / Equipment tabs.

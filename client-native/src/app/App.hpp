@@ -235,8 +235,10 @@ private:
   // Debug UI layer toggles — visible in the Debug panel.
   // showImguiUi_ gates ImGui game panels (bank, chat); excludes the debug panel itself.
   // showClayUi_  gates the entire clayFrame() call.
+  // showClayDebug_ toggles Clay's built-in debug overlay (F1).
   bool                                     showImguiUi_     = false;
   bool                                     showClayUi_      = true;
+  bool                                     showClayDebug_   = false;
 };
 
 }  // namespace app
