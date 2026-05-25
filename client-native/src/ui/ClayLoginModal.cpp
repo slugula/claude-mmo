@@ -183,8 +183,9 @@ static void loginFormRow(int fieldIdx, const char* label,
         }) {
             CLAY_TEXT(cs(label), CLAY_TEXT_CONFIG({ .textColor = kLabel, .fontSize = 0 }));
         }
-        // Input cell — dark inset background, no border
-        Clay_Color inputBg = active ? Clay_Color{ 22, 12, 2, 255 } : kInputBg;
+        // Input cell — dark inset background, orange border when focused
+        Clay_Color inputBg  = active ? Clay_Color{ 22, 12, 2, 255 } : kInputBg;
+        Clay_Color inputBdr = active ? kActBdr : kInputBdr;
         CLAY(CLAY_IDI("LoginInput", fieldIdx), {
             .layout = {
                 .sizing         = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) },
@@ -193,6 +194,7 @@ static void loginFormRow(int fieldIdx, const char* label,
             },
             .backgroundColor = inputBg,
             .cornerRadius    = CLAY_CORNER_RADIUS(2),
+            .border          = { .color = inputBdr, .width = CLAY_BORDER_ALL(1) },
         }) {
             CLAY_TEXT(cs(display.c_str()), CLAY_TEXT_CONFIG({
                 .textColor = kText, .fontSize = 0,
@@ -477,7 +479,7 @@ void buildJoinModal(float screenW, float screenH, bool leftClicked) {
             CLAY_TEXT(CLAY_STRING("Choose a name for your character (max 12 chars):"),
                 CLAY_TEXT_CONFIG({ .textColor = kLabel, .fontSize = 0 }));
 
-            // Name input — no individual border; background shifts on hover
+            // Name input — orange border (always focused; only field in this modal)
             CLAY(CLAY_ID("JoinInput"), {
                 .layout = {
                     .sizing   = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(28) },
@@ -486,6 +488,7 @@ void buildJoinModal(float screenW, float screenH, bool leftClicked) {
                 },
                 .backgroundColor = inputHov ? Clay_Color{ 16, 8, 1, 255 } : kInputBg,
                 .cornerRadius    = CLAY_CORNER_RADIUS(2),
+                .border          = { .color = kActBdr, .width = CLAY_BORDER_ALL(1) },
             }) {
                 CLAY_TEXT(cs(display.c_str()), CLAY_TEXT_CONFIG({
                     .textColor = kText, .fontSize = 0,
