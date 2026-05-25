@@ -54,6 +54,15 @@ Get-ChildItem $releaseDir -Filter "*.dll" | ForEach-Object {
 Copy-Item (Join-Path $releaseDir "shaders") $stagingDir -Recurse
 Copy-Item (Join-Path $releaseDir "assets")  $stagingDir -Recurse
 
+# World map — canonical hand-crafted map (not in assets/, lives in public/maps/)
+$worldMapSrc = Join-Path $repoRoot "public\maps\worldMap.json"
+if (Test-Path $worldMapSrc) {
+    Copy-Item $worldMapSrc $stagingDir
+    Write-Host "  + worldMap.json"
+} else {
+    Write-Warning "worldMap.json not found at $worldMapSrc - clients will use procedural map"
+}
+
 # Compress
 Compress-Archive -Path $stagingDir -DestinationPath $zipPath -CompressionLevel Optimal
 
