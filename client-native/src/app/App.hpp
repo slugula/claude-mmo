@@ -11,6 +11,7 @@
 #include "render/Shader.hpp"
 #include "render/ShadowMap.hpp"
 #include "shared/SharedTypes.hpp"
+#include "ui/MinimapRenderer.hpp"
 #include "ui/Panels.hpp"
 #include "ui/WorldOverlays.hpp"
 #include "world/EntityRenderer.hpp"
@@ -141,6 +142,8 @@ private:
   // Per-NPC smoothed yaw keyed by NPC id. Same shortest-arc lerp as the
   // player; entries are added on first sight and pruned when the NPC leaves.
   std::unordered_map<std::string, float>   npcSmoothedYaw_;
+  ui::MinimapRenderer                      minimap_;
+  float                                    minimapTileRadius_ = 12.f;
   ui::UiHoverState                         uiHover_;
   ui::ChatLog                              chatLog_;
   ui::WorldOverlays                        overlays_;
@@ -173,7 +176,23 @@ private:
 
   std::chrono::steady_clock::time_point    lastFrameTime_{};
   shared::WorldMapFile                     map_;
+  // Pass 1 result: terrain tile under the cursor (Möller–Trumbore heightfield pick).
+  // Never overridden by entity AABBs — always the raw ground tile.
+  // Drives the tile-outline hover square only.
   input::PickResult                        hoveredTile_;
+  // Pass 2 result: entity whose AABB the cursor ray actually intersects.
+  // Drives outline silhouette, context info, tooltip, left-click, right-click.
+  // Kind::None when cursor is over bare terrain or off-world.
+  struct HoveredEntity {
+    enum class Kind { None, Obstacle, Npc, DroppedItem, RemotePlayer } kind = Kind::None;
+    int         tileX = 0;
+    int         tileY = 0;
+    std::string id;    // npc.id / item.id / player-id; empty for obstacles
+    float       rayT  = 0.0f;
+  };
+  HoveredEntity                            hoveredEntity_;
+  // Convenience alias — always equals hoveredEntity_.id when kind==RemotePlayer.
+  std::string                              hoveredPlayerId_;
   // Phase 8b-ii — right-click world context menu. We latch the picked tile
   // when the menu is requested so the menu's labels match what was under
   // the cursor at the moment of the click, not whatever the cursor moves
@@ -182,6 +201,14 @@ private:
   bool                                     ctxMenuTileHit_ = false;
   int                                      ctxMenuTileX_   = 0;
   int                                      ctxMenuTileY_   = 0;
+  // Latched remote player id for context menu (valid when ctxMenuRequest_ + ctxMenuPlayerId_ non-empty).
+  std::string                              ctxMenuPlayerId_;
+
+  // Deferred world left-click: set in onMouseButton (during pollEvents, where guards
+  // are stale), dispatched in renderFrame after clayFrame() refreshes the guards.
+  bool                                     pendingWorldLeftClick_ = false;
+  float                                    pendingWorldClickX_    = 0.f;
+  float                                    pendingWorldClickY_    = 0.f;
 
   // Click feedback marker — animated expanding circle at cursor pos.
   bool                                     clickFeedbackActive_ = false;

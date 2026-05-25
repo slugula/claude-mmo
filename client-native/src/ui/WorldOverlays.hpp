@@ -25,6 +25,7 @@ public:
   // Pre-computed per-entity data built by App each frame from the
   // interpolation loops (float world position, not integer tile coords).
   struct OverlayEntry {
+    std::string id;                   // entity id (NPC id or player id)
     float       wx        = 0.0f;   // interpolated world X
     float       wy        = 0.0f;   // terrain Y at this position
     float       wz        = 0.0f;   // interpolated world Z
@@ -67,7 +68,12 @@ private:
   // Local player health bar fade: stays visible for kHealthBarFadeSec seconds
   // after HP returns to full.
   std::chrono::steady_clock::time_point localHealthBarFadeUntil_{};
-  static constexpr float kHealthBarFadeSec = 10.0f;
+  static constexpr float kHealthBarFadeSec    = 10.0f;
+
+  // Per-NPC health bar fade: set to now+kNpcBarFadeSec each time a hit lands.
+  std::unordered_map<std::string, std::chrono::steady_clock::time_point> npcHealthBarFadeUntil_;
+  static constexpr float kNpcBarFadeSec       = 5.0f;
+  static constexpr float kNpcBarFadeTailSec   = 1.5f;  // fade-out tail duration
 };
 
 // Convert a world position to pixel coordinates on the default framebuffer.

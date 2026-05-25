@@ -13,7 +13,9 @@ namespace ui {
 struct CtxMenuEntry {
     std::string verb;     // "Chop down", "Attack", "Take", …
     std::string subject;  // "Tree", "Chicken", item name, …
-    // Optional extra label appended in grey (e.g. quantity hints) — unused for now.
+    // Optional opaque payload used by dispatch (e.g. item.id for "Take" entries so
+    // the right item is taken when multiple are stacked on the same tile).
+    std::string payload;
 };
 
 // Singleton state shared between App.cpp (writer) and ClayContextMenu.cpp (reader).

@@ -5,6 +5,7 @@
 #include "render/GlDebug.hpp"
 #include "ui/NameRegistry.hpp"
 #include "ui/ClayRenderer.hpp"
+#include "ui/MinimapRenderer.hpp"
 #include "ui/ClayContextMenu.hpp"
 #include "ui/ClayClickFeedback.hpp"
 #include "ui/ClayChatLog.hpp"
@@ -222,102 +223,94 @@ bool App::init() {
   // camera and scroll over a slider zooms it instead of the world.
   // Also bail when a Clay UI element owns the pointer (s_clayOwned from prev frame).
   window_.onMouseButton = [this](int button, int action, int mods) {
-    if (ImGui::GetIO().WantCaptureMouse) return;
-    if (showClayUi_ && ui::clayIsPointerOverUI()) return;
-    (void)mods;
-    camera_.onMouseButton(button, action);
-    // Left-click dispatches the primary action for the hovered tile.
-    // Priority: NPC > dropped item > obstacle > walk (NPCs and items are
-    // server-authoritative and always work; obstacles depend on map sync).
+    // Always forward RELEASE to the camera so that releasing middle-mouse
+    // while the cursor is over UI can't leave the drag/rotation stuck.
+    if (action == GLFW_RELEASE)
+      camera_.onMouseButton(button, action);
+
+    // ── Minimap click-to-walk (intercept before standard UI guard) ──────────────
+    // clayMinimapHovered() returns the previous frame's hover state (one-frame
+    // delay is imperceptible).  We still require Clay UI to be on and the player
+    // to be connected so we can send the action.
     if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_PRESS
-        && hoveredTile_.hit
+        && showClayUi_ && ui::clayMinimapHovered()
+        && currLocalPlayer_
         && network_.status() == net::Connection::Connected
         && !ui::ctxMenu().open) {
-      const int tx = hoveredTile_.tileX;
-      const int ty = hoveredTile_.tileY;
-      bool dispatched = false;
-      // 1. Check for NPC at this tile (server-authoritative)
-      if (!dispatched) {
-        for (const auto& n : npcs_) {
-          if (n.tileX != tx || n.tileY != ty || n.dying) continue;
-          if (n.kind == "chicken") {
-            network_.sendAttackNpc(n.id);
-          } else {
-            network_.sendTalkTo(n.id);
-          }
-          oneShotClip_.clear();
-          dispatched = true;
-          clickFeedbackColor_ = 1;
-          break;
-        }
-      }
-      // 2. Check for dropped item at this tile (server-authoritative)
-      if (!dispatched) {
-        for (const auto& it : droppedItems_) {
-          if (it.tileX != tx || it.tileY != ty) continue;
-          network_.sendTakeItem(it.id);
-          oneShotClip_.clear();
-          dispatched = true;
-          clickFeedbackColor_ = 1;
-          break;
-        }
-      }
-      // 3. Check for obstacle (tree/rock/chest) on the local map
-      if (!dispatched && ty >= 0 && ty < static_cast<int>(map_.tiles.size()) &&
-          tx >= 0 && tx < static_cast<int>(map_.tiles[ty].size())) {
-        const auto obs = map_.tiles[ty][tx].obstacle;
-        if (obs == shared::ObstacleType::tree) {
-          network_.sendChopTree(tx, ty);
-          oneShotClip_.clear();
-          dispatched = true;
-          clickFeedbackColor_ = 1;
-        } else if (obs == shared::ObstacleType::rock) {
-          network_.sendMineRock(tx, ty);
-          oneShotClip_.clear();
-          dispatched = true;
-          clickFeedbackColor_ = 1;
-        } else if (obs == shared::ObstacleType::chest) {
-          network_.sendOpenBank();
-          bankOpen_ = true;
-          dispatched = true;
-          clickFeedbackColor_ = 1;
-        }
-      }
-      // 4. Otherwise, walk to the tile (only if walkable)
-      if (!dispatched) {
-        if (ty >= 0 && ty < static_cast<int>(map_.tiles.size()) &&
-            tx >= 0 && tx < static_cast<int>(map_.tiles[ty].size()) &&
-            map_.tiles[ty][tx].walkable) {
-          network_.sendMoveTo(tx, ty);
-          oneShotClip_.clear();
-          clickFeedbackColor_ = 0;  // yellow for walk
-        } else {
-          clickFeedbackColor_ = 1;  // red for blocked
-        }
-      }
-      // Spawn click feedback marker (Clay + legacy ImGui fallback)
-      {
-        double cx, cy;
-        glfwGetCursorPos(window_.handle(), &cx, &cy);
-        ui::clickFeedbackSpawn(static_cast<float>(cx), static_cast<float>(cy),
-                               clickFeedbackColor_);
-        // Keep legacy state in sync so ImGui fallback still works when Clay off.
+      double cx, cy;
+      glfwGetCursorPos(window_.handle(), &cx, &cy);
+      const float rad     = static_cast<float>(ui::MinimapRenderer::kSize) * 0.5f;
+      // Minimap center: top-right, kMmMargin=24px margin (must match ClayHudPanel).
+      const float fw2     = static_cast<float>(window_.framebufferWidth());
+      const float centerX = fw2 - 24.f - rad;
+      const float centerY = 24.f + rad;
+      const float normX   = (static_cast<float>(cx) - centerX) / rad;
+      const float normY   = (static_cast<float>(cy) - centerY) / rad;
+      if (normX * normX + normY * normY <= 1.0f) {
+        // Undo minimap rotation + lookAtLH X-flip: east=left so negate normX first.
+        const float yaw = camera_.cameraYaw();
+        const float fnx = -normX;  // flip to tile-space X (east = positive)
+        const float ux  = (std::cos(yaw) * fnx + std::sin(yaw) * normY) * minimapTileRadius_;
+        const float uy  = (-std::sin(yaw) * fnx + std::cos(yaw) * normY) * minimapTileRadius_;
+        const int tx = std::clamp(static_cast<int>(std::round(
+                           static_cast<float>(currLocalPlayer_->tileX) + ux)),
+                           0, map_.width - 1);
+        const int ty = std::clamp(static_cast<int>(std::round(
+                           static_cast<float>(currLocalPlayer_->tileY) + uy)),
+                           0, map_.height - 1);
+        // Send the clicked tile directly. The server owns pathfinding and routes
+        // around any blocked tiles (obstacles, water, NPC spawns, etc.).
+        network_.sendMoveTo(tx, ty);
+        oneShotClip_.clear();
+        ui::clickFeedbackSpawn(static_cast<float>(cx), static_cast<float>(cy), 0);
         clickFeedbackActive_ = true;
         clickFeedbackTime_   = std::chrono::steady_clock::now();
         clickFeedbackX_      = static_cast<float>(cx);
         clickFeedbackY_      = static_cast<float>(cy);
+        clickFeedbackColor_  = 0;
       }
+      return;  // consumed — don't fall through to world dispatch
     }
-    // Right-click on world -> Phase 8b-ii context menu.
+
+    if (ImGui::GetIO().WantCaptureMouse) return;
+    if (showClayUi_ && ui::clayIsPointerOverUI()) return;
+    (void)mods;
+    // PRESS events only reach the camera when UI doesn't own the mouse.
+    if (action == GLFW_PRESS)
+      camera_.onMouseButton(button, action);
+
+    // Left-click: defer world dispatch to renderFrame() so the guards
+    // (WantCaptureMouse and clayIsPointerOverUI) are evaluated with current-frame
+    // data rather than the previous frame's stale state.  onMouseButton fires
+    // during pollEvents(), before ImGui::NewFrame() and clayFrame() update them.
+    if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_PRESS) {
+      double cx2, cy2;
+      glfwGetCursorPos(window_.handle(), &cx2, &cy2);
+      pendingWorldLeftClick_ = true;
+      pendingWorldClickX_    = static_cast<float>(cx2);
+      pendingWorldClickY_    = static_cast<float>(cy2);
+    }
+    // Right-click: context menu driven by hoveredEntity_ (AABB hit).
+    // Entries are for the specific entity the cursor is over; "Walk here" is
+    // always appended.  When no entity was hit but terrain was, only "Walk here"
+    // is shown.
     if (button == GLFW_MOUSE_BUTTON_RIGHT && action == GLFW_PRESS
         && network_.status() == net::Connection::Connected) {
+      const bool anyHit = (hoveredEntity_.kind != HoveredEntity::Kind::None)
+                        || hoveredTile_.hit;
       ctxMenuRequest_ = true;
-      ctxMenuTileHit_ = hoveredTile_.hit;
-      if (hoveredTile_.hit) {
+      ctxMenuTileHit_ = anyHit;
+      // Latch tile coords: entity tile for dispatch, terrain tile as fallback.
+      if (hoveredEntity_.kind != HoveredEntity::Kind::None) {
+        ctxMenuTileX_ = hoveredEntity_.tileX;
+        ctxMenuTileY_ = hoveredEntity_.tileY;
+      } else if (hoveredTile_.hit) {
         ctxMenuTileX_ = hoveredTile_.tileX;
         ctxMenuTileY_ = hoveredTile_.tileY;
+      }
+      ctxMenuPlayerId_.clear();
 
-        // Populate Clay context menu
+      if (anyHit) {
         double mx2, my2;
         glfwGetCursorPos(window_.handle(), &mx2, &my2);
         int fw2, fh2;
@@ -334,43 +327,56 @@ bool App::init() {
         cm.equipCtxSlot.clear();
         cm.contextItemId.clear();
 
-        const int tx2 = hoveredTile_.tileX;
-        const int ty2 = hoveredTile_.tileY;
-
-        // Obstacle
-        if (ty2 >= 0 && ty2 < static_cast<int>(map_.tiles.size()) &&
-            tx2 >= 0 && tx2 < static_cast<int>(map_.tiles[ty2].size())) {
-          const auto obs = map_.tiles[ty2][tx2].obstacle;
-          if      (obs == shared::ObstacleType::tree)
-            cm.entries.push_back({ "Chop down", "Tree" });
-          else if (obs == shared::ObstacleType::rock)
-            cm.entries.push_back({ "Mine", "Rock" });
-          else if (obs == shared::ObstacleType::chest) {
-            cm.entries.push_back({ "Bank", "Chest" });
+        // Entity-specific entries (only for the AABB winner).
+        if (hoveredEntity_.kind == HoveredEntity::Kind::Obstacle) {
+          const int ex = hoveredEntity_.tileX, ey = hoveredEntity_.tileY;
+          if (ey >= 0 && ey < static_cast<int>(map_.tiles.size()) &&
+              ex >= 0 && ex < static_cast<int>(map_.tiles[ey].size())) {
+            const auto obs = map_.tiles[ey][ex].obstacle;
+            if      (obs == shared::ObstacleType::tree)
+              cm.entries.push_back({ "Chop down", "Tree" });
+            else if (obs == shared::ObstacleType::rock)
+              cm.entries.push_back({ "Mine", "Rock" });
+            else if (obs == shared::ObstacleType::chest)
+              cm.entries.push_back({ "Bank", "Chest" });
+          }
+        } else if (hoveredEntity_.kind == HoveredEntity::Kind::Npc) {
+          for (const auto& n : npcs_) {
+            if (n.id != hoveredEntity_.id || n.dying) continue;
+            std::string dname = ui::npcName(n.kind);
+            if (ui::npcIsAttackable(n.kind)) cm.entries.push_back({ "Attack",  dname });
+            else                             cm.entries.push_back({ "Talk-to", dname });
+            cm.entries.push_back({ "Examine", dname });
+            break;
+          }
+        } else if (hoveredEntity_.kind == HoveredEntity::Kind::RemotePlayer) {
+          auto rpIt = currRemotePlayers_.find(hoveredEntity_.id);
+          if (rpIt != currRemotePlayers_.end() && !rpIt->second.dying) {
+            ctxMenuPlayerId_ = hoveredEntity_.id;
+            const std::string& rpName = rpIt->second.playerName;
+            cm.entries.push_back({ "Trade with", rpName });
+            cm.entries.push_back({ "Follow",     rpName });
+            cm.entries.push_back({ "Examine",    rpName });
+          }
+        } else if (hoveredEntity_.kind == HoveredEntity::Kind::DroppedItem) {
+          // Show a "Take" entry for every item on this tile (not just the AABB
+          // winner) so the player can pick up each individual stack.
+          // payload stores the item's server id so dispatch is unambiguous even
+          // when multiple items share the same display name.
+          const int itx = hoveredEntity_.tileX, ity = hoveredEntity_.tileY;
+          for (const auto& it : droppedItems_) {
+            if (it.tileX != itx || it.tileY != ity) continue;
+            cm.entries.push_back({ "Take", ui::itemName(it.itemId), it.id });
           }
         }
-        // NPCs
-        for (const auto& n : npcs_) {
-          if (n.tileX != tx2 || n.tileY != ty2 || n.dying) continue;
-          std::string dname = ui::npcName(n.kind);
-          if (ui::npcIsAttackable(n.kind))
-            cm.entries.push_back({ "Attack", dname });
-          else
-            cm.entries.push_back({ "Talk-to", dname });
-          cm.entries.push_back({ "Examine", dname });
-        }
-        // Dropped items
-        for (const auto& it : droppedItems_) {
-          if (it.tileX != tx2 || it.tileY != ty2) continue;
-          cm.entries.push_back({ "Take", ui::itemName(it.itemId) });
-        }
-        // Walk here (always)
+        // Walk here always appears at the bottom.
         cm.entries.push_back({ "Walk here", "" });
       }
     }
   };
   window_.onScroll = [this](double /*xoffset*/, double yoffset) {
     if (ImGui::GetIO().WantCaptureMouse) return;
+    if (ui::clayMinimapHovered()) return;  // minimap consumes scroll; don't zoom camera
     camera_.onScroll(yoffset);
   };
   window_.onKey = [this](int key, int action, int /*mods*/) {
@@ -505,6 +511,7 @@ bool App::init() {
 
   { int fw, fh; glfwGetFramebufferSize(window_.handle(), &fw, &fh); ui::clayInit(fw, fh); }
   spriteCache_.init();
+  minimap_.init();
 
   if (!audio_.init()) {
     std::fprintf(stderr, "[App] audio init failed — proceeding without sound\n");
@@ -571,6 +578,9 @@ void App::generateAndBuildTerrain() {
   hoveredTile_    = {};  // hover stale after regenerate
 
   obstacles_.rebuildFromMap(map_);
+
+  // Rebuild minimap base layer for the new map.
+  minimap_.buildBaseLayer(map_);
 
   // Rebuild water mesh from loaded/generated map.
   if (waterRenderer_.valid())
@@ -659,7 +669,10 @@ void App::renderFrame() {
   const glm::mat4 viewProj = camera_.viewProjection(aspect);
 
   // ---- Hover pick (skip if ImGui or Clay UI owns the mouse) -------------------
-  const bool claySteals = showClayUi_ && ui::clayIsPointerOverUI();
+  // NOTE: clayIsPointerOverUI() is last frame's state here (clayFrame hasn't run yet).
+  // claySteals is refreshed after clayFrame() below so that context info, outlines,
+  // and tooltips use the current frame's ownership rather than a stale value.
+  bool claySteals = showClayUi_ && ui::clayIsPointerOverUI();
   if (!ImGui::GetIO().WantCaptureMouse && !claySteals && fbW > 0 && fbH > 0) {
     glm::vec3 rayOrigin, rayDir;
     input::screenToRay(cursorX, cursorY, fbW, fbH, viewProj, &rayOrigin, &rayDir);
@@ -667,14 +680,18 @@ void App::renderFrame() {
                                    terrainTileW_, terrainTileH_);
 
     // ---- Obstacle + entity ray-pick (secondary pass) -------------------------
-    // The terrain heightfield gives us a ground hit. This pass tests the ray
-    // against geometry-derived AABBs (inflated ×1.2 from their center) for
-    // all interactables, overriding the result when an AABB hit is closer.
-    // All bounds are in model space (origin = tile center, Y=0 = ground);
-    // we translate to world space and inflate before testing.
+    // Tests the ray against geometry-derived AABBs (inflated ×1.2) for all
+    // interactables.  hoveredTile_ (terrain) is NOT overridden — it always
+    // stays as the raw ground tile.  This pass writes hoveredEntity_ which
+    // drives outline, context info, tooltip, left-click, and right-click.
+    // Entities behind the terrain surface are rejected (bestT initialised to
+    // the terrain hit distance so only closer AABB hits are accepted).
+    hoveredEntity_ = {};
     {
       float bestT = hoveredTile_.hit ? hoveredTile_.rayT : FLT_MAX;
       int   bestTx = -1, bestTy = -1;
+      HoveredEntity::Kind bestKind = HoveredEntity::Kind::None;
+      std::string         bestId;
 
       // Helper: inflate a model-space AABB ×scale from its centre, then
       // translate it to world space at (wx, wy, wz).
@@ -715,15 +732,20 @@ void App::renderFrame() {
           }
 
           glm::vec3 wMin, wMax;
-          worldAABB(lMin, lMax, 1.2f,
+          // Obstacles: AABB is derived from actual mesh vertices so no inflation
+          // needed (1.0 = exact bounds).  1.2× would push the tree box wider than
+          // the tile and register hits on open ground beside the visible mesh.
+          worldAABB(lMin, lMax, 1.0f,
                     static_cast<float>(otx), baseY, static_cast<float>(oty),
                     wMin, wMax);
 
           const float t = rayVsAABB(rayOrigin, rayDir, wMin, wMax);
           if (t > 0.0f && t < bestT) {
-            bestT  = t;
-            bestTx = otx;
-            bestTy = oty;
+            bestT    = t;
+            bestTx   = otx;
+            bestTy   = oty;
+            bestKind = HoveredEntity::Kind::Obstacle;
+            bestId.clear();
           }
         }
       }
@@ -741,9 +763,11 @@ void App::renderFrame() {
 
         const float t = rayVsAABB(rayOrigin, rayDir, wMin, wMax);
         if (t > 0.0f && t < bestT) {
-          bestT  = t;
-          bestTx = npc.tileX;
-          bestTy = npc.tileY;
+          bestT    = t;
+          bestTx   = npc.tileX;
+          bestTy   = npc.tileY;
+          bestKind = HoveredEntity::Kind::Npc;
+          bestId   = npc.id;
         }
       }
 
@@ -759,22 +783,50 @@ void App::renderFrame() {
 
         const float t = rayVsAABB(rayOrigin, rayDir, wMin, wMax);
         if (t > 0.0f && t < bestT) {
-          bestT  = t;
-          bestTx = item.tileX;
-          bestTy = item.tileY;
+          bestT    = t;
+          bestTx   = item.tileX;
+          bestTy   = item.tileY;
+          bestKind = HoveredEntity::Kind::DroppedItem;
+          bestId   = item.id;
         }
       }
 
-      if (bestTx >= 0) {
-        hoveredTile_.hit      = true;
-        hoveredTile_.tileX    = bestTx;
-        hoveredTile_.tileY    = bestTy;
-        hoveredTile_.worldPos = rayOrigin + bestT * rayDir;
-        hoveredTile_.rayT     = bestT;
+      // ---- Remote players ----------------------------------------------------
+      for (const auto& [rpId, rp] : currRemotePlayers_) {
+        if (rp.dying) continue;
+        const float baseY = tileWorldY(map_, rp.tileX, rp.tileY);
+        // Same humanoid AABB as NPCs.
+        glm::vec3 wMin, wMax;
+        worldAABB(glm::vec3(-0.18f, 0.0f, -0.18f),
+                  glm::vec3( 0.18f, 1.0f,  0.18f), 1.2f,
+                  static_cast<float>(rp.tileX), baseY,
+                  static_cast<float>(rp.tileY), wMin, wMax);
+
+        const float t = rayVsAABB(rayOrigin, rayDir, wMin, wMax);
+        if (t > 0.0f && t < bestT) {
+          bestT    = t;
+          bestTx   = rp.tileX;
+          bestTy   = rp.tileY;
+          bestKind = HoveredEntity::Kind::RemotePlayer;
+          bestId   = rpId;
+        }
       }
+
+      // Commit to hoveredEntity_ (hoveredTile_ is NOT modified — terrain stays).
+      if (bestKind != HoveredEntity::Kind::None) {
+        hoveredEntity_.kind  = bestKind;
+        hoveredEntity_.tileX = bestTx;
+        hoveredEntity_.tileY = bestTy;
+        hoveredEntity_.id    = bestId;
+        hoveredEntity_.rayT  = bestT;
+      }
+      // Keep convenience alias in sync.
+      hoveredPlayerId_ = (bestKind == HoveredEntity::Kind::RemotePlayer) ? bestId : "";
     }
   } else {
     hoveredTile_.hit = false;
+    hoveredEntity_   = {};
+    hoveredPlayerId_.clear();
   }
   if (hoveredTile_.hit)
     updateHoverMesh(hoveredTile_.tileX, hoveredTile_.tileY);
@@ -826,7 +878,8 @@ void App::renderFrame() {
         playerModel_.render(shadowSkinnedShader_, shadowMat);
       }
 
-      // Remote players
+      // Remote players — use per-player animation state (renderAs) so each
+      // shadow matches that player's actual running/idle clip, not the local one.
       {
         const auto rpNow   = std::chrono::steady_clock::now();
         const auto rpDtMs  = std::chrono::duration_cast<std::chrono::milliseconds>(rpNow - lastTickTime_).count();
@@ -844,11 +897,14 @@ void App::renderFrame() {
             ryWorld = std::lerp(tileWorldY(map_, prevIt->second.tileX, prevIt->second.tileY),
                                 ryWorld, rpAlpha);
           }
-          const float rpYaw = remoteAnims_.count(rpId) ? remoteAnims_.at(rpId).yaw : 0.0f;
+          auto animIt = remoteAnims_.find(rpId);
+          const float rpYaw       = animIt != remoteAnims_.end() ? animIt->second.yaw       : 0.0f;
+          const int   rpClipIdx   = animIt != remoteAnims_.end() ? animIt->second.clipIndex  : -1;
+          const float rpClipTime  = animIt != remoteAnims_.end() ? animIt->second.clipTime   : 0.0f;
           glm::mat4 rpMat = glm::translate(glm::mat4(1.0f), glm::vec3(rfx, ryWorld, rfy));
           rpMat = glm::rotate(rpMat, rpYaw, glm::vec3(0.0f, 1.0f, 0.0f));
           rpMat = glm::scale(rpMat, glm::vec3(kPlayerScale));
-          playerModel_.render(shadowSkinnedShader_, rpMat);
+          playerModel_.renderAs(shadowSkinnedShader_, rpMat, rpClipIdx, rpClipTime);
         }
       }
     }
@@ -1156,27 +1212,21 @@ void App::renderFrame() {
   // Unlike world-space normal inflation this produces gap-free, constant-
   // pixel-width outlines regardless of mesh topology, face normals, or the
   // angle between adjacent hard-edge faces.
-  if (hoveredTile_.hit && network_.status() == net::Connection::Connected
+  // Outline is driven by hoveredEntity_ (mesh AABB hit), not hoveredTile_ (terrain).
+  if (hoveredEntity_.kind != HoveredEntity::Kind::None
+      && network_.status() == net::Connection::Connected
       && outlineMaskFbo_ && outlineMaskTex_ && msaa_->resolveDepthTexture()) {
-    const int htx = hoveredTile_.tileX;
-    const int hty = hoveredTile_.tileY;
+    const int htx = hoveredEntity_.tileX;
+    const int hty = hoveredEntity_.tileY;
 
-    // Detect what's at the hovered tile.
-    bool hasObstacle = false;
+    // Resolve what geometry to render into the mask based on entity kind.
+    bool hasObstacle = (hoveredEntity_.kind == HoveredEntity::Kind::Obstacle);
     bool hasNpc      = false;
     bool hasItem     = false;
     world::EntityRenderer::Instance npcInst{}, itemInst{};
     std::string hoveredNpcKind;
 
-    if (hty >= 0 && hty < static_cast<int>(map_.tiles.size()) &&
-        htx >= 0 && htx < static_cast<int>(map_.tiles[hty].size())) {
-      const auto obs = map_.tiles[hty][htx].obstacle;
-      if (obs == shared::ObstacleType::tree || obs == shared::ObstacleType::rock ||
-          obs == shared::ObstacleType::chest) {
-        hasObstacle = true;
-      }
-    }
-    if (!hasObstacle) {
+    if (hoveredEntity_.kind == HoveredEntity::Kind::Npc) {
       // Match against the interpolated CPU-side instance list so the outline
       // uses the exact same position and smoothed yaw as the rendered mesh.
       const auto& cpuInsts = entities_.npcInstsCpu();
@@ -1192,10 +1242,17 @@ void App::renderFrame() {
           break;
         }
       }
-    }
-    if (!hasObstacle && !hasNpc) {
+      // Fallback if interpolated position hasn't landed exactly on the tile yet.
+      if (!hasNpc) {
+        hasNpc = true;
+        npcInst = { static_cast<float>(htx), tileWorldY(map_, htx, hty),
+                    static_cast<float>(hty), 0.0f };
+        for (const auto& n : npcs_)
+          if (n.id == hoveredEntity_.id) { hoveredNpcKind = n.kind; break; }
+      }
+    } else if (hoveredEntity_.kind == HoveredEntity::Kind::DroppedItem) {
       for (const auto& di : droppedItems_) {
-        if (di.tileX == htx && di.tileY == hty) {
+        if (di.id == hoveredEntity_.id) {
           hasItem  = true;
           itemInst = { static_cast<float>(di.tileX),
                        tileWorldY(map_, di.tileX, di.tileY),
@@ -1204,6 +1261,7 @@ void App::renderFrame() {
         }
       }
     }
+    // RemotePlayer — no outline rendered yet.
 
     if (hasObstacle || hasNpc || hasItem) {
       // ── Pass A: render silhouette into mask FBO ──────────────────────────
@@ -1281,36 +1339,55 @@ void App::renderFrame() {
     const char* ctxVerb    = "";
     const char* ctxSubject = "";
     const bool  uiOwned2   = ImGui::IsWindowHovered(ImGuiHoveredFlags_AnyWindow);
-    if (hoveredTile_.hit && !uiOwned2 && !claySteals) {
-      const int ctx_tx = hoveredTile_.tileX;
-      const int ctx_ty = hoveredTile_.tileY;
+    if (hoveredEntity_.kind != HoveredEntity::Kind::None && !uiOwned2 && !claySteals) {
+      // Entity AABB hit — derive verb/subject directly from the winning entity.
+      switch (hoveredEntity_.kind) {
+        case HoveredEntity::Kind::Obstacle: {
+          const int ex = hoveredEntity_.tileX, ey = hoveredEntity_.tileY;
+          if (ey >= 0 && ey < static_cast<int>(map_.tiles.size()) &&
+              ex >= 0 && ex < static_cast<int>(map_.tiles[ey].size())) {
+            const auto obs = map_.tiles[ey][ex].obstacle;
+            if      (obs == shared::ObstacleType::tree)  { ctxVerb = "Chop"; ctxSubject = "Tree"; }
+            else if (obs == shared::ObstacleType::rock)  { ctxVerb = "Mine"; ctxSubject = "Rock"; }
+            else if (obs == shared::ObstacleType::chest) { ctxVerb = "Bank"; ctxSubject = "Chest"; }
+          }
+          break;
+        }
+        case HoveredEntity::Kind::Npc:
+          for (const auto& n : npcs_) {
+            if (n.id == hoveredEntity_.id && !n.dying) {
+              ctxVerb      = ui::npcIsAttackable(n.kind) ? "Attack" : "Talk-to";
+              s_ctxSubjStr = ui::npcName(n.kind);
+              ctxSubject   = s_ctxSubjStr.c_str();
+              break;
+            }
+          }
+          break;
+        case HoveredEntity::Kind::RemotePlayer: {
+          auto rpIt = currRemotePlayers_.find(hoveredEntity_.id);
+          if (rpIt != currRemotePlayers_.end() && !rpIt->second.dying) {
+            ctxVerb      = "";
+            s_ctxSubjStr = rpIt->second.playerName;
+            ctxSubject   = s_ctxSubjStr.c_str();
+          }
+          break;
+        }
+        case HoveredEntity::Kind::DroppedItem:
+          for (const auto& it : droppedItems_) {
+            if (it.id == hoveredEntity_.id) {
+              ctxVerb      = "Take";
+              s_ctxSubjStr = ui::itemName(it.itemId);
+              ctxSubject   = s_ctxSubjStr.c_str();
+              break;
+            }
+          }
+          break;
+        default: break;
+      }
+    } else if (hoveredTile_.hit && !uiOwned2 && !claySteals) {
+      // Bare terrain — show "Walk here" with no subject.
       ctxVerb    = "Walk here";
       ctxSubject = "";
-      if (ctx_ty >= 0 && ctx_ty < static_cast<int>(map_.tiles.size()) &&
-          ctx_tx >= 0 && ctx_tx < static_cast<int>(map_.tiles[ctx_ty].size())) {
-        const auto obs = map_.tiles[ctx_ty][ctx_tx].obstacle;
-        if      (obs == shared::ObstacleType::tree)  { ctxVerb = "Chop"; ctxSubject = "Tree"; }
-        else if (obs == shared::ObstacleType::rock)  { ctxVerb = "Mine"; ctxSubject = "Rock"; }
-        else if (obs == shared::ObstacleType::chest) { ctxVerb = "Bank"; ctxSubject = "Chest"; }
-      }
-      if (ctxSubject[0] == '\0') {
-        for (const auto& n : npcs_) {
-          if (n.tileX != ctx_tx || n.tileY != ctx_ty || n.dying) continue;
-          ctxVerb = ui::npcIsAttackable(n.kind) ? "Attack" : "Talk-to";
-          s_ctxSubjStr = ui::npcName(n.kind);
-          ctxSubject = s_ctxSubjStr.c_str();
-          break;
-        }
-      }
-      if (ctxSubject[0] == '\0') {
-        for (const auto& it : droppedItems_) {
-          if (it.tileX != ctx_tx || it.tileY != ctx_ty) continue;
-          ctxVerb = "Take";
-          s_ctxSubjStr = ui::itemName(it.itemId);
-          ctxSubject = s_ctxSubjStr.c_str();
-          break;
-        }
-      }
     } else if (uiHover_.kind != ui::UiHoverState::Kind::None) {
       switch (uiHover_.kind) {
         case ui::UiHoverState::Kind::InventoryItem:
@@ -1358,38 +1435,82 @@ void App::renderFrame() {
       } else if (uiHover_.kind == ui::UiHoverState::Kind::EmptyEquipSlot &&
                  !uiHover_.slotLabel.empty()) {
         ui::showTooltip({ TL{ {uiHover_.slotLabel + " slot", TC::White()} } });
-      } else if (hoveredTile_.hit && !uiOwned2 && !claySteals) {
-        // World hover tooltip
-        const int tt_tx = hoveredTile_.tileX;
-        const int tt_ty = hoveredTile_.tileY;
-        bool shown = false;
-        for (const auto& n : npcs_) {
-          if (n.tileX == tt_tx && n.tileY == tt_ty && !n.dying) {
-            ui::showTooltip({ TL{ {ui::npcName(n.kind), TC::White()} } });
-            shown = true;
+      } else if (hoveredEntity_.kind != HoveredEntity::Kind::None && !uiOwned2 && !claySteals) {
+        // Entity AABB hit — tooltip matches context info verb/subject.
+        switch (hoveredEntity_.kind) {
+          case HoveredEntity::Kind::Obstacle: {
+            const int ex = hoveredEntity_.tileX, ey = hoveredEntity_.tileY;
+            if (ey >= 0 && ey < static_cast<int>(map_.tiles.size()) &&
+                ex >= 0 && ex < static_cast<int>(map_.tiles[ey].size())) {
+              const auto obs = map_.tiles[ey][ex].obstacle;
+              if      (obs == shared::ObstacleType::tree)
+                ui::showTooltip({ TL{ {"Chop ", TC::White()}, {"Tree",  TC::Orange()} } });
+              else if (obs == shared::ObstacleType::rock)
+                ui::showTooltip({ TL{ {"Mine ", TC::White()}, {"Rock",  TC::Orange()} } });
+              else if (obs == shared::ObstacleType::chest)
+                ui::showTooltip({ TL{ {"Bank ", TC::White()}, {"Chest", TC::Orange()} } });
+            }
             break;
           }
-        }
-        if (!shown &&
-            tt_ty >= 0 && tt_ty < static_cast<int>(map_.tiles.size()) &&
-            tt_tx >= 0 && tt_tx < static_cast<int>(map_.tiles[tt_ty].size())) {
-          const auto obs = map_.tiles[tt_ty][tt_tx].obstacle;
-          if      (obs == shared::ObstacleType::tree)
-            { ui::showTooltip({ TL{ {"Tree",  TC::White()} } }); shown = true; }
-          else if (obs == shared::ObstacleType::rock)
-            { ui::showTooltip({ TL{ {"Rock",  TC::White()} } }); shown = true; }
-          else if (obs == shared::ObstacleType::chest)
-            { ui::showTooltip({ TL{ {"Chest", TC::White()} } }); shown = true; }
-        }
-        if (!shown) {
-          for (const auto& di : droppedItems_) {
-            if (di.tileX == tt_tx && di.tileY == tt_ty) {
-              ui::showTooltip({ TL{ {ui::itemName(di.itemId), TC::White()} } });
-              break;
+          case HoveredEntity::Kind::Npc:
+            for (const auto& n : npcs_) {
+              if (n.id == hoveredEntity_.id && !n.dying) {
+                const char* v = ui::npcIsAttackable(n.kind) ? "Attack" : "Talk-to";
+                ui::showTooltip({ TL{ {std::string(v) + " ", TC::White()},
+                                      {ui::npcName(n.kind),  TC::Orange()} } });
+                break;
+              }
             }
+            break;
+          case HoveredEntity::Kind::RemotePlayer: {
+            auto rpIt = currRemotePlayers_.find(hoveredEntity_.id);
+            if (rpIt != currRemotePlayers_.end() && !rpIt->second.dying) {
+              const auto& rp = rpIt->second;
+              int totalLevel = 0;
+              for (const auto& [sid, sk] : rp.skills) totalLevel += sk.level;
+              char lvlBuf[32];
+              std::snprintf(lvlBuf, sizeof(lvlBuf), " (lvl-%d)", totalLevel);
+              ui::showTooltip({ TL{ {rp.playerName,       TC::White()},
+                                    {std::string(lvlBuf), TC::Gold()} } });
+            }
+            break;
           }
+          case HoveredEntity::Kind::DroppedItem:
+            for (const auto& di : droppedItems_) {
+              if (di.id == hoveredEntity_.id) {
+                ui::showTooltip({ TL{ {"Take ", TC::White()},
+                                      {ui::itemName(di.itemId), TC::Orange()} } });
+                break;
+              }
+            }
+            break;
+          default: break;
         }
       }
+    }
+
+    // ── Update minimap composite texture ────────────────────────────────────────
+    if (showClayUi_ && minimap_.isReady()) {
+      // Sub-tick interpolated player position for smooth map scrolling.
+      float mmPx = localPlayer ? static_cast<float>(localPlayer->tileX) : 0.f;
+      float mmPy = localPlayer ? static_cast<float>(localPlayer->tileY) : 0.f;
+      if (localPlayer && prevLocalPlayer_) {
+        const float mmAlpha = std::clamp(
+            static_cast<float>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                now - lastTickTime_).count())
+            / static_cast<float>(shared::kTickDurationMs),
+            0.0f, 1.0f);
+        mmPx = std::lerp(static_cast<float>(prevLocalPlayer_->tileX), mmPx, mmAlpha);
+        mmPy = std::lerp(static_cast<float>(prevLocalPlayer_->tileY), mmPy, mmAlpha);
+      }
+      // Destination tile: show red triangle while player has an active path.
+      int destX = -1, destY = -1;
+      if (localPlayer && !localPlayer->path.empty()) {
+        destX = localPlayer->destinationX;
+        destY = localPlayer->destinationY;
+      }
+      minimap_.updateFrame(mmPx, mmPy, localPlayer, currRemotePlayers_, npcs_, droppedItems_,
+                           camera_.cameraYaw(), minimapTileRadius_, destX, destY);
     }
 
     // Reset UI hover before Clay writes to it.
@@ -1401,7 +1522,102 @@ void App::renderFrame() {
     ui::clayFrame(localPlayer, &network_, &spriteCache_, &uiHover_, dt, mp.x, mp.y,
                   static_cast<float>(fbW), static_cast<float>(fbH),
                   md, lClick, rClick, ctxVerb, ctxSubject, wheelDelta,
-                  showLogin, showJoin, bankOpen_);
+                  showLogin, showJoin, bankOpen_,
+                  minimap_.isReady() ? minimap_.texture() : 0);
+
+    // Refresh claySteals with the current frame's ownership (clayFrame() just ran
+    // and updated s_clayOwned via Clay_PointerOver).  All rendering that reads
+    // claySteals below (context info, tooltips, outline) now uses fresh data so
+    // holding left-click while dragging over UI doesn't bleed hover through panels.
+    claySteals = ui::clayIsPointerOverUI();
+    if (claySteals) {
+      hoveredEntity_ = {};
+      hoveredTile_.hit = false;
+    }
+
+    // ── Minimap scroll zoom (handled after clayFrame so PointerOver is valid) ──
+    if (wheelDelta != 0.f && ui::clayMinimapHovered()) {
+      minimapTileRadius_ = std::max(5.f, std::min(24.f,
+                                   minimapTileRadius_ - wheelDelta * 1.5f));
+    }
+
+    // North is indicated by the yellow notch in the minimap border ring (shader-rendered).
+
+    // ── Deferred world left-click dispatch ──────────────────────────────────
+    // clayFrame() above has now updated clayIsPointerOverUI() for the current
+    // frame.  ImGui::NewFrame() has also run.  Both guards are current.
+    if (pendingWorldLeftClick_) {
+      pendingWorldLeftClick_ = false;
+      const bool freshUiGuard = ImGui::GetIO().WantCaptureMouse
+                              || (showClayUi_ && ui::clayIsPointerOverUI());
+      if (!freshUiGuard
+          && (hoveredEntity_.kind != HoveredEntity::Kind::None || hoveredTile_.hit)
+          && network_.status() == net::Connection::Connected
+          && !ui::ctxMenu().open) {
+        bool dispatched = false;
+
+        // 1. Entity AABB hit
+        if (hoveredEntity_.kind == HoveredEntity::Kind::Npc) {
+          for (const auto& n : npcs_) {
+            if (n.id != hoveredEntity_.id || n.dying) continue;
+            if (n.kind == "chicken") network_.sendAttackNpc(n.id);
+            else                     network_.sendTalkTo(n.id);
+            oneShotClip_.clear();
+            dispatched = true; clickFeedbackColor_ = 1;
+            break;
+          }
+        } else if (hoveredEntity_.kind == HoveredEntity::Kind::DroppedItem) {
+          for (const auto& it : droppedItems_) {
+            if (it.id != hoveredEntity_.id) continue;
+            network_.sendTakeItem(it.id);
+            oneShotClip_.clear();
+            dispatched = true; clickFeedbackColor_ = 1;
+            break;
+          }
+        } else if (hoveredEntity_.kind == HoveredEntity::Kind::Obstacle) {
+          const int tx = hoveredEntity_.tileX, ty = hoveredEntity_.tileY;
+          if (ty >= 0 && ty < static_cast<int>(map_.tiles.size()) &&
+              tx >= 0 && tx < static_cast<int>(map_.tiles[ty].size())) {
+            const auto obs = map_.tiles[ty][tx].obstacle;
+            if (obs == shared::ObstacleType::tree) {
+              network_.sendChopTree(tx, ty);
+              oneShotClip_.clear();
+              dispatched = true; clickFeedbackColor_ = 1;
+            } else if (obs == shared::ObstacleType::rock) {
+              network_.sendMineRock(tx, ty);
+              oneShotClip_.clear();
+              dispatched = true; clickFeedbackColor_ = 1;
+            } else if (obs == shared::ObstacleType::chest) {
+              network_.sendOpenBank();
+              bankOpen_ = true;
+              dispatched = true; clickFeedbackColor_ = 1;
+            }
+          }
+        }
+        // RemotePlayer — falls through to walk
+
+        // 2. Fallback: walk to terrain tile
+        if (!dispatched && hoveredTile_.hit) {
+          const int tx = hoveredTile_.tileX, ty = hoveredTile_.tileY;
+          if (ty >= 0 && ty < static_cast<int>(map_.tiles.size()) &&
+              tx >= 0 && tx < static_cast<int>(map_.tiles[ty].size()) &&
+              map_.tiles[ty][tx].walkable) {
+            network_.sendMoveTo(tx, ty);
+            oneShotClip_.clear();
+            clickFeedbackColor_ = 0;
+          } else {
+            clickFeedbackColor_ = 1;
+          }
+        }
+
+        // Click feedback
+        ui::clickFeedbackSpawn(pendingWorldClickX_, pendingWorldClickY_, clickFeedbackColor_);
+        clickFeedbackActive_ = true;
+        clickFeedbackTime_   = std::chrono::steady_clock::now();
+        clickFeedbackX_      = pendingWorldClickX_;
+        clickFeedbackY_      = pendingWorldClickY_;
+      }
+    }
 
     // Dispatch Clay context menu click
     ui::CtxMenuState& cm = ui::ctxMenu();
@@ -1494,6 +1710,17 @@ void App::renderFrame() {
         for (const auto& n : npcs_)
           if (n.tileX == ctxMenuTileX_ && n.tileY == ctxMenuTileY_ && !n.dying)
             { network_.sendTalkTo(n.id); oneShotClip_.clear(); break; }
+      } else if (e.verb == "Examine" && !ctxMenuPlayerId_.empty()) {
+        // Player examine — must be checked before the generic NPC examine below.
+        auto rpIt = currRemotePlayers_.find(ctxMenuPlayerId_);
+        if (rpIt != currRemotePlayers_.end()) {
+          std::string msg = "It's " + rpIt->second.playerName + "!";
+          chatLog_.appendSystem(msg.c_str());
+          ui::chatAppendSystem(msg.c_str());
+        }
+        ctxMenuPlayerId_.clear();
+      } else if (e.verb == "Trade with" || e.verb == "Follow") {
+        // Not yet implemented server-side — no-op.
       } else if (e.verb == "Examine") {
         for (const auto& n : npcs_)
           if (n.tileX == ctxMenuTileX_ && n.tileY == ctxMenuTileY_ && !n.dying) {
@@ -1520,9 +1747,16 @@ void App::renderFrame() {
           }
         }
       } else if (e.verb == "Take") {
-        for (const auto& it : droppedItems_)
-          if (it.tileX == ctxMenuTileX_ && it.tileY == ctxMenuTileY_)
-            { network_.sendTakeItem(it.id); oneShotClip_.clear(); break; }
+        // payload holds the specific item id (set at menu-build time).
+        // Fall back to first-on-tile if somehow missing (shouldn't happen).
+        const std::string& takeId = e.payload;
+        if (!takeId.empty()) {
+          network_.sendTakeItem(takeId); oneShotClip_.clear();
+        } else {
+          for (const auto& it : droppedItems_)
+            if (it.tileX == ctxMenuTileX_ && it.tileY == ctxMenuTileY_)
+              { network_.sendTakeItem(it.id); oneShotClip_.clear(); break; }
+        }
       } else if (e.verb == "Walk here") {
         network_.sendMoveTo(ctxMenuTileX_, ctxMenuTileY_); oneShotClip_.clear();
       }
@@ -1635,6 +1869,7 @@ void App::renderFrame() {
                                     static_cast<int>(std::round(fx)),
                                     static_cast<int>(std::round(fz)));
         ui::WorldOverlays::OverlayEntry e;
+        e.id         = id;
         e.wx         = fx;
         e.wy         = fy;
         e.wz         = fz;

@@ -41,34 +41,42 @@ void WorldOverlays::update(int /*currentTick*/,
     return;
   }
 
+  using Dur = std::chrono::steady_clock::duration;
+  auto addSec = [](std::chrono::steady_clock::time_point t, float s) {
+    return t + std::chrono::duration_cast<Dur>(std::chrono::duration<float>(s));
+  };
+
   auto spawnSplat = [&](const std::string& id, int hitTick, int dmg,
-                        glm::vec3 anchor) {
-    if (hitTick <= 0) return;
+                        glm::vec3 anchor) -> bool {
+    if (hitTick <= 0) return false;
     auto it = seenHitTick_.find(id);
-    if (it != seenHitTick_.end() && it->second == hitTick) return;
+    if (it != seenHitTick_.end() && it->second == hitTick) return false;
     seenHitTick_[id] = hitTick;
     splats_.push_back({ anchor, dmg, now });
+    return true;
   };
 
   if (localPlayer) {
     spawnSplat("__local__",
                localPlayer->lastHitTick,
                localPlayer->lastHitDamage,
-               { static_cast<float>(localPlayer->tileX), 1.5f,
+               { static_cast<float>(localPlayer->tileX), 0.9f,
                  static_cast<float>(localPlayer->tileY) });
 
     // Drive the local HP bar fade timer.
     if (localPlayer->maxHp > 0 && localPlayer->hp < localPlayer->maxHp) {
-      localHealthBarFadeUntil_ = now +
-          std::chrono::duration_cast<std::chrono::steady_clock::duration>(
-              std::chrono::duration<float>(kHealthBarFadeSec));
+      localHealthBarFadeUntil_ = addSec(now, kHealthBarFadeSec);
     }
   }
 
   for (const auto& n : npcs) {
-    spawnSplat(n.id, n.lastHitTick, n.lastHitDamage,
-               { static_cast<float>(n.tileX), 1.2f,
+    bool newHit = spawnSplat(n.id, n.lastHitTick, n.lastHitDamage,
+               { static_cast<float>(n.tileX), 0.9f,
                  static_cast<float>(n.tileY) });
+    // Refresh per-NPC health bar fade timer whenever a new hit lands.
+    if (newHit) {
+      npcHealthBarFadeUntil_[n.id] = addSec(now, kNpcBarFadeSec);
+    }
   }
 }
 
@@ -170,15 +178,27 @@ void WorldOverlays::draw(const glm::mat4& viewProj, int fbWidth, int fbHeight,
       drawBar(localPlayer->wx, localPlayer->wy + 2.4f, localPlayer->wz,
               localPlayer->hp, localPlayer->maxHp, alpha);
     }
-    drawBubble(localPlayer->wx, localPlayer->wy + 2.8f, localPlayer->wz,
+    drawBubble(localPlayer->wx, localPlayer->wy + 1.8f, localPlayer->wz,
                localPlayer->chatMessage, localPlayer->chatAlpha);
   }
 
   // ---- NPCs + remote players -----------------------------------------------
   for (const auto& e : entities) {
     if (e.showHpBar) {
-      // NPC anchor: 1.5 world units above terrain clears the humanoid head
-      drawBar(e.wx, e.wy + 1.5f, e.wz, e.hp, e.maxHp, 1.0f);
+      // NPC health bar: fades out kNpcBarFadeTailSec after last damage.
+      float npcAlpha = 1.0f;
+      if (!e.id.empty()) {
+        auto fit = npcHealthBarFadeUntil_.find(e.id);
+        if (fit == npcHealthBarFadeUntil_.end()) {
+          npcAlpha = 0.0f;  // never been hit — don't show
+        } else {
+          const float secLeft =
+              std::chrono::duration<float>(fit->second - now).count();
+          npcAlpha = std::clamp(secLeft / kNpcBarFadeTailSec, 0.0f, 1.0f);
+        }
+      }
+      if (npcAlpha > 0.0f)
+        drawBar(e.wx, e.wy + 1.5f, e.wz, e.hp, e.maxHp, npcAlpha);
     }
     drawBubble(e.wx, e.wy + 1.8f, e.wz, e.chatMessage, e.chatAlpha);
   }
@@ -198,11 +218,10 @@ void WorldOverlays::draw(const glm::mat4& viewProj, int fbWidth, int fbHeight,
                         ? IM_COL32( 60,  60, 200, static_cast<int>(alpha * 230))
                         : IM_COL32(190,  30,  30, static_cast<int>(alpha * 230));
 
-    // Billboard-scale the splat radius so it doesn't shrink to nothing far away
-    glm::vec2 pxEdge;
-    float radius = 11.0f;
-    if (worldToScreen(viewProj, {pos.x + 0.2f, pos.y, pos.z}, fbWidth, fbHeight, &pxEdge))
-      radius = std::clamp(std::abs(pxEdge.x - px.x) / 0.2f * 0.2f, 8.0f, 18.0f);
+    // Billboard-scale the splat to represent a fixed ~0.18 world-unit radius.
+    // Use the camera-right vector so rotation doesn't shrink/expand it.
+    const float radius = billboardBarW(viewProj, pos.x, pos.y, pos.z,
+                                       0.18f, fbWidth, fbHeight) * 0.5f;
 
     dl->AddCircleFilled(ImVec2(px.x, px.y), radius, fill, 16);
     dl->AddCircle      (ImVec2(px.x, px.y), radius,

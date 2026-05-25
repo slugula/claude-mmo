@@ -4,16 +4,21 @@
 #include "ui/Panels.hpp"       // UiHoverState
 #include "world/SpriteCache.hpp"
 
+#include <glad/glad.h>
+
 namespace net { class NetworkClient; }
 
 namespace ui {
 
 // Called between Clay_BeginLayout() and Clay_EndLayout().
-// Emits the full HUD panel (inventory / skills / equipment tabs).
+// Emits the full HUD panel (inventory / skills / equipment tabs)
+// and the minimap panel.
 // sprites may be nullptr (slots fall back to text-only rendering).
+// minimapTex = 0 means the minimap is not yet ready (panel not emitted).
 void clayHudBuildLayout(const shared::PlayerState* player,
                         const SpriteCache*         sprites,
-                        float mx, float my);
+                        float mx, float my,
+                        GLuint minimapTex = 0);
 
 // Called after Clay_EndLayout().
 // Resolves pointer-over hits, fires network actions, writes hover state,

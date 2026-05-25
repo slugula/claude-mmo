@@ -140,6 +140,7 @@ static void buildBankSlot(int idx, bool isBankGrid,
                 CLAY(qtyId, {
                     .floating = {
                         .offset       = { 2.f, 2.f },
+                        .zIndex       = 10,
                         .attachPoints = {
                             .element = CLAY_ATTACH_POINT_LEFT_TOP,
                             .parent  = CLAY_ATTACH_POINT_LEFT_TOP,

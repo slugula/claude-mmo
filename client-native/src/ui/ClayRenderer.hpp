@@ -21,6 +21,10 @@ void clayResize(int w, int h);
 // most recent clayFrame() call. Use to suppress world hover/click events.
 bool clayIsPointerOverUI();
 
+// Returns true if the cursor was over the minimap panel last frame.
+// Used by App.cpp to dispatch click-to-walk and scroll zoom for the minimap.
+bool clayMinimapHovered();
+
 // Toggle Clay's built-in debug overlay (shows element IDs, bounding boxes,
 // layout info). Call before clayFrame() each frame when the toggle is live.
 void claySetDebugMode(bool enabled);
@@ -45,6 +49,7 @@ void clayFrame(const shared::PlayerState* player,
                float wheelDelta,
                bool showLoginModal,
                bool showJoinModal,
-               bool bankOpen);
+               bool bankOpen,
+               unsigned int minimapTex = 0);
 
 } // namespace ui

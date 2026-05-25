@@ -57,6 +57,10 @@ public:
 
   bool isDragging() const { return dragging_; }
 
+  // Returns the current smoothed horizontal yaw angle in radians.
+  // Used by the minimap to rotate the map so "up = camera forward".
+  float cameraYaw() const { return alpha_; }
+
 private:
   // ---- Smoothed targets (where we want to be) -----------------------------
   float targetAlpha_  = -0.785398f;   // -π/4

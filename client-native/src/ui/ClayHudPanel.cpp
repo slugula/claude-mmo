@@ -212,7 +212,8 @@ static void buildInventoryTab(const shared::PlayerState* player,
                             .element = CLAY_ATTACH_POINT_LEFT_TOP,
                             .parent  = CLAY_ATTACH_POINT_LEFT_TOP,
                         },
-                        .attachTo = CLAY_ATTACH_TO_ROOT,
+                        .pointerCaptureMode  = CLAY_POINTER_CAPTURE_MODE_PASSTHROUGH,
+                        .attachTo            = CLAY_ATTACH_TO_ROOT,
                     }
                 }) {
                     CLAY(CLAY_ID("DragGhostInner"), {
@@ -307,6 +308,7 @@ static void buildInventoryTab(const shared::PlayerState* player,
                                 CLAY(CLAY_IDI("InvQty", idx), {
                                     .floating = {
                                         .offset       = { 2.f, 2.f },
+                                        .zIndex       = 10,
                                         .attachPoints = {
                                             .element = CLAY_ATTACH_POINT_LEFT_TOP,
                                             .parent  = CLAY_ATTACH_POINT_LEFT_TOP,
@@ -554,6 +556,26 @@ static void buildEquipmentTab(const shared::PlayerState* player,
                                     .fontSize  = 0,
                                 }));
                             }
+                            // Quantity badge (top-left, same as inventory)
+                            if (item->quantity > 1) {
+                                std::string qs = fmtQty(item->quantity);
+                                CLAY(CLAY_IDI("EqQty", gridIdx), {
+                                    .floating = {
+                                        .offset       = { 2.f, 2.f },
+                                        .zIndex       = 10,
+                                        .attachPoints = {
+                                            .element = CLAY_ATTACH_POINT_LEFT_TOP,
+                                            .parent  = CLAY_ATTACH_POINT_LEFT_TOP,
+                                        },
+                                        .attachTo = CLAY_ATTACH_TO_PARENT,
+                                    }
+                                }) {
+                                    CLAY_TEXT(clayStr(qs), CLAY_TEXT_CONFIG({
+                                        .textColor = kQtyText,
+                                        .fontSize  = 0,
+                                    }));
+                                }
+                            }
                         } else {
                             // Slot label letter (e.g. "H" for Head)
                             char letter[2] = { m->label[0], '\0' };
@@ -614,7 +636,8 @@ static void buildEquipmentTab(const shared::PlayerState* player,
 // ── Public: build layout ──────────────────────────────────────────────────────
 void clayHudBuildLayout(const shared::PlayerState* player,
                         const SpriteCache* sprites,
-                        float mx, float my) {
+                        float mx, float my,
+                        GLuint minimapTex) {
     // Reset string scratch buffer every frame.
     s_strOff   = 0;
     s_hovInvSlot  = -1;
@@ -693,6 +716,44 @@ void clayHudBuildLayout(const shared::PlayerState* player,
             if      (s_activeTab == 0) buildInventoryTab(player, sprites, mx, my);
             else if (s_activeTab == 1) buildSkillsTab(player);
             else                       buildEquipmentTab(player, sprites);
+        }
+    }
+
+    // ── Minimap panel (top-right corner) ─────────────────────────────────────
+    // kMmMargin=24 leaves room for the rotating "N" label drawn by App.cpp via ImGui.
+    if (minimapTex != 0) {
+        static constexpr int kMmSize = 156;  // must match MinimapRenderer::kSize
+        static constexpr int kMmMargin = 24;
+
+        // Minimap disc image — fixed 156×156, top-right anchor
+        CLAY(CLAY_ID("MinimapPanel"), {
+            .layout = {
+                .sizing = {
+                    CLAY_SIZING_FIXED(static_cast<float>(kMmSize)),
+                    CLAY_SIZING_FIXED(static_cast<float>(kMmSize)),
+                },
+            },
+            .floating = {
+                .offset = {
+                    static_cast<float>(-kMmSize - kMmMargin),
+                    static_cast<float>(kMmMargin),
+                },
+                .zIndex = 20,
+                .attachPoints = {
+                    .element = CLAY_ATTACH_POINT_LEFT_TOP,
+                    .parent  = CLAY_ATTACH_POINT_RIGHT_TOP,
+                },
+                .attachTo = CLAY_ATTACH_TO_ROOT,
+            },
+        }) {
+            CLAY(CLAY_ID("MinimapImage"), {
+                .layout = {
+                    .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) },
+                },
+                .image = {
+                    .imageData = reinterpret_cast<void*>(static_cast<uintptr_t>(minimapTex)),
+                },
+            }) {}
         }
     }
 }

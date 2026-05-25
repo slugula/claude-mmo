@@ -41,10 +41,11 @@ static std::string                                  s_inputDisplay;
 // ── Dimensions ────────────────────────────────────────────────────────────────
 static constexpr float kW      = 560.f;
 static constexpr float kH      = 210.f;
-static constexpr float kInputH = 28.f;
+static constexpr float kInputH =  28.f;
 static constexpr float kMsgH   = kH - kInputH - 1.f;  // minus 1px divider
-static constexpr float kPadX   = 6.f;
-static constexpr float kPadY   = 4.f;
+static constexpr float kPadX   =   6.f;
+static constexpr float kPadY   =   4.f;
+static constexpr float kSbW    =   6.f;  // scrollbar width
 
 // ── Colours ───────────────────────────────────────────────────────────────────
 static constexpr Clay_Color kBg         = {  10,   5,   0, 200 };
@@ -52,6 +53,8 @@ static constexpr Clay_Color kBorder     = {  80,  60,  40, 200 };
 static constexpr Clay_Color kInputBg    = {   5,   3,   0, 220 };
 static constexpr Clay_Color kSysText    = { 255, 224, 102, 255 };
 static constexpr Clay_Color kPlayerText = { 255, 255, 255, 255 };
+static constexpr Clay_Color kSbTrack    = {  20,  12,   4, 180 };
+static constexpr Clay_Color kSbThumb    = {  90,  65,  30, 220 };
 
 // ── Helper ────────────────────────────────────────────────────────────────────
 static Clay_String cstr(const char* s) {
@@ -85,11 +88,8 @@ void buildChatLog(float /*screenW*/, float screenH,
                   net::NetworkClient* netc)
 {
     // ── Keyboard capture ──────────────────────────────────────────────────────
-    // Only capture keys when in-game (player != nullptr) so the login/join
-    // modals can own the keyboard before the player has connected.
     if (netc && player) {
         const ImGuiIO& io = ImGui::GetIO();
-        // Only steal input when no ImGui widget is actively focused.
         if (!ImGui::IsAnyItemActive()) {
             for (int i = 0; i < io.InputQueueCharacters.Size; ++i) {
                 ImWchar ch = io.InputQueueCharacters[i];
@@ -110,16 +110,30 @@ void buildChatLog(float /*screenW*/, float screenH,
         }
     }
 
-    // ── Auto-scroll to bottom when new messages arrive ────────────────────────
-    if (s_autoScroll) {
-        Clay_ScrollContainerData sd =
-            Clay_GetScrollContainerData(Clay_GetElementId(CLAY_STRING("ChatMessages")));
-        if (sd.found &&
-            sd.contentDimensions.height > sd.scrollContainerDimensions.height) {
-            sd.scrollPosition->y =
-                -(sd.contentDimensions.height - sd.scrollContainerDimensions.height);
-        }
+    // ── Scroll data from previous frame (used for scrollbar thumb + auto-scroll)
+    Clay_ScrollContainerData sd =
+        Clay_GetScrollContainerData(Clay_GetElementId(CLAY_STRING("ChatMessages")));
+
+    // Auto-scroll: snap to bottom when new messages arrive.
+    // Write directly to the scroll position pointer before layout so Clay
+    // clamps and applies it this frame.
+    if (s_autoScroll && sd.found) {
+        sd.scrollPosition->y = -99999.f;   // Clay clamps to actual bottom
         s_autoScroll = false;
+    }
+
+    // ── Scrollbar thumb geometry (computed from previous-frame scroll data) ───
+    float thumbH       = kMsgH;      // full height when no overflow
+    float thumbOffsetY = 0.f;
+    if (sd.found && sd.contentDimensions.height > sd.scrollContainerDimensions.height) {
+        float viewH    = sd.scrollContainerDimensions.height;
+        float contentH = sd.contentDimensions.height;
+        thumbH         = std::max(14.f, (viewH / contentH) * kMsgH);
+        float maxOffset = kMsgH - thumbH;
+        float scrollFrac = (-sd.scrollPosition->y) /
+                           (contentH - viewH);
+        scrollFrac     = std::max(0.f, std::min(1.f, scrollFrac));
+        thumbOffsetY   = scrollFrac * maxOffset;
     }
 
     // ── Input display string: "Name: buffer|" ─────────────────────────────────
@@ -161,32 +175,70 @@ void buildChatLog(float /*screenW*/, float screenH,
                 .width = CLAY_BORDER_ALL(1),
             },
         }) {
-            // ── Scrollable message area ───────────────────────────────────────
-            CLAY(CLAY_ID("ChatMessages"), {
+            // ── Message row: scrollable content + scrollbar ───────────────────
+            CLAY(CLAY_ID("ChatMsgRow"), {
                 .layout = {
                     .sizing          = { CLAY_SIZING_FIXED(kW - 2.f),
                                          CLAY_SIZING_FIXED(kMsgH) },
-                    .padding         = { (uint16_t)kPadX, (uint16_t)kPadX,
-                                         (uint16_t)kPadY, (uint16_t)kPadY },
-                    .childGap        = 2,
-                    .layoutDirection = CLAY_TOP_TO_BOTTOM,
+                    .layoutDirection = CLAY_LEFT_TO_RIGHT,
                 },
-                .clip = { .vertical = true, .childOffset = Clay_GetScrollOffset() },
             }) {
-                int idx = 0;
-                for (const auto& e : s_entries) {
-                    Clay_String cs  = cstr(e.text.c_str());
-                    Clay_Color  col = e.system ? kSysText : kPlayerText;
-                    CLAY(CLAY_IDI("ChatEntry", idx++), {
-                        .layout = {
-                            .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
-                        },
-                    }) {
-                        CLAY_TEXT(cs, CLAY_TEXT_CONFIG({
-                            .textColor = col,
-                            .fontSize  = 0,
-                        }));
+                // Scrollable message area
+                CLAY(CLAY_ID("ChatMessages"), {
+                    .layout = {
+                        .sizing          = { CLAY_SIZING_GROW(0),
+                                             CLAY_SIZING_FIXED(kMsgH) },
+                        .padding         = { (uint16_t)kPadX, (uint16_t)kPadX,
+                                             (uint16_t)kPadY, (uint16_t)kPadY },
+                        .childGap        = 2,
+                        .layoutDirection = CLAY_TOP_TO_BOTTOM,
+                    },
+                    .clip = { .vertical = true, .childOffset = Clay_GetScrollOffset() },
+                }) {
+                    int idx = 0;
+                    for (const auto& e : s_entries) {
+                        Clay_String cs  = cstr(e.text.c_str());
+                        Clay_Color  col = e.system ? kSysText : kPlayerText;
+                        CLAY(CLAY_IDI("ChatEntry", idx++), {
+                            .layout = {
+                                .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
+                            },
+                        }) {
+                            CLAY_TEXT(cs, CLAY_TEXT_CONFIG({
+                                .textColor = col,
+                                .fontSize  = 0,
+                            }));
+                        }
                     }
+                }
+
+                // Scrollbar track
+                CLAY(CLAY_ID("ChatSbTrack"), {
+                    .layout = {
+                        .sizing          = { CLAY_SIZING_FIXED(kSbW),
+                                             CLAY_SIZING_FIXED(kMsgH) },
+                        .layoutDirection = CLAY_TOP_TO_BOTTOM,
+                    },
+                    .backgroundColor = kSbTrack,
+                }) {
+                    // Spacer above thumb
+                    if (thumbOffsetY > 0.f) {
+                        CLAY(CLAY_ID("ChatSbBefore"), {
+                            .layout = {
+                                .sizing = { CLAY_SIZING_FIXED(kSbW),
+                                            CLAY_SIZING_FIXED(thumbOffsetY) },
+                            },
+                        }) {}
+                    }
+                    // Thumb
+                    CLAY(CLAY_ID("ChatSbThumb"), {
+                        .layout = {
+                            .sizing = { CLAY_SIZING_FIXED(kSbW),
+                                        CLAY_SIZING_FIXED(thumbH) },
+                        },
+                        .backgroundColor = kSbThumb,
+                        .cornerRadius    = CLAY_CORNER_RADIUS(2),
+                    }) {}
                 }
             }
 

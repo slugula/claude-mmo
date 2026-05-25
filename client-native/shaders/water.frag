@@ -73,12 +73,29 @@ void main() {
     vec3 blended = normalize((n1 + n2) * vec3(uNormalStrength, 1.0, uNormalStrength));
 
     // ---- Screen-space reflection -------------------------------------------
-    vec2 ndcXY   = vClipPos.xy / vClipPos.w;
+    vec2 ndcXY    = vClipPos.xy / vClipPos.w;
     vec2 screenUV = ndcXY * 0.5 + 0.5;
-    // Perturb sample position using XZ of the blended normal
-    vec2 reflUV  = screenUV + blended.xz * 0.05 * uReflectStrength;
-    reflUV       = clamp(reflUV, vec2(0.001), vec2(0.999));
-    vec3 reflected = texture(uSceneColor, reflUV).rgb;
+
+    // Water surface depth in [0,1] NDC → depth-buffer space.
+    float waterDepth01 = vClipPos.z / vClipPos.w * 0.5 + 0.5;
+
+    // Perturb sample position using XZ of the blended normal.
+    vec2 reflUV = screenUV + blended.xz * 0.05 * uReflectStrength;
+    reflUV      = clamp(reflUV, vec2(0.001), vec2(0.999));
+
+    // Depth at the perturbed position.  If an opaque object sits IN FRONT of
+    // the water surface (shallower depth), the perturbation would bleed its
+    // edge.  Suppress distortion in that case by falling back to screenUV.
+    float sceneDepthAtRefl = texture(uSceneDepth, reflUV).r;
+    // Smoothly suppress distortion when the scene depth at the perturbed UV is
+    // shallower than the water surface (i.e. a foreground object is in the way).
+    // A 0.015 range gives enough tolerance to cover sub-pixel edge bleed without
+    // causing visible under-distortion on distant terrain.
+    float edgeMask = smoothstep(waterDepth01 - 0.015, waterDepth01, sceneDepthAtRefl);
+    // edgeMask → 0 when sampled scene is clearly shallower than water → no distortion.
+    vec2 safeReflUV = mix(screenUV, reflUV, edgeMask);
+
+    vec3 reflected = texture(uSceneColor, safeReflUV).rgb;
 
     // ---- Depth gradient + parallax ----------------------------------------
     vec2 parallaxUV = vUV + blended.xz * uParallaxDepth * (1.0 - vShoreWeight);

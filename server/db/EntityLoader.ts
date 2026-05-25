@@ -75,8 +75,13 @@ export async function loadEntitiesFromDB(): Promise<void> {
     if (npcRows.rows.length > 0) {
       const dropMap = new Map<string, DropEntry[]>();
       for (const d of dropRows.rows) {
+        const qty = d.quantity as number;
+        if (qty <= 0) {
+          console.warn(`[EntityLoader] npc_drops row ${d.npc_id}/${d.item_id} has quantity=${qty} — skipping`);
+          continue;
+        }
         if (!dropMap.has(d.npc_id)) dropMap.set(d.npc_id, []);
-        dropMap.get(d.npc_id)!.push({ itemId: d.item_id, quantity: d.quantity, rate: d.rate });
+        dropMap.get(d.npc_id)!.push({ itemId: d.item_id, quantity: qty, rate: d.rate as number });
       }
       reloadNPCs(npcRows.rows.map(r => rowToNPCDef(r, dropMap.get(r.id as string) ?? [])));
       console.log(`[EntityLoader] loaded ${npcRows.rows.length} NPCs from DB`);

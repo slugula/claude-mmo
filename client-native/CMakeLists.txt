@@ -93,6 +93,7 @@ add_executable(client-native
   src/ui/ClayChatLog.cpp
   src/ui/ClayLoginModal.cpp
   src/ui/ClayBankPanel.cpp
+  src/ui/MinimapRenderer.cpp
 )
 
 

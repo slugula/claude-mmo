@@ -28,7 +28,6 @@ CtxMenuState& ctxMenu() {
 static constexpr Clay_Color kBg         = {  26,  13,   0, 245 };
 static constexpr Clay_Color kBorder     = { 139, 108,  62, 200 };
 static constexpr Clay_Color kHeader     = { 255, 255, 255, 255 };
-static constexpr Clay_Color kSeparator  = {  61,  32,  16, 255 };
 static constexpr Clay_Color kEntryBg    = {   0,   0,   0,   0 };
 static constexpr Clay_Color kEntryHover = {  45,  27,  14, 255 };
 static constexpr Clay_Color kVerbColor  = { 255, 255, 255, 255 };
@@ -57,18 +56,30 @@ void buildContextMenu() {
 
     s_off = 0;
 
-    // Panel width: wide enough for typical entries
-    constexpr float kMenuW    = 160.f;
     constexpr float kEntryH   =  18.f;
     constexpr float kHeaderH  =  22.f;
-    constexpr float kSepH     =   1.f;
     constexpr float kPadX     =   8.f;
+    constexpr float kSepH     =   1.f;
+    constexpr float kCharW    =   7.5f;   // approx width per glyph
+    constexpr float kChildGap =   4.f;    // gap between verb and subject
+    constexpr float kMinW     = 120.f;
+
+    // Dynamic width: wide enough for the longest line
+    float maxTextW = static_cast<float>(std::strlen("Choose Option")) * kCharW; // header
+    maxTextW = std::max(maxTextW, static_cast<float>(std::strlen("Cancel")) * kCharW);
+    for (const auto& e : m.entries) {
+        float w = static_cast<float>(e.verb.size()) * kCharW;
+        if (!e.subject.empty())
+            w += kChildGap + static_cast<float>(e.subject.size()) * kCharW;
+        maxTextW = std::max(maxTextW, w);
+    }
+    float kMenuW = std::max(kMinW, maxTextW + kPadX * 2.f + 8.f /*extra cushion*/);
 
     // Compute height
     float menuH = kHeaderH + kSepH +
                   static_cast<float>(m.entries.size()) * kEntryH +
                   kEntryH  // "Cancel" entry
-                  + 4.f;   // bottom padding
+                  + kPadX; // bottom padding matches top
 
     // Clamp to screen
     float ox = std::min(m.x, m.screenW - kMenuW  - 4.f);
@@ -99,7 +110,7 @@ void buildContextMenu() {
     CLAY(CLAY_ID("ContextMenu"), {
         .layout = {
             .sizing          = { CLAY_SIZING_FIXED(kMenuW), CLAY_SIZING_FIT(0) },
-            .padding         = { 0, 0, 4, 4 },
+            .padding         = { 0, 0, 4, (uint16_t)kPadX },
             .childGap        = 0,
             .layoutDirection = CLAY_TOP_TO_BOTTOM,
         },
@@ -116,9 +127,10 @@ void buildContextMenu() {
         // Header
         CLAY(CLAY_ID("CtxHeader"), {
             .layout = {
-                .sizing         = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(kHeaderH) },
-                .padding        = { (uint16_t)kPadX, (uint16_t)kPadX, 0, 0 },
-                .childAlignment = { .x = CLAY_ALIGN_X_LEFT, .y = CLAY_ALIGN_Y_CENTER },
+                .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(kHeaderH) },
+                .padding         = { (uint16_t)kPadX, (uint16_t)kPadX, 0, 0 },
+                .childAlignment  = { .x = CLAY_ALIGN_X_LEFT, .y = CLAY_ALIGN_Y_CENTER },
+                .layoutDirection = CLAY_LEFT_TO_RIGHT,
             }
         }) {
             CLAY_TEXT(CLAY_STRING("Choose Option"), CLAY_TEXT_CONFIG({
@@ -127,12 +139,10 @@ void buildContextMenu() {
             }));
         }
 
-        // Separator
+        // Separator between header and entries
         CLAY(CLAY_ID("CtxSep"), {
-            .layout = {
-                .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(kSepH) },
-            },
-            .backgroundColor = kSeparator,
+            .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(kSepH) } },
+            .backgroundColor = { 61, 32, 16, 255 },
         }) {}
 
         // Entries
@@ -163,14 +173,6 @@ void buildContextMenu() {
                 }
             }
         }
-
-        // Separator before Cancel
-        CLAY(CLAY_ID("CtxSep2"), {
-            .layout = {
-                .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(kSepH) },
-            },
-            .backgroundColor = kSeparator,
-        }) {}
 
         // Cancel entry
         {

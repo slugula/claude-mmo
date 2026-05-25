@@ -13,6 +13,7 @@ export function addItem(
 ): { inventory: (ItemStack | null)[]; added: boolean } {
   const def = getItem(itemId);
   if (!def) return { inventory, added: false };
+  if (quantity <= 0) return { inventory, added: false };
 
   const inv = [...inventory];
 

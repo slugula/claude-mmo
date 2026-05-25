@@ -35,9 +35,11 @@ static size_t   s_arenaSize = 0;
 
 // ── Clay UI ownership tracking ────────────────────────────────────────────────
 // Set after Clay_EndLayout to gate world hover/click suppression next frame.
-static bool s_clayOwned = false;
+static bool s_clayOwned     = false;
+static bool s_minimapHovered = false;
 
 bool clayIsPointerOverUI() { return s_clayOwned; }
+bool clayMinimapHovered()  { return s_minimapHovered; }
 
 void claySetDebugMode(bool enabled) { Clay_SetDebugModeEnabled(enabled); }
 
@@ -185,7 +187,8 @@ void clayFrame(const shared::PlayerState* player,
                float wheelDelta,
                bool showLoginModal,
                bool showJoinModal,
-               bool bankOpen)
+               bool bankOpen,
+               unsigned int minimapTex)
 {
     Clay_SetPointerState({ mx, my }, mouseDown);
     // wheelDelta from ImGui io.MouseWheel (positive = scroll up).
@@ -193,7 +196,7 @@ void clayFrame(const shared::PlayerState* player,
     Clay_UpdateScrollContainers(false, { 0.f, wheelDelta * 3.f }, dt);
     Clay_BeginLayout();
 
-    clayHudBuildLayout(player, sprites, mx, my);
+    clayHudBuildLayout(player, sprites, mx, my, minimapTex);
     buildChatLog(screenW, screenH, player, netc);
     buildContextMenu();
     buildClickFeedback(dt);
@@ -212,12 +215,31 @@ void clayFrame(const shared::PlayerState* player,
 
     // Track which major containers the pointer was over this frame.
     // Used next frame to suppress world hover/click events when Clay owns the mouse.
+    s_minimapHovered = Clay_PointerOver(CLAY_ID("MinimapPanel"));
     s_clayOwned = Clay_PointerOver(CLAY_ID("HudPanel"))
                || Clay_PointerOver(CLAY_ID("ChatBox"))
                || Clay_PointerOver(CLAY_ID("BkPanel"))
                || Clay_PointerOver(CLAY_ID("LoginOverlay"))
                || Clay_PointerOver(CLAY_ID("JoinOverlay"))
-               || Clay_PointerOver(CLAY_ID("ContextMenu"));
+               || Clay_PointerOver(CLAY_ID("ContextMenu"))
+               || s_minimapHovered;
+    // Qty badge floating elements use CLAY_ATTACH_TO_PARENT so they are
+    // positioned relative to their slot, but Clay_PointerOver on the parent
+    // panel may not cover them when they visually overflow.  Check each badge
+    // explicitly so hovering over a stack count still blocks world picking.
+    if (!s_clayOwned) {
+        // Inventory: 4×7 = 28 slots
+        for (int i = 0; i < 28 && !s_clayOwned; ++i)
+            s_clayOwned = Clay_PointerOver(CLAY_IDI("InvQty", i));
+        // Equipment: up to 12 slots
+        for (int i = 0; i < 12 && !s_clayOwned; ++i)
+            s_clayOwned = Clay_PointerOver(CLAY_IDI("EqQty", i));
+        // Bank grids: bank up to 400, bank-inv 28
+        for (int i = 0; i < 400 && !s_clayOwned; ++i)
+            s_clayOwned = Clay_PointerOver(CLAY_IDI("BkBankQty", i));
+        for (int i = 0; i < 28 && !s_clayOwned; ++i)
+            s_clayOwned = Clay_PointerOver(CLAY_IDI("BkInvQty", i));
+    }
 
     // Input handling (after layout so PointerOver uses this frame's bounds)
     clayHudHandleInput(player, netc, hover, leftClicked, rightClicked, mouseDown, mx, my);
