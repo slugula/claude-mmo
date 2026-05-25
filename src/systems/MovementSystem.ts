@@ -1,5 +1,6 @@
 import type { PlayerState, WorldState, GameAction, Direction, GridPosition } from '../shared/types';
 import { findPath } from '../world/Pathfinder';
+import { findWalkableTileNear } from '../world/WorldState';
 
 function directionBetween(from: GridPosition, to: GridPosition): Direction {
   const dx = Math.sign(to.x - from.x);
@@ -27,14 +28,20 @@ export function processMovement(
   // MOVE_TO overrides any ongoing action, including combat
   for (const action of actions) {
     if (action.type === 'MOVE_TO') {
+      // If the clicked tile is not walkable (obstacle, water, etc.), redirect to
+      // the nearest walkable tile so minimap clicks on trees/rocks still navigate.
+      const targetTile = world.tiles[action.targetY]?.[action.targetX];
+      const dest = (targetTile && targetTile.walkable)
+        ? { x: action.targetX, y: action.targetY }
+        : findWalkableTileNear(world, action.targetX, action.targetY);
       const newPath = findPath(
         world,
         { x: state.tileX, y: state.tileY },
-        { x: action.targetX, y: action.targetY },
+        dest,
       );
       state.path = newPath;
-      state.destinationX = action.targetX;
-      state.destinationY = action.targetY;
+      state.destinationX = dest.x;
+      state.destinationY = dest.y;
       state.attackTargetId = null; // walking cancels combat
       state.talkTargetId   = null;
       state.pickupItemId   = null;

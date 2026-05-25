@@ -144,6 +144,7 @@ private:
   std::unordered_map<std::string, float>   npcSmoothedYaw_;
   ui::MinimapRenderer                      minimap_;
   float                                    minimapTileRadius_ = 12.f;
+  bool                                     cursorOverMinimap_ = false;  // geometric disc check, current frame
   ui::UiHoverState                         uiHover_;
   ui::ChatLog                              chatLog_;
   ui::WorldOverlays                        overlays_;
@@ -266,6 +267,12 @@ private:
   bool                                     showImguiUi_     = false;
   bool                                     showClayUi_      = true;
   bool                                     showClayDebug_   = false;
+  // Debug panel visibility — hidden by default in PRODUCTION_BUILD; F12 toggles it.
+#ifdef PRODUCTION_BUILD
+  bool                                     showDebugPanel_  = false;
+#else
+  bool                                     showDebugPanel_  = true;
+#endif
 };
 
 }  // namespace app

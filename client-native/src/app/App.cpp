@@ -273,6 +273,21 @@ bool App::init() {
     }
 
     if (ImGui::GetIO().WantCaptureMouse) return;
+    // Direct minimap disc guard — same geometry as renderFrame() claySteals check.
+    // Prevents right-click context menus when cursor is over the minimap disc even
+    // if Clay PointerOver is stale (e.g. button held since outside the disc).
+    {
+      double mmrx, mmry;
+      glfwGetCursorPos(window_.handle(), &mmrx, &mmry);
+      int mmfw = 0;
+      glfwGetFramebufferSize(window_.handle(), &mmfw, nullptr);
+      const float kMmRad = static_cast<float>(ui::MinimapRenderer::kSize) * 0.5f;
+      const float mmCX   = static_cast<float>(mmfw) - 24.f - kMmRad;
+      const float mmCY   = 24.f + kMmRad;
+      const float mmDX   = static_cast<float>(mmrx) - mmCX;
+      const float mmDY   = static_cast<float>(mmry) - mmCY;
+      if (showClayUi_ && (mmDX * mmDX + mmDY * mmDY <= kMmRad * kMmRad)) return;
+    }
     if (showClayUi_ && ui::clayIsPointerOverUI()) return;
     (void)mods;
     // PRESS events only reach the camera when UI doesn't own the mouse.
@@ -383,6 +398,10 @@ bool App::init() {
     if (key == GLFW_KEY_F1 && action == GLFW_PRESS) {
       showClayDebug_ = !showClayDebug_;
       ui::claySetDebugMode(showClayDebug_);
+    }
+    // F12: toggle debug panel (hidden by default in production builds)
+    if (key == GLFW_KEY_F12 && action == GLFW_PRESS) {
+      showDebugPanel_ = !showDebugPanel_;
     }
   };
 
@@ -672,7 +691,21 @@ void App::renderFrame() {
   // NOTE: clayIsPointerOverUI() is last frame's state here (clayFrame hasn't run yet).
   // claySteals is refreshed after clayFrame() below so that context info, outlines,
   // and tooltips use the current frame's ownership rather than a stale value.
-  bool claySteals = showClayUi_ && ui::clayIsPointerOverUI();
+  //
+  // Direct geometric minimap disc check — bypasses Clay PointerOver lag and
+  // pointer-capture behavior when the mouse button is held with initial press
+  // outside the minimap panel.  Tile outline and entity outline are rendered
+  // BEFORE clayFrame() runs, so we must suppress picking here (not after) to
+  // prevent outlines from bleeding through the minimap this frame.
+  {
+    const float kMmRad = static_cast<float>(ui::MinimapRenderer::kSize) * 0.5f;
+    const float mmCX   = static_cast<float>(fbW) - 24.f - kMmRad;
+    const float mmCY   = 24.f + kMmRad;
+    const float mmDX   = static_cast<float>(cursorX) - mmCX;
+    const float mmDY   = static_cast<float>(cursorY) - mmCY;
+    cursorOverMinimap_  = showClayUi_ && (mmDX * mmDX + mmDY * mmDY <= kMmRad * kMmRad);
+  }
+  bool claySteals = showClayUi_ && (ui::clayIsPointerOverUI() || cursorOverMinimap_);
   if (!ImGui::GetIO().WantCaptureMouse && !claySteals && fbW > 0 && fbH > 0) {
     glm::vec3 rayOrigin, rayDir;
     input::screenToRay(cursorX, cursorY, fbW, fbH, viewProj, &rayOrigin, &rayDir);
@@ -1549,7 +1582,7 @@ void App::renderFrame() {
     if (pendingWorldLeftClick_) {
       pendingWorldLeftClick_ = false;
       const bool freshUiGuard = ImGui::GetIO().WantCaptureMouse
-                              || (showClayUi_ && ui::clayIsPointerOverUI());
+                              || (showClayUi_ && (ui::clayIsPointerOverUI() || cursorOverMinimap_));
       if (!freshUiGuard
           && (hoveredEntity_.kind != HoveredEntity::Kind::None || hoveredTile_.hit)
           && network_.status() == net::Connection::Connected
@@ -1981,7 +2014,8 @@ void App::renderFrame() {
     }
   }
 
-  if (ImGui::Begin("Debug")) {
+  if (showDebugPanel_) {
+    ImGui::Begin("Debug");
     ImGui::Text("GL %s", glGetString(GL_VERSION));
     ImGui::Text("Framebuffer: %d x %d", fbW, fbH);
     ImGui::Text("MSAA: %dx", msaa_->samples());
@@ -2160,8 +2194,8 @@ void App::renderFrame() {
         ImGui::TextUnformatted("Waiting for first state tick...");
       }
     }
+    ImGui::End();
   }
-  ImGui::End();
 
   // Context menu: Clay path is handled inside clayFrame; ImGui fallback when Clay off.
   if (!showClayUi_) drawWorldContextMenu();

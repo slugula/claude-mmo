@@ -1,5 +1,11 @@
 cmake_minimum_required(VERSION 3.25)
 
+# ---- Distribution option ---------------------------------------------------
+# Set -DPRODUCTION_BUILD=ON (or pass via cmake --build preset) to produce a
+# release build hardwired to the production server.  The login modal hides the
+# host/port fields and the debug panel is hidden by default.
+option(PRODUCTION_BUILD "Build for public distribution (hardwired production server)" OFF)
+
 project(osrs-prototype-client
   LANGUAGES CXX C
   DESCRIPTION "Native OpenGL 4.6 client + level editor for the OSRS-inspired MMO prototype"
@@ -117,6 +123,14 @@ if (MSVC)
   )
   set_target_properties(client-native PROPERTIES
     VS_DEBUGGER_WORKING_DIRECTORY "$<TARGET_FILE_DIR:client-native>"
+  )
+endif()
+
+if (PRODUCTION_BUILD)
+  target_compile_definitions(client-native PRIVATE
+    PRODUCTION_BUILD
+    PRODUCTION_HOST="34.204.12.71"
+    PRODUCTION_PORT=8080
   )
 endif()
 

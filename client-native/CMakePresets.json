@@ -18,6 +18,18 @@
       }
     },
     {
+      "name": "windows-production",
+      "displayName": "Windows (Production — hardwired to live server)",
+      "inherits": "windows-base",
+      "generator": "Visual Studio 18 2026",
+      "binaryDir": "${sourceDir}/build-production",
+      "cacheVariables": {
+        "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+        "VCPKG_TARGET_TRIPLET": "x64-windows",
+        "PRODUCTION_BUILD": "ON"
+      }
+    },
+    {
       "name": "windows",
       "displayName": "Windows (Visual Studio 2026, x64)",
       "inherits": "windows-base",
@@ -53,6 +65,12 @@
       "name": "windows-vs2022-release",
       "displayName": "Windows VS 2022 Release",
       "configurePreset": "windows-vs2022",
+      "configuration": "Release"
+    },
+    {
+      "name": "windows-production-release",
+      "displayName": "Windows Production Release",
+      "configurePreset": "windows-production",
       "configuration": "Release"
     }
   ]

@@ -69,15 +69,32 @@ static constexpr int kFUser = 2;
 static constexpr int kFPass = 3;
 static constexpr int kFCount= 4;
 
+#ifdef PRODUCTION_BUILD
+// In production builds the host/port fields are hidden; Tab only cycles user↔pass.
+static constexpr int kFFirst = kFUser;
+static constexpr int kFLast  = kFPass;
+#else
+static constexpr int kFFirst = kFHost;
+static constexpr int kFLast  = kFPass;
+#endif
 static int  s_loginActive  = kFUser; // default focus on username
 static bool s_registerMode = false;
 
+#ifdef PRODUCTION_BUILD
+static char s_fHost[256] = PRODUCTION_HOST;
+static char s_fPort[8]   = "8080";           // kept for LoginFormState; not shown in UI
+#else
 static char s_fHost[256] = "localhost";
 static char s_fPort[8]   = "8080";
+#endif
 static char s_fUser[32]  = {};
 static char s_fPass[64]  = {};
 
-static int  s_fLens[kFCount] = { 9, 4, 0, 0 };
+static int  s_fLens[kFCount] = {
+    static_cast<int>(std::strlen(s_fHost)),
+    static_cast<int>(std::strlen(s_fPort)),
+    0, 0
+};
 
 static LoginFormState s_loginState;
 
@@ -87,9 +104,11 @@ static void loginCaptureKeys() {
     const ImGuiIO& io = ImGui::GetIO();
     if (ImGui::IsAnyItemActive()) return;
 
-    // Tab: cycle fields
-    if (ImGui::IsKeyPressed(ImGuiKey_Tab, false))
-        s_loginActive = (s_loginActive + 1) % kFCount;
+    // Tab: cycle fields (host/port skipped in production builds)
+    if (ImGui::IsKeyPressed(ImGuiKey_Tab, false)) {
+        s_loginActive++;
+        if (s_loginActive > kFLast) s_loginActive = kFFirst;
+    }
 
     // Backspace
     if (ImGui::IsKeyPressed(ImGuiKey_Backspace)) {
@@ -274,8 +293,10 @@ void buildLoginModal(float screenW, float screenH,
         }
 
         // ── Form rows ─────────────────────────────────────────────────────────
+#ifndef PRODUCTION_BUILD
         loginFormRow(kFHost, "Host",     false, leftClicked);
         loginFormRow(kFPort, "Port",     false, leftClicked);
+#endif
         loginFormRow(kFUser, "Username", false, leftClicked);
         loginFormRow(kFPass, "Password", true,  leftClicked);
 

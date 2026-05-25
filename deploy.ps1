@@ -1,16 +1,15 @@
-﻿# deploy.ps1 — Build and push to production
+# deploy.ps1 — Push latest server code to production
 # Run from the project root on main: .\deploy.ps1
 #
 # What it does:
 #   1. Ensures you're on main with no uncommitted changes
-#   2. Merges main into production
-#   3. Builds the client dist with production env vars
-#   4. Commits the new dist and pushes production
-#   5. Returns you to main
+#   2. Merges main into production and pushes
+#   3. Returns you to main
+#
+# After this, SSH to 34.204.12.71 and run:
+#   cd /home/ubuntu/app && git pull && npm install && pm2 restart all
 
-Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-
 $ProjectRoot = $PSScriptRoot
 
 # ── 1. Must be on main ──────────────────────────────────────────────────────
@@ -27,35 +26,15 @@ if ($dirty) {
     exit 1
 }
 
-Write-Host "`n[1/4] Merging main into production..." -ForegroundColor Cyan
+Write-Host "`n[1/2] Merging main into production..." -ForegroundColor Cyan
 git -C $ProjectRoot checkout production
 git -C $ProjectRoot merge main --no-edit
-
-# ── 3. Build client ──────────────────────────────────────────────────────────
-Write-Host "`n[2/4] Building client dist (production)..." -ForegroundColor Cyan
-$node = "C:\Program Files\nodejs\node.exe"
-& $node "$ProjectRoot\node_modules\vite\bin\vite.js" build --config "$ProjectRoot\vite.config.ts"
-if ($LASTEXITCODE -ne 0) {
-    git -C $ProjectRoot checkout main
-    Write-Error "Build failed. Returned to main."
-    exit 1
-}
-
-# ── 4. Commit dist and push ──────────────────────────────────────────────────
-Write-Host "`n[3/4] Committing dist and pushing production..." -ForegroundColor Cyan
-git -C $ProjectRoot add dist/
-$timestamp = Get-Date -Format "yyyy-MM-dd HH:mm"
-git -C $ProjectRoot diff --cached --quiet
-if ($LASTEXITCODE -ne 0) {
-    # There are staged changes (dist changed)
-    git -C $ProjectRoot commit -m "Deploy: rebuild dist $timestamp"
-} else {
-    Write-Host "  dist unchanged - no new commit needed." -ForegroundColor DarkGray
-}
 git -C $ProjectRoot push origin production
 
-# ── 5. Return to main ────────────────────────────────────────────────────────
-Write-Host "`n[4/4] Returning to main..." -ForegroundColor Cyan
+# ── 3. Return to main ────────────────────────────────────────────────────────
+Write-Host "`n[2/2] Returning to main..." -ForegroundColor Cyan
 git -C $ProjectRoot checkout main
 
-Write-Host "`nDone! Production is live. Run 'git pull' on the Lightsail server." -ForegroundColor Green
+Write-Host "`nDone! Now SSH to the server and run:" -ForegroundColor Green
+Write-Host "  ssh ubuntu@34.204.12.71" -ForegroundColor White
+Write-Host "  cd /home/ubuntu/app && git pull && npm install && pm2 restart all" -ForegroundColor White
