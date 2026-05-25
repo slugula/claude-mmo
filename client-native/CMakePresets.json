@@ -1,0 +1,77 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": { "major": 3, "minor": 25, "patch": 0 },
+  "configurePresets": [
+    {
+      "name": "windows-base",
+      "hidden": true,
+      "architecture": "x64",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {
+        "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+        "VCPKG_TARGET_TRIPLET": "x64-windows"
+      },
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      }
+    },
+    {
+      "name": "windows-production",
+      "displayName": "Windows (Production — hardwired to live server)",
+      "inherits": "windows-base",
+      "generator": "Visual Studio 18 2026",
+      "binaryDir": "${sourceDir}/build-production",
+      "cacheVariables": {
+        "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+        "VCPKG_TARGET_TRIPLET": "x64-windows",
+        "PRODUCTION_BUILD": "ON"
+      }
+    },
+    {
+      "name": "windows",
+      "displayName": "Windows (Visual Studio 2026, x64)",
+      "inherits": "windows-base",
+      "generator": "Visual Studio 18 2026"
+    },
+    {
+      "name": "windows-vs2022",
+      "displayName": "Windows (Visual Studio 2022, x64)",
+      "inherits": "windows-base",
+      "generator": "Visual Studio 17 2022"
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "windows-debug",
+      "displayName": "Windows Debug",
+      "configurePreset": "windows",
+      "configuration": "Debug"
+    },
+    {
+      "name": "windows-release",
+      "displayName": "Windows Release",
+      "configurePreset": "windows",
+      "configuration": "Release"
+    },
+    {
+      "name": "windows-vs2022-debug",
+      "displayName": "Windows VS 2022 Debug",
+      "configurePreset": "windows-vs2022",
+      "configuration": "Debug"
+    },
+    {
+      "name": "windows-vs2022-release",
+      "displayName": "Windows VS 2022 Release",
+      "configurePreset": "windows-vs2022",
+      "configuration": "Release"
+    },
+    {
+      "name": "windows-production-release",
+      "displayName": "Windows Production Release",
+      "configurePreset": "windows-production",
+      "configuration": "Release"
+    }
+  ]
+}

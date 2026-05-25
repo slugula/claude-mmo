@@ -1,4 +1,4 @@
-import type {
+﻿import type {
   PlayerState, NPCState, DroppedItemState, GameAction, WorldState, GridPosition, RespawnEntry, Direction,
   EquipSlot, ItemStack,
 } from '../shared/types';
@@ -109,10 +109,16 @@ function is4Adjacent(a: GridPosition, b: GridPosition): boolean {
 }
 
 function directionTo(from: GridPosition, to: GridPosition): Direction {
-  const dx = to.x - from.x;
-  const dy = to.y - from.y;
-  if (Math.abs(dx) >= Math.abs(dy)) return dx > 0 ? 'east' : 'west';
-  return dy > 0 ? 'south' : 'north';
+  const dx = Math.sign(to.x - from.x);
+  const dy = Math.sign(to.y - from.y);
+  if (dx ===  1 && dy === -1) return 'north_east';
+  if (dx ===  1 && dy ===  1) return 'south_east';
+  if (dx === -1 && dy ===  1) return 'south_west';
+  if (dx === -1 && dy === -1) return 'north_west';
+  if (dx ===  1) return 'east';
+  if (dx === -1) return 'west';
+  if (dy === -1) return 'north';
+  return 'south';
 }
 
 export function processCombat(
@@ -165,6 +171,14 @@ export function processCombat(
       continue;
     }
 
+    // First-strike: stamp the NPC lastAttackTick to now so it cannot
+    // retaliate until a full attackSpeedTicks has elapsed, giving the
+    // player one free action before the enemy combat cycle begins.
+    const targetIdx = nextNPCs.findIndex(n => n.id === target.id);
+    if (targetIdx !== -1) {
+      nextNPCs[targetIdx] = { ...nextNPCs[targetIdx], lastAttackTick: tick };
+    }
+
     // Determine combat style to decide engagement distance
     const rightHandItem = getItem(nextPlayer.equipped.rightHand?.itemId ?? '');
     const combatStyle   = rightHandItem?.combatStyle ?? 'melee';
@@ -177,6 +191,8 @@ export function processCombat(
           ...nextPlayer,
           attackTargetId: target.id,
           talkTargetId: null,
+          chopTargetX: null,
+          chopTargetY: null,
           path: [],
           facing: directionTo(pos(nextPlayer), pos(target)),
         };
@@ -187,6 +203,8 @@ export function processCombat(
           ...nextPlayer,
           attackTargetId: target.id,
           talkTargetId: null,
+          chopTargetX: null,
+          chopTargetY: null,
           path: spot.path,
           destinationX: spot.pos.x,
           destinationY: spot.pos.y,
@@ -198,6 +216,8 @@ export function processCombat(
           ...nextPlayer,
           attackTargetId: target.id,
           talkTargetId: null,
+          chopTargetX: null,
+          chopTargetY: null,
           path: [],
           facing: directionTo(pos(nextPlayer), pos(target)),
         };
@@ -209,6 +229,8 @@ export function processCombat(
         ...nextPlayer,
         attackTargetId: target.id,
         talkTargetId: null,
+        chopTargetX: null,
+        chopTargetY: null,
         path: spot.path,
         destinationX: spot.pos.x,
         destinationY: spot.pos.y,

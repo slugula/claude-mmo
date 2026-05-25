@@ -1,5 +1,6 @@
-import type { PlayerState, DroppedItemState, GameAction, WorldState, SkillId, ShirtColor, SkinColor } from '../shared/types';
-import { addItem, removeItem } from './InventorySystem';
+import type { PlayerState, DroppedItemState, GameAction, WorldState, SkillId, ShirtColor, SkinColor, EquipSlot } from '../shared/types';
+import { addItem, removeItem, freeSlots } from './InventorySystem';
+import { bankAddItem, bankRemoveItem, createEmptyBank } from './BankSystem';
 import { getItem } from '../items/ItemRegistry';
 import { findPath } from '../world/Pathfinder';
 
@@ -157,6 +158,73 @@ export function processItems(
       const shirtColor = VALID_SHIRT.includes(action.shirtColor) ? action.shirtColor : 'blue';
       const skinColor  = VALID_SKIN.includes(action.skinColor)   ? action.skinColor  : 'fair';
       nextPlayer = { ...nextPlayer, playerName: name, shirtColor, skinColor };
+    }
+
+    // ---- Banking actions -------------------------------------------------------
+
+    if (action.type === 'DEPOSIT_ITEM') {
+      const slot = nextPlayer.inventory[action.slotIndex];
+      if (!slot) continue;
+      const qty = Math.min(action.quantity, slot.quantity);
+      const bankResult = bankAddItem(nextPlayer.bank ?? createEmptyBank(), slot.itemId, qty);
+      if (!bankResult.added) {
+        messages.push('Your bank is full.');
+      } else {
+        const newInv = removeItem(nextPlayer.inventory, action.slotIndex, qty);
+        nextPlayer = { ...nextPlayer, inventory: newInv, bank: bankResult.bank };
+      }
+    }
+
+    if (action.type === 'DEPOSIT_ALL') {
+      let bank = [...(nextPlayer.bank ?? createEmptyBank())];
+      let inv  = [...nextPlayer.inventory];
+      let full = false;
+      for (let i = 0; i < inv.length; i++) {
+        const slot = inv[i];
+        if (!slot) continue;
+        const result = bankAddItem(bank, slot.itemId, slot.quantity);
+        if (!result.added) { full = true; break; }
+        bank  = result.bank;
+        inv[i] = null;
+      }
+      if (full) messages.push('Your bank is full.');
+      nextPlayer = { ...nextPlayer, inventory: inv, bank };
+    }
+
+    if (action.type === 'DEPOSIT_WORN') {
+      let bank     = [...(nextPlayer.bank ?? createEmptyBank())];
+      const equipped = { ...nextPlayer.equipped };
+      let full = false;
+      for (const slot of Object.keys(equipped) as EquipSlot[]) {
+        const stack = equipped[slot];
+        if (!stack) continue;
+        const result = bankAddItem(bank, stack.itemId, stack.quantity);
+        if (!result.added) { full = true; break; }
+        bank = result.bank;
+        delete equipped[slot];
+      }
+      if (full) messages.push('Your bank is full.');
+      nextPlayer = { ...nextPlayer, equipped, bank };
+    }
+
+    if (action.type === 'WITHDRAW_ITEM') {
+      const bank      = nextPlayer.bank ?? createEmptyBank();
+      const bankStack = bank[action.bankSlot];
+      if (!bankStack) continue;
+      const qty = Math.min(action.quantity, bankStack.quantity);
+      const def = getItem(bankStack.itemId);
+      // Stackable: always fits in one slot (merge or new slot).
+      // Non-stackable: needs one inventory slot per unit.
+      const canFit = def?.stackable
+        ? (nextPlayer.inventory.some(s => s?.itemId === bankStack.itemId) || freeSlots(nextPlayer.inventory) > 0 ? qty : 0)
+        : Math.min(qty, freeSlots(nextPlayer.inventory));
+      if (canFit === 0) { messages.push("You don't have enough inventory space."); continue; }
+      if (canFit < qty) messages.push("You don't have enough inventory space to withdraw that many.");
+      // addItem places non-stackable items one-per-slot; partial result is intentional
+      const invResult = addItem(nextPlayer.inventory, bankStack.itemId, canFit);
+      if (!invResult.added) { messages.push("You don't have enough inventory space."); continue; }
+      const newBank = bankRemoveItem(bank, action.bankSlot, canFit);
+      nextPlayer = { ...nextPlayer, inventory: invResult.inventory, bank: newBank };
     }
   }
 

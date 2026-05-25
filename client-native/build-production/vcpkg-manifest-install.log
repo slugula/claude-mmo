@@ -1,0 +1,139 @@
+Detecting compiler hash for triplet x64-windows...
+Compiler found: C:/Program Files (x86)/Microsoft Visual Studio/18/BuildTools/VC/Tools/MSVC/14.51.36231/bin/Hostx64/x64/cl.exe
+The following packages will be built and installed:
+    cgltf:x64-windows@1.15
+  * egl-registry:x64-windows@2025-05-27
+    glad[core,gl-api-10,gl-api-11,gl-api-12,gl-api-13,gl-api-14,gl-api-15,gl-api-20,gl-api-21,gl-api-30,gl-api-31,gl-api-32,gl-api-33,gl-api-40,gl-api-41,gl-api-42,gl-api-43,gl-api-44,gl-api-45,gl-api-46]:x64-windows@0.1.36
+    glaze:x64-windows@7.6.0
+    glfw3:x64-windows@3.4#1
+    glm:x64-windows@1.0.3
+    imgui[core,docking-experimental,glfw-binding,opengl3-binding]:x64-windows@1.92.8
+    ixwebsocket[core,mbedtls,ssl]:x64-windows@11.4.6
+  * mbedtls:x64-windows@3.6.5
+    miniaudio:x64-windows@0.11.25
+  * opengl-registry:x64-windows@2026-01-26
+    stb:x64-windows@2024-07-29#1
+  * vcpkg-cmake:x64-windows@2024-04-23
+  * vcpkg-cmake-config:x64-windows@2024-05-23
+  * zlib:x64-windows@1.3.2
+Additional packages (*) will be modified to complete this operation.
+Restored 15 package(s) from C:\Users\alexa\AppData\Local\vcpkg\archives in 1.5 s. Use --debug to see more details.
+Installing 1/15 cgltf:x64-windows@1.15...
+cgltf:x64-windows@1.15 package ABI: 85c3e6e4148f39172bb337f575f6314c11a7a597fb93c529ca6a8abfc31f4d08
+Elapsed time to handle cgltf:x64-windows: 5.63 ms
+Installing 2/15 vcpkg-cmake-config:x64-windows@2024-05-23...
+vcpkg-cmake-config:x64-windows@2024-05-23 package ABI: 66942d7f989bc8ccc566c82882c189fce51160cb6742a4d8fa2985772d83faec
+Elapsed time to handle vcpkg-cmake-config:x64-windows: 9.92 ms
+Installing 3/15 vcpkg-cmake:x64-windows@2024-04-23...
+vcpkg-cmake:x64-windows@2024-04-23 package ABI: a950531c9064d57fd53ccc4976a8f613676bf81090d6758c370a6af4629656b8
+Elapsed time to handle vcpkg-cmake:x64-windows: 9.92 ms
+Installing 4/15 egl-registry:x64-windows@2025-05-27...
+egl-registry:x64-windows@2025-05-27 package ABI: c624651e5db668db06cda9463c9413fd931d6798d76383ce386d52d3c71ed2a6
+Elapsed time to handle egl-registry:x64-windows: 12.7 ms
+Installing 5/15 opengl-registry:x64-windows@2026-01-26...
+opengl-registry:x64-windows@2026-01-26 package ABI: dff4c5d7d4e80f0d37f741dc2f8c284ae5174e4a3dda5c733ad80c713ad63530
+Elapsed time to handle opengl-registry:x64-windows: 14.9 ms
+Installing 6/15 glad[core,gl-api-10,gl-api-11,gl-api-12,gl-api-13,gl-api-14,gl-api-15,gl-api-20,gl-api-21,gl-api-30,gl-api-31,gl-api-32,gl-api-33,gl-api-40,gl-api-41,gl-api-42,gl-api-43,gl-api-44,gl-api-45,gl-api-46]:x64-windows@0.1.36...
+glad[core,gl-api-10,gl-api-11,gl-api-12,gl-api-13,gl-api-14,gl-api-15,gl-api-20,gl-api-21,gl-api-30,gl-api-31,gl-api-32,gl-api-33,gl-api-40,gl-api-41,gl-api-42,gl-api-43,gl-api-44,gl-api-45,gl-api-46]:x64-windows@0.1.36 package ABI: 747e6a3ca37e176246d08811055491411ff533925a99d7cfdea14319da4a190b
+Elapsed time to handle glad:x64-windows: 45.2 ms
+Installing 7/15 glaze:x64-windows@7.6.0...
+glaze:x64-windows@7.6.0 package ABI: 6b46590c383030e108e19146ffc2859cd1757926cc44590739817517329b5607
+Elapsed time to handle glaze:x64-windows: 37.4 ms
+Installing 8/15 glfw3:x64-windows@3.4#1...
+glfw3:x64-windows@3.4#1 package ABI: 1470de4f96e2d9272da53c98eb39ebae4e311c872ae5c68f1a41a00708e27ce8
+Elapsed time to handle glfw3:x64-windows: 13.5 ms
+Installing 9/15 glm:x64-windows@1.0.3...
+glm:x64-windows@1.0.3 package ABI: 2b615bbb65ffdda3745e91cf6b16a0a7b0e9b15343f834651810e91af30a9b50
+Elapsed time to handle glm:x64-windows: 57 ms
+Installing 10/15 imgui[core,docking-experimental,glfw-binding,opengl3-binding]:x64-windows@1.92.8...
+imgui[core,docking-experimental,glfw-binding,opengl3-binding]:x64-windows@1.92.8 package ABI: 1c918753e4db703585bb17286cbac19d2f92bf2e08825a6e54ddb1cf0438bae9
+Elapsed time to handle imgui:x64-windows: 19.2 ms
+Installing 11/15 mbedtls:x64-windows@3.6.5...
+mbedtls:x64-windows@3.6.5 package ABI: b5a6779437f937599caab5f20074bb51bd21cf5baa49b388b622d6d89d9c7133
+Elapsed time to handle mbedtls:x64-windows: 23.8 ms
+Installing 12/15 zlib:x64-windows@1.3.2...
+zlib:x64-windows@1.3.2 package ABI: 88a1af3204801cd14fa2cf5d0fae2d06ebc4519a563e086cadd56d513daff0a5
+Elapsed time to handle zlib:x64-windows: 15.1 ms
+Installing 13/15 ixwebsocket[core,mbedtls,ssl]:x64-windows@11.4.6...
+ixwebsocket[core,mbedtls,ssl]:x64-windows@11.4.6 package ABI: d415e6aac6875deeff9563dc01fdca40b44e0f6fd631ef4dcf9fdc6e0cbe21f7
+Elapsed time to handle ixwebsocket:x64-windows: 21.6 ms
+Installing 14/15 miniaudio:x64-windows@0.11.25...
+miniaudio:x64-windows@0.11.25 package ABI: aec3c227d63f0c9ae83a78a125e639d5142f2781af3d5200fa64e9bf8462c2b3
+Elapsed time to handle miniaudio:x64-windows: 10.8 ms
+Installing 15/15 stb:x64-windows@2024-07-29#1...
+stb:x64-windows@2024-07-29#1 package ABI: babfbab53956967bde461cb9addf8641f7c70578f7d2490e540c62b08d40dc51
+Elapsed time to handle stb:x64-windows: 13.4 ms
+Installed contents are licensed to you by owners. Microsoft is not responsible for, nor does it grant any licenses to, third-party packages.
+Some packages did not declare an SPDX license. Check the `copyright` file for each package for more information about their licensing.
+Packages installed in this vcpkg installation declare the following licenses:
+(Apache-2.0 OR GPL-2.0-or-later)
+(MIT OR CC-PDDC)
+(Unlicense OR MIT-0)
+Apache-2.0
+BSD-3-Clause
+MIT
+Zlib
+cgltf is header-only and can be used from CMake via:
+
+  find_path(CGLTF_INCLUDE_DIRS "cgltf.h")
+  target_include_directories(main PRIVATE ${CGLTF_INCLUDE_DIRS})
+
+glad provides CMake targets:
+
+  # this is heuristically generated, and may not be correct
+  find_package(glad CONFIG REQUIRED)
+  target_link_libraries(main PRIVATE glad::glad)
+
+glaze provides CMake targets:
+
+  # this is heuristically generated, and may not be correct
+  find_package(glaze CONFIG REQUIRED)
+  target_link_libraries(main PRIVATE glaze::glaze)
+
+glfw3 provides CMake targets:
+
+  # this is heuristically generated, and may not be correct
+  find_package(glfw3 CONFIG REQUIRED)
+  target_link_libraries(main PRIVATE glfw)
+
+glfw3 provides pkg-config modules:
+
+  # A multi-platform library for OpenGL, window and input
+  glfw3
+
+The package glm provides CMake targets:
+
+    find_package(glm CONFIG REQUIRED)
+    target_link_libraries(main PRIVATE glm::glm)
+
+    # Or use the header-only version
+    find_package(glm CONFIG REQUIRED)
+    target_link_libraries(main PRIVATE glm::glm-header-only)
+
+imgui provides CMake targets:
+
+  # this is heuristically generated, and may not be correct
+  find_package(imgui CONFIG REQUIRED)
+  target_link_libraries(main PRIVATE imgui::imgui)
+
+ixwebsocket provides CMake targets:
+
+  # this is heuristically generated, and may not be correct
+  find_package(ixwebsocket CONFIG REQUIRED)
+  target_link_libraries(main PRIVATE ixwebsocket::ixwebsocket)
+
+ixwebsocket provides pkg-config modules:
+
+  # websocket and http client and server library, with TLS support and very few dependencies
+  ixwebsocket
+
+miniaudio is header-only and can be used from CMake via:
+
+  find_path(MINIAUDIO_INCLUDE_DIRS "miniaudio.h")
+  target_include_directories(main PRIVATE ${MINIAUDIO_INCLUDE_DIRS})
+
+The package stb provides CMake targets:
+
+    find_package(Stb REQUIRED)
+    target_include_directories(main PRIVATE ${Stb_INCLUDE_DIR})
+All requested installations completed successfully in: 331 ms

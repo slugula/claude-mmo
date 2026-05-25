@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Project Reverie — Level Editor</title>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+
+      body {
+        background: #1a1a1a;
+        color: #ccc;
+        font-family: 'Segoe UI', system-ui, sans-serif;
+        font-size: 12px;
+        overflow: hidden;
+        height: 100vh;
+        display: flex;
+        flex-direction: column;
+        user-select: none;
+      }
+
+      /* ---- Top toolbar ---- */
+      #toolbar {
+        height: 36px;
+        background: #111;
+        border-bottom: 1px solid #333;
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        padding: 0 8px;
+        flex-shrink: 0;
+      }
+
+      #toolbar button {
+        background: #2a2a2a;
+        color: #ccc;
+        border: 1px solid #444;
+        border-radius: 3px;
+        padding: 4px 10px;
+        cursor: pointer;
+        font-size: 11px;
+        white-space: nowrap;
+      }
+      #toolbar button:hover { background: #3a3a3a; color: #fff; }
+      #toolbar button:disabled { opacity: 0.4; cursor: default; }
+
+      #toolbar .sep { width: 1px; height: 20px; background: #444; margin: 0 4px; }
+
+      #filename-input {
+        background: #222;
+        color: #ccc;
+        border: 1px solid #444;
+        border-radius: 3px;
+        padding: 3px 8px;
+        font-size: 11px;
+        width: 160px;
+      }
+
+      #layer-select {
+        background: #222;
+        color: #ccc;
+        border: 1px solid #444;
+        border-radius: 3px;
+        padding: 3px 6px;
+        font-size: 11px;
+      }
+
+      #toolbar .spacer { flex: 1; }
+
+      /* ---- Main row (tilemap + game view) ---- */
+      #main-row {
+        flex: 1;
+        display: flex;
+        min-height: 0;
+      }
+
+      #tilemap-pane {
+        flex: 1;
+        position: relative;
+        overflow: hidden;
+        border-right: 1px solid #333;
+      }
+
+      #tilemap-canvas {
+        display: block;
+        cursor: crosshair;
+      }
+
+      #game-view-pane {
+        width: 45%;
+        flex-shrink: 0;
+        position: relative;
+        background: #0a0a12;
+      }
+
+      #preview-canvas {
+        width: 100%;
+        height: 100%;
+        display: block;
+      }
+
+      #preview-label {
+        position: absolute;
+        top: 6px;
+        left: 8px;
+        font-size: 10px;
+        color: #555;
+        pointer-events: none;
+      }
+
+      /* ---- Bottom row ---- */
+      #bottom-row {
+        height: 220px;
+        display: flex;
+        border-top: 1px solid #333;
+        flex-shrink: 0;
+      }
+
+      #palette-pane {
+        width: 200px;
+        flex-shrink: 0;
+        border-right: 1px solid #333;
+        padding: 8px;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        overflow-y: auto;
+      }
+
+      #browser-pane {
+        flex: 1;
+        border-right: 1px solid #333;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+
+      #browser-search {
+        background: #000;
+        color: #ccc;
+        border: none;
+        border-bottom: 1px solid #333;
+        padding: 6px 8px;
+        font-size: 11px;
+        flex-shrink: 0;
+        outline: none;
+        width: 100%;
+      }
+
+      #browser-list {
+        flex: 1;
+        overflow-y: auto;
+        padding: 4px;
+      }
+
+      .browser-section-header {
+        color: #888;
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        padding: 6px 4px 2px;
+      }
+
+      .browser-item {
+        padding: 4px 8px;
+        cursor: pointer;
+        border-radius: 2px;
+        color: #bbb;
+      }
+      .browser-item:hover { background: #2a2a2a; color: #fff; }
+      .browser-item.selected { background: #1a3a5a; color: #7cbfff; }
+
+      #model-viewer-pane {
+        width: 200px;
+        flex-shrink: 0;
+        border-right: 1px solid #333;
+        position: relative;
+        background: #0a0a12;
+      }
+
+      #model-canvas {
+        width: 100%;
+        height: 100%;
+        display: block;
+      }
+
+      #model-viewer-label {
+        position: absolute;
+        top: 6px;
+        left: 8px;
+        font-size: 10px;
+        color: #555;
+        pointer-events: none;
+      }
+
+      #minimap-pane {
+        width: 220px;
+        flex-shrink: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 4px;
+        padding: 8px;
+      }
+
+      #minimap-label {
+        font-size: 10px;
+        color: #555;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+      }
+
+      #minimap-canvas {
+        border: 1px solid #333;
+        image-rendering: pixelated;
+      }
+
+      /* ---- Shared panel styles ---- */
+      .pane-label {
+        font-size: 10px;
+        color: #666;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin-bottom: 4px;
+      }
+
+      /* ---- Palette controls ---- */
+      .brush-row {
+        display: flex;
+        gap: 3px;
+        flex-wrap: wrap;
+      }
+
+      .brush-btn {
+        background: #2a2a2a;
+        color: #999;
+        border: 1px solid #444;
+        border-radius: 2px;
+        padding: 2px 6px;
+        cursor: pointer;
+        font-size: 10px;
+      }
+      .brush-btn:hover { background: #3a3a3a; color: #fff; }
+      .brush-btn.active { background: #1a3a5a; color: #7cbfff; border-color: #5a8fbf; }
+
+      .swatch-grid {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 3px;
+      }
+
+      .swatch {
+        width: 20px;
+        height: 20px;
+        border-radius: 2px;
+        cursor: pointer;
+        border: 2px solid transparent;
+      }
+      .swatch:hover { border-color: #fff; }
+      .swatch.active { border-color: #fff; outline: 1px solid #7cbfff; }
+
+      #color-picker {
+        width: 100%;
+        height: 28px;
+        border: 1px solid #444;
+        border-radius: 2px;
+        cursor: pointer;
+        background: none;
+        padding: 0;
+      }
+
+      #height-slider {
+        width: 100%;
+        accent-color: #7cbfff;
+      }
+
+      #height-value {
+        font-size: 10px;
+        color: #888;
+        text-align: right;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- Toolbar -->
+    <div id="toolbar">
+      <button id="btn-new">New Map</button>
+      <button id="btn-save">Save</button>
+      <button id="btn-load">Load</button>
+      <input type="file" id="file-input" accept=".json" style="display:none" />
+      <div class="sep"></div>
+      <button id="btn-undo" disabled>Undo</button>
+      <button id="btn-redo" disabled>Redo</button>
+      <div class="sep"></div>
+      <input id="filename-input" type="text" value="worldMap.json" placeholder="Filename" />
+      <div class="sep"></div>
+      <label style="color:#888;font-size:11px">Layer:</label>
+      <select id="layer-select">
+        <option value="terrain">Terrain Color</option>
+        <option value="height">Height</option>
+        <option value="objects">Objects / NPCs</option>
+      </select>
+      <div class="spacer"></div>
+      <span id="coord-display" style="color:#555;font-size:10px;font-family:monospace">—</span>
+    </div>
+
+    <!-- Main row: tilemap | 3D preview -->
+    <div id="main-row">
+      <div id="tilemap-pane">
+        <canvas id="tilemap-canvas"></canvas>
+      </div>
+      <div id="game-view-pane">
+        <canvas id="preview-canvas"></canvas>
+        <span id="preview-label">Game</span>
+      </div>
+    </div>
+
+    <!-- Bottom row: palette | browser | model viewer | minimap -->
+    <div id="bottom-row">
+      <div id="palette-pane">
+        <div class="pane-label">Palette</div>
+        <!-- Terrain layer controls -->
+        <div id="terrain-controls">
+          <div class="swatch-grid" id="swatches"></div>
+          <input type="color" id="color-picker" value="#7ec850" title="Custom color" />
+        </div>
+        <!-- Height layer controls (hidden by default) -->
+        <div id="height-controls" style="display:none">
+          <div class="pane-label" style="margin-top:4px">Height (0–100)</div>
+          <input type="range" id="height-slider" min="0" max="100" value="50" />
+          <div id="height-value">50%</div>
+        </div>
+        <div class="sep" style="width:100%;height:1px;margin:4px 0;background:#333"></div>
+        <div class="pane-label">Brushes</div>
+        <div class="brush-row" id="brush-buttons">
+          <button class="brush-btn active" data-brush="1">1×1</button>
+          <button class="brush-btn" data-brush="3">3×3</button>
+          <button class="brush-btn" data-brush="5">5×5</button>
+          <button class="brush-btn" data-brush="c3">○3</button>
+          <button class="brush-btn" data-brush="c5">○5</button>
+        </div>
+      </div>
+
+      <div id="browser-pane">
+        <input id="browser-search" type="text" placeholder="Search…" />
+        <div id="browser-list"></div>
+      </div>
+
+      <div id="model-viewer-pane">
+        <canvas id="model-canvas"></canvas>
+        <span id="model-viewer-label">Model</span>
+      </div>
+
+      <div id="minimap-pane">
+        <div id="minimap-label">Minimap</div>
+        <canvas id="minimap-canvas"></canvas>
+      </div>
+    </div>
+
+    <script type="module" src="/src/editor/main.ts"></script>
+  </body>
+</html>

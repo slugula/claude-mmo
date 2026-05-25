@@ -1,0 +1,16 @@
+<rml>
+<head>
+  <title>Bank</title>
+  <link type="text/rcss" href="game.rcss" />
+</head>
+<body>
+  <div id="bank-panel">
+    <div id="bank-header">
+      <div id="bank-deposit-all" class="bank-btn">Deposit All</div>
+      <div id="bank-deposit-worn" class="bank-btn">Deposit Worn</div>
+      <div id="bank-close" class="bank-btn">Close</div>
+    </div>
+    <div id="bank-grid"></div>
+  </div>
+</body>
+</rml>

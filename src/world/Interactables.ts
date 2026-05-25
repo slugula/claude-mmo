@@ -42,6 +42,13 @@ export function getContextActions(target: HoverTarget, npcs: NPCState[]): Contex
     case 'walkable':
       return [walkHere(target.tileX, target.tileY)];
 
+    case 'chest':
+      return [
+        { verb: 'Bank', subject: 'Chest', action: { type: 'OPEN_BANK' } },
+        walkHere(target.tileX, target.tileY),
+        examine('Chest', 'A secure bank chest.'),
+      ];
+
     case 'tree':
       return [
         { verb: 'Chop down', subject: 'Tree', action: { type: 'CHOP_TREE', tileX: target.tileX, tileY: target.tileY } },

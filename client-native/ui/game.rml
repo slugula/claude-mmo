@@ -1,0 +1,72 @@
+<rml>
+<head>
+  <title>Game HUD</title>
+  <link type="text/rcss" href="game.rcss" />
+</head>
+<body>
+  <!-- Right-side HUD panel with tabs -->
+  <div id="hud-container">
+    <div id="tab-bar">
+      <div id="tab-inv" class="tab-btn active">Inv</div>
+      <div id="tab-skills" class="tab-btn">Skills</div>
+      <div id="tab-equip" class="tab-btn">Equip</div>
+    </div>
+    <div id="tab-content">
+      <!-- Inventory -->
+      <div id="panel-inventory" class="tab-panel active">
+        <div id="inventory-grid"></div>
+      </div>
+
+      <!-- Skills -->
+      <div id="panel-skills" class="tab-panel">
+        <div id="skills-grid"></div>
+        <div id="skills-total"></div>
+      </div>
+
+      <!-- Equipment -->
+      <div id="panel-equipment" class="tab-panel">
+        <div id="equipment-grid">
+          <!-- Row 0: _, head, _ -->
+          <div class="equip-row">
+            <div class="equip-spacer"></div>
+            <div id="equip-head" class="equip-slot empty">Head</div>
+            <div class="equip-spacer"></div>
+          </div>
+          <!-- Row 1: _, neck, ammo -->
+          <div class="equip-row">
+            <div class="equip-spacer"></div>
+            <div id="equip-neck" class="equip-slot empty">Neck</div>
+            <div id="equip-ammo" class="equip-slot empty">Ammo</div>
+          </div>
+          <!-- Row 2: rightHand, body, leftHand -->
+          <div class="equip-row">
+            <div id="equip-rightHand" class="equip-slot empty">Main</div>
+            <div id="equip-body" class="equip-slot empty">Body</div>
+            <div id="equip-leftHand" class="equip-slot empty">Off</div>
+          </div>
+          <!-- Row 3: _, legs, _ -->
+          <div class="equip-row">
+            <div class="equip-spacer"></div>
+            <div id="equip-legs" class="equip-slot empty">Legs</div>
+            <div class="equip-spacer"></div>
+          </div>
+          <!-- Row 4: hands, feet, ring -->
+          <div class="equip-row">
+            <div id="equip-hands" class="equip-slot empty">Hands</div>
+            <div id="equip-feet" class="equip-slot empty">Feet</div>
+            <div id="equip-ring" class="equip-slot empty">Ring</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Chat panel (bottom-left) -->
+  <div id="chat-container">
+    <div id="chat-messages"></div>
+    <div id="chat-input-bar">
+      <input id="chat-input" type="text" maxlength="120" />
+    </div>
+  </div>
+</body>
+</rml>

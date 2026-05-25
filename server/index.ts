@@ -4,6 +4,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { parse } from 'url';
 import { GameLoop } from './GameLoop';
 import { authRouter, verifyToken } from './auth/router';
+import { entityRouter } from './db/EntityRouter';
 import { PlayerRepository } from './db/PlayerRepository';
 import type { GameAction, ServerStatePatch, RespawnEntry } from '../src/shared/types';
 
@@ -37,7 +38,9 @@ app.use((req, res, next) => {
   next();
 });
 
+app.use(express.json());
 app.use('/auth', authRouter);
+app.use('/api/db', entityRouter);
 app.get('/health', (_req, res) => res.json({ ok: true }));
 
 const httpServer = createServer(app);
@@ -156,7 +159,8 @@ wss.on('connection', async (ws: WebSocket, req: IncomingMessage) => {
   ws.send(JSON.stringify({
     type: 'init',
     playerId,
-    worldSeed: loop.getWorldSeed(),
+    tiles:         loop.getWorldTiles(),
+    vertexHeights: loop.getVertexHeights(),
     isNewPlayer,
   }));
 

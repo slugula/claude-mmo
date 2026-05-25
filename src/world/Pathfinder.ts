@@ -1,4 +1,5 @@
 import type { GridPosition, WorldState } from '../shared/types';
+import { HEIGHT_IMPASSABLE_DELTA } from '../shared/constants';
 
 interface Node {
   x: number;
@@ -9,24 +10,30 @@ interface Node {
   parent: Node | null;
 }
 
+// Chebyshev distance — correct admissible heuristic for 8-directional
+// movement where diagonal steps cost the same as cardinal steps.
 function heuristic(a: GridPosition, b: GridPosition): number {
-  return Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
+  return Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y));
 }
 
 function key(x: number, y: number): number {
   return x * 10000 + y;
 }
 
+// OSRS neighbour order: cardinals first (W, E, S, N), then diagonals (SW, SE, NW, NE).
+// Cardinals are preferred so the path hugs walls rather than taking wide arcs.
 const DIRS: [number, number][] = [
-  [0, -1], [0, 1], [-1, 0], [1, 0],
+  [-1,  0], [ 1,  0], [ 0,  1], [ 0, -1],   // W, E, S, N
+  [-1,  1], [ 1,  1], [-1, -1], [ 1, -1],   // SW, SE, NW, NE
 ];
 
 export function findPath(
   world: WorldState,
   from: GridPosition,
   to: GridPosition,
+  blocked?: ReadonlySet<number>,  // dynamic obstacles (NPC tiles, etc.)
 ): GridPosition[] {
-  if (!isWalkable(world, to.x, to.y)) return [];
+  if (!isWalkable(world, to.x, to.y, blocked)) return [];
   if (from.x === to.x && from.y === to.y) return [];
 
   const open: Node[] = [];
@@ -55,7 +62,16 @@ export function findPath(
       const nk = key(nx, ny);
 
       if (closed.has(nk)) continue;
-      if (!isWalkable(world, nx, ny)) continue;
+      if (!isWalkable(world, nx, ny, blocked)) continue;
+      // Block movement between tiles whose average vertex height differs too much
+      if (Math.abs(tileAvgHeight(world, current.x, current.y) - tileAvgHeight(world, nx, ny)) > HEIGHT_IMPASSABLE_DELTA) continue;
+      // Corner-clip prevention (OSRS rule): a diagonal step is blocked if either
+      // of the two intermediate cardinal tiles is impassable.  This stops the
+      // path from cutting through the corner of a wall or obstacle.
+      if (dx !== 0 && dy !== 0) {
+        if (!isWalkable(world, current.x + dx, current.y, blocked)) continue;
+        if (!isWalkable(world, current.x, current.y + dy, blocked)) continue;
+      }
 
       const g = current.g + 1;
       const existing = openMap.get(nk);
@@ -84,9 +100,22 @@ export function findPath(
   return [];
 }
 
-function isWalkable(world: WorldState, x: number, y: number): boolean {
+function isWalkable(world: WorldState, x: number, y: number, blocked?: ReadonlySet<number>): boolean {
   if (x < 0 || y < 0 || x >= world.width || y >= world.height) return false;
-  return world.tiles[y][x].walkable;
+  if (!world.tiles[y][x].walkable) return false;
+  if (blocked?.has(key(x, y))) return false;
+  return true;
+}
+
+function tileAvgHeight(world: WorldState, tx: number, ty: number): number {
+  const W = world.width;
+  const vh = world.vertexHeights;
+  return (
+    (vh[ty       * (W + 1) + tx]     ?? 0) +
+    (vh[ty       * (W + 1) + tx + 1] ?? 0) +
+    (vh[(ty + 1) * (W + 1) + tx]     ?? 0) +
+    (vh[(ty + 1) * (W + 1) + tx + 1] ?? 0)
+  ) / 4;
 }
 
 function buildPath(node: Node): GridPosition[] {

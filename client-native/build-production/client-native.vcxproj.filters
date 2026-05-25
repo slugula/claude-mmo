@@ -1,0 +1,61 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="18.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <ItemGroup>
+    <ClCompile Include="C:\Users\alexa\Documents\Claude Games\OSRS Prototype\client-native\src\main.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\alexa\Documents\Claude Games\OSRS Prototype\client-native\src\app\App.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\alexa\Documents\Claude Games\OSRS Prototype\client-native\src\editor\EntityClient.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\alexa\Documents\Claude Games\OSRS Prototype\client-native\src\net\NetworkClient.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\alexa\Documents\Claude Games\OSRS Prototype\client-native\src\ui\Panels.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\alexa\Documents\Claude Games\OSRS Prototype\client-native\src\ui\WorldOverlays.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\alexa\Documents\Claude Games\OSRS Prototype\client-native\src\ui\ClayRenderer.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\alexa\Documents\Claude Games\OSRS Prototype\client-native\src\ui\ClayHudPanel.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\alexa\Documents\Claude Games\OSRS Prototype\client-native\src\ui\ClayContextMenu.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\alexa\Documents\Claude Games\OSRS Prototype\client-native\src\ui\ClayClickFeedback.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\alexa\Documents\Claude Games\OSRS Prototype\client-native\src\ui\ClayContextInfo.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\alexa\Documents\Claude Games\OSRS Prototype\client-native\src\ui\ClayTooltip.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\alexa\Documents\Claude Games\OSRS Prototype\client-native\src\ui\ClayChatLog.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\alexa\Documents\Claude Games\OSRS Prototype\client-native\src\ui\ClayLoginModal.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\alexa\Documents\Claude Games\OSRS Prototype\client-native\src\ui\ClayBankPanel.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="C:\Users\alexa\Documents\Claude Games\OSRS Prototype\client-native\src\ui\MinimapRenderer.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <CustomBuild Include="C:\Users\alexa\Documents\Claude Games\OSRS Prototype\client-native\CMakeLists.txt" />
+  </ItemGroup>
+  <ItemGroup>
+    <Filter Include="Source Files">
+      <UniqueIdentifier>{DF122289-5CDB-3D80-8417-E29365421A1A}</UniqueIdentifier>
+    </Filter>
+  </ItemGroup>
+</Project>

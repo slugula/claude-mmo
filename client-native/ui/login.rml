@@ -1,0 +1,36 @@
+<rml>
+<head>
+  <title>Login</title>
+  <link type="text/rcss" href="login.rcss" />
+</head>
+<body>
+  <div id="login-box">
+    <div id="login-logo">Reverie</div>
+    <div id="login-subtitle">Project Reverie</div>
+
+    <div class="form-group">
+      <div class="form-label">Host</div>
+      <input id="login-host" class="form-input" type="text" value="localhost" />
+    </div>
+
+    <div class="form-group">
+      <div class="form-label">Port</div>
+      <input id="login-port" class="form-input" type="text" value="8080" />
+    </div>
+
+    <div class="form-group">
+      <div class="form-label">Username</div>
+      <input id="login-user" class="form-input" type="text" value="test" />
+    </div>
+
+    <div class="form-group">
+      <div class="form-label">Password</div>
+      <input id="login-pass" class="form-input" type="password" value="test1234" />
+    </div>
+
+    <div id="login-submit">Connect</div>
+
+    <div id="login-status" class="status"></div>
+  </div>
+</body>
+</rml>

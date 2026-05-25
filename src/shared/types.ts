@@ -1,4 +1,6 @@
-export type Direction = 'north' | 'south' | 'east' | 'west';
+export type Direction =
+  | 'north' | 'north_east' | 'east' | 'south_east'
+  | 'south' | 'south_west' | 'west' | 'north_west';
 
 export interface GridPosition {
   x: number;
@@ -70,9 +72,9 @@ export interface ItemStack {
 
 // ---------- Tiles ----------
 
-export type TileType = 'grass' | 'dirt' | 'stone' | 'water';
+export type TileType = 'grass' | 'dirt' | 'stone' | 'water' | 'cliff' | 'wall' | 'door';
 
-export type ObstacleType = 'tree' | 'rock' | 'none';
+export type ObstacleType = 'tree' | 'rock' | 'chest' | 'fishing_spot' | 'none';
 
 export interface TileData {
   x: number;
@@ -80,7 +82,36 @@ export interface TileData {
   walkable: boolean;
   type: TileType;
   obstacle: ObstacleType;
-  blocksRanged: boolean;  // true for solid obstacles (trees, walls); rocks are false (safespot)
+  blocksRanged: boolean;
+  groundColor: string;  // hex color for terrain texture, e.g. '#7ec850'
+  height: number;       // legacy: per-tile average height kept for backward-compat migration
+}
+
+// ---------- Map file format (editor output) ----------
+
+export interface NPCSpawn {
+  kind:  string;
+  tileX: number;
+  tileY: number;
+}
+
+export interface PermanentItemSpawn {
+  itemId: string;
+  quantity: number;
+  x: number;
+  y: number;
+}
+
+export interface WorldMapFile {
+  version: 2;
+  width: number;
+  height: number;
+  tiles: TileData[][];
+  npcSpawns: NPCSpawn[];
+  permanentItems: PermanentItemSpawn[];
+  // Per-vertex heights — flat row-major array, length (width+1)*(height+1).
+  // Optional: absent in old v2 maps, which are migrated from TileData.height on load.
+  vertexHeights?: number[];
 }
 
 // ---------- NPCs ----------
@@ -97,6 +128,7 @@ export interface NPCState {
   facing: Direction;
   path: GridPosition[];
   hp: number;
+  maxHp: number;
   homeX: number;
   homeY: number;
   waitTicks: number;
@@ -118,6 +150,7 @@ export interface PlayerState {
   destinationY: number;
   skills: SkillsState;
   inventory: (ItemStack | null)[];
+  bank: (ItemStack | null)[];
   equipped: Partial<Record<EquipSlot, ItemStack>>;
   hp: number;
   maxHp: number;
@@ -146,6 +179,9 @@ export interface WorldState {
   width: number;
   height: number;
   tiles: TileData[][];
+  // Per-vertex heights — flat row-major Float32Array, length (width+1)*(height+1).
+  // Index formula: row * (width+1) + col  where row ∈ [0,height], col ∈ [0,width].
+  vertexHeights: Float32Array;
 }
 
 // ---------- Respawns ----------
@@ -189,7 +225,7 @@ export interface DroppedItemState {
 
 // ---------- Hover / Clickbox ----------
 
-export type ClickboxKind = 'walkable' | 'tree' | 'rock' | 'npc' | 'item' | 'equipped' | 'player' | 'none';
+export type ClickboxKind = 'walkable' | 'tree' | 'rock' | 'chest' | 'npc' | 'item' | 'equipped' | 'player' | 'none';
 
 export interface HoverTarget {
   kind: ClickboxKind;
@@ -218,10 +254,16 @@ export interface EquipItemAction   { type: 'EQUIP_ITEM';  slotIndex: number; }
 export interface UnequipItemAction { type: 'UNEQUIP_ITEM'; slot: EquipSlot; }
 export interface SendChatAction       { type: 'SEND_CHAT';      message: string; }
 export interface SetAppearanceAction  { type: 'SET_APPEARANCE'; playerName: string; shirtColor: ShirtColor; skinColor: SkinColor; }
+export interface OpenBankAction       { type: 'OPEN_BANK'; }
+export interface DepositItemAction    { type: 'DEPOSIT_ITEM';  slotIndex: number; quantity: number; }
+export interface DepositAllAction     { type: 'DEPOSIT_ALL'; }
+export interface DepositWornAction    { type: 'DEPOSIT_WORN'; }
+export interface WithdrawItemAction   { type: 'WITHDRAW_ITEM'; bankSlot: number; quantity: number; }
 
 export type GameAction =
   | MoveToAction | ChopTreeAction | MineRockAction
   | AttackNPCAction | TalkToAction | TakeItemAction
   | DropItemAction | MoveSlotAction
   | EquipItemAction | UnequipItemAction | SendChatAction
-  | SetAppearanceAction;
+  | SetAppearanceAction
+  | OpenBankAction | DepositItemAction | DepositAllAction | DepositWornAction | WithdrawItemAction;

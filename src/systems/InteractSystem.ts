@@ -43,6 +43,8 @@ export function processInteractions(
       ...nextPlayer,
       talkTargetId: target.id,
       attackTargetId: null,
+      chopTargetX: null,
+      chopTargetY: null,
       path: spot.path,
       destinationX: spot.pos.x,
       destinationY: spot.pos.y,
