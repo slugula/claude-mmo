@@ -108,7 +108,8 @@ void NetworkClient::runLoginThread(std::string host, int port,
     return;
   }
   if (resp->statusCode != 200) {
-    lastError_ = "login failed (" + std::to_string(resp->statusCode) + "): " + resp->body;
+    lastError_ = "login failed (" + std::to_string(resp->statusCode) + "): "
+               + (resp->errorMsg.empty() ? resp->body : resp->errorMsg);
     status_    = Connection::Failed;
     return;
   }

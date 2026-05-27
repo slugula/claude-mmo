@@ -80,9 +80,11 @@ static constexpr int kFLast  = kFPass;
 static int  s_loginActive  = kFUser; // default focus on username
 static bool s_registerMode = false;
 
+#define LOGINMODAL_STRINGIFY(x) #x
+#define LOGINMODAL_TOSTR(x)    LOGINMODAL_STRINGIFY(x)
 #ifdef PRODUCTION_BUILD
 static char s_fHost[256] = PRODUCTION_HOST;
-static char s_fPort[8]   = "8080";           // kept for LoginFormState; not shown in UI
+static char s_fPort[8]   = LOGINMODAL_TOSTR(PRODUCTION_PORT);
 #else
 static char s_fHost[256] = "localhost";
 static char s_fPort[8]   = "8080";
