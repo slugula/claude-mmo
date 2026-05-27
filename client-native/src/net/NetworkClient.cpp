@@ -69,21 +69,33 @@ void NetworkClient::registerAndConnect(std::string host, int port,
 void NetworkClient::runLoginThread(std::string host, int port,
                                    std::string username, std::string password,
                                    bool registerFirst) {
-  // Skip CA verification — mbedtls on Windows has no system cert store.
-  // Traffic is still TLS-encrypted; the server hostname is hardcoded so
-  // MITM risk is negligible.
+  // TLS options — only used in production builds (HTTPS/WSS).
+  // mbedtls on Windows has no system cert store, so CA verification is
+  // skipped; traffic is still encrypted and the hostname is hardcoded.
   ix::SocketTLSOptions tlsOpts;
+#ifdef PRODUCTION_BUILD
   tlsOpts.caFile = "NONE";
+#endif
 
   ix::HttpClient http;
+#ifdef PRODUCTION_BUILD
   http.setTLSOptions(tlsOpts);
+#endif
   auto args = http.createRequest();
   args->extraHeaders["Content-Type"] = "application/json";
   std::string body = "{\"username\":\"" + username + "\",\"password\":\"" + password + "\"}";
 
   // ---- Optional: POST /auth/register first --------------------------------
+#ifdef PRODUCTION_BUILD
+  const std::string kHttpScheme = "https";
+  const std::string kWsScheme   = "wss";
+#else
+  const std::string kHttpScheme = "http";
+  const std::string kWsScheme   = "ws";
+#endif
+
   if (registerFirst) {
-    const std::string regUrl = "https://" + host + ":" + std::to_string(port) + "/auth/register";
+    const std::string regUrl = kHttpScheme + "://" + host + ":" + std::to_string(port) + "/auth/register";
     auto regResp = http.post(regUrl, body, args);
     if (!regResp) {
       lastError_ = "no response from server";
@@ -99,7 +111,7 @@ void NetworkClient::runLoginThread(std::string host, int port,
   }
 
   // ---- HTTPS POST /auth/login --------------------------------------------
-  const std::string url = "https://" + host + ":" + std::to_string(port) + "/auth/login";
+  const std::string url = kHttpScheme + "://" + host + ":" + std::to_string(port) + "/auth/login";
   auto resp = http.post(url, body, args);
 
   if (!resp) {
@@ -126,9 +138,11 @@ void NetworkClient::runLoginThread(std::string host, int port,
   // ---- WebSocket connect (WSS) --------------------------------------------
   status_ = Connection::Connecting;
   ws_     = std::make_unique<ix::WebSocket>();
-  const std::string wsUrl = "wss://" + host + ":" + std::to_string(port) + "/";
+  const std::string wsUrl = kWsScheme + "://" + host + ":" + std::to_string(port) + "/";
   ws_->setUrl(wsUrl);
+#ifdef PRODUCTION_BUILD
   ws_->setTLSOptions(tlsOpts);
+#endif
   // Pass JWT in Authorization header — keeps the token out of URLs and logs.
   ix::WebSocketHttpHeaders wsHeaders;
   wsHeaders["Authorization"] = "Bearer " + token_;
