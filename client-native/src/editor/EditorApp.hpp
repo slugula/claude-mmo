@@ -19,6 +19,7 @@
 #include "world/GltfLoader.hpp"
 #include "world/GltfModel.hpp"
 #include "world/ObstacleSystem.hpp"
+#include "world/SkinnedMesh.hpp"
 #include "world/TerrainBuilder.hpp"
 #include "world/WaterRenderer.hpp"
 
@@ -130,10 +131,12 @@ private:
   render::Shader  terrainShader_;
   render::Shader  wireframeShader_;
   render::Shader  obstacleShader_;
+  render::Shader  skinnedShader_;          // for animated obstacle models (fishing spots etc.)
   render::Shader  shadowInstancedShader_;
   render::ShadowMap shadowMap_;
   render::Mesh    terrainMesh_;
   world::ObstacleSystem obstacles_;
+  world::SkinnedMesh    fishingSpotMesh_;  // animated fishing spot
   world::EntityRenderer entities_;   // NPC stand-ins
   camera::GameCamera    camera_;
   world::WaterRenderer  waterRenderer_;

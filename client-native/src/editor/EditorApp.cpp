@@ -42,8 +42,11 @@ constexpr const char* kWireframeVertPath = "shaders/wireframe.vert";
 constexpr const char* kWireframeFragPath = "shaders/wireframe.frag";
 constexpr const char* kObstacleVertPath  = "shaders/obstacle.vert";
 constexpr const char* kObstacleFragPath  = "shaders/obstacle.frag";
+constexpr const char* kSkinnedVertPath   = "shaders/skinned.vert";
+constexpr const char* kSkinnedFragPath   = "shaders/skinned.frag";
 constexpr const char* kShadowInstVertPath= "shaders/shadow_instanced.vert";
 constexpr const char* kShadowFragPath    = "shaders/shadow.frag";
+constexpr const char* kFishingSpotModelPath = "assets/models/fishing_spot.glb";
 constexpr const char* kWaterVertPath     = "shaders/water.vert";
 constexpr const char* kWaterFragPath     = "shaders/water.frag";
 constexpr const char* kWaterNormalPath   = "assets/water_normal.png";
@@ -284,6 +287,7 @@ bool EditorApp::init() {
   if (!loadShader(terrainShader_,         kTerrainVertPath,    kTerrainFragPath,    "terrain"))    return false;
   if (!loadShader(wireframeShader_,       kWireframeVertPath,  kWireframeFragPath,  "wireframe"))  return false;
   if (!loadShader(obstacleShader_,        kObstacleVertPath,   kObstacleFragPath,   "obstacle"))   return false;
+  if (!loadShader(skinnedShader_,         kSkinnedVertPath,    kSkinnedFragPath,    "skinned"))    return false;
   if (!loadShader(shadowInstancedShader_, kShadowInstVertPath, kShadowFragPath,     "shadow"))     return false;
 
   if (!waterRenderer_.init(resolveFromExe(kWaterVertPath).string(),
@@ -303,6 +307,13 @@ bool EditorApp::init() {
     std::fprintf(stderr, "[Editor] tree model not found — using procedural trees\n");
   }
   entities_.initGL();
+
+  // Fishing spot animated model (non-fatal).
+  if (!fishingSpotMesh_.load(resolveFromExe(kFishingSpotModelPath))) {
+    std::fprintf(stderr, "[Editor] fishing_spot model not found — fishing spots won't render in 3D view\n");
+  } else {
+    fishingSpotMesh_.setClip("");  // first animation
+  }
 
   initNewMap(64, 64);
 
@@ -668,6 +679,55 @@ void EditorApp::render3DViewport(float dt) {
     }
     entities_.setNpcInstances(insts);
     entities_.render(obstacleShader_);
+  }
+
+  // ---- Fishing spot animated models ------------------------------------
+  if (fishingSpotMesh_.isLoaded()) {
+    fishingSpotMesh_.update(dt);
+
+    skinnedShader_.use();
+    skinnedShader_.setMat4 ("u_viewProj",       viewProj);
+    skinnedShader_.setMat4 ("u_lightViewProj",  lightVP);
+    skinnedShader_.setVec3 ("u_lightDir",       sunDir);
+    skinnedShader_.setVec3 ("u_paletteLevels",  glm::vec3(static_cast<float>(paletteHues_),
+                                                           static_cast<float>(paletteSats_),
+                                                           static_cast<float>(paletteLums_)));
+    skinnedShader_.setFloat("u_paletteEnabled",  palette_ ? 1.0f : 0.0f);
+    skinnedShader_.setFloat("u_ambient",         ambient_);
+    skinnedShader_.setFloat("u_diffuse",         diffuse_);
+    skinnedShader_.setFloat("u_lightingEnabled", lightingEnabled_ ? 1.0f : 0.0f);
+    skinnedShader_.setInt  ("u_shadowMap",       1);
+    skinnedShader_.setFloat("u_shadowsEnabled",  0.0f);  // no shadow pass for skinned in editor
+    skinnedShader_.setFloat("u_shadowDarkness",  0.0f);
+    skinnedShader_.setFloat("u_shadowBias",      0.0f);
+    skinnedShader_.setFloat("u_fogEnabled",      fogEnabled_ ? 1.0f : 0.0f);
+    skinnedShader_.setVec3 ("u_fogColor",        fogColor_);
+    skinnedShader_.setFloat("u_fogDensity",      fogDensity_);
+    skinnedShader_.setFloat("u_fogStart",        fogStart_);
+    skinnedShader_.setVec3 ("u_color",           glm::vec3(0.50f, 0.75f, 0.90f));
+
+    const int   fsW    = map_.width;
+    const int   fsH    = map_.height;
+    const auto& fsVh   = map_.vertexHeights;
+    const bool  fsVhOk = (static_cast<int>(fsVh.size()) == (fsW + 1) * (fsH + 1));
+
+    for (int fty = 0; fty < fsH; ++fty) {
+      for (int ftx = 0; ftx < fsW; ++ftx) {
+        if (map_.tiles[fty][ftx].obstacle != shared::ObstacleType::fishing_spot) continue;
+        float cy = 0.0f;
+        if (fsVhOk) {
+          const float SW = fsVh[(fsH - fty)     * (fsW + 1) + ftx    ] * shared::kMaxTerrainH;
+          const float SE = fsVh[(fsH - fty)     * (fsW + 1) + ftx + 1] * shared::kMaxTerrainH;
+          const float NW = fsVh[(fsH - fty - 1) * (fsW + 1) + ftx    ] * shared::kMaxTerrainH;
+          const float NE = fsVh[(fsH - fty - 1) * (fsW + 1) + ftx + 1] * shared::kMaxTerrainH;
+          cy = (SW + SE + NW + NE) * 0.25f;
+        }
+        glm::mat4 fsModel = glm::translate(glm::mat4(1.0f),
+                                           glm::vec3(static_cast<float>(ftx), cy,
+                                                     static_cast<float>(fty)));
+        fishingSpotMesh_.render(skinnedShader_, fsModel);
+      }
+    }
   }
 
   // ---- Water pass -------------------------------------------------------
