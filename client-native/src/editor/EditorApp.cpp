@@ -353,6 +353,13 @@ bool EditorApp::init() {
   // Set initial window title.
   updateWindowTitle();
 
+  // Attempt to pre-populate the entity DB from the server so the Objects
+  // toolbar list (PlaceObstacle) shows all registered object types without
+  // requiring the user to open Database → Edit Database first.
+  // Failure is silently swallowed — the editor still works with the built-in
+  // hardcoded fallback list when no server is available.
+  try { dbLoadAll(); } catch (...) {}
+
   lastFrameTime_ = std::chrono::steady_clock::now();
   return true;
 }
@@ -725,6 +732,9 @@ void EditorApp::render3DViewport(float dt) {
         glm::mat4 fsModel = glm::translate(glm::mat4(1.0f),
                                            glm::vec3(static_cast<float>(ftx), cy,
                                                      static_cast<float>(fty)));
+        // Correct Blender Z-up export: model lies flat without this rotation.
+        fsModel = glm::rotate(fsModel, glm::radians(-90.0f), glm::vec3(1.0f, 0.0f, 0.0f));
+        fsModel = glm::scale(fsModel, glm::vec3(0.10f));
         fishingSpotMesh_.render(skinnedShader_, fsModel);
       }
     }
@@ -1036,10 +1046,11 @@ void EditorApp::drawProperties() {
         if (ImGui::Button(label, ImVec2(-1, 0))) obstacleSubtype_ = t;
         if (a) ImGui::PopStyleColor();
       };
-      obstBtn("Tree",  shared::ObstacleType::tree);
-      obstBtn("Rock",  shared::ObstacleType::rock);
-      obstBtn("Chest", shared::ObstacleType::chest);
-      obstBtn("Fence", shared::ObstacleType::fence);
+      obstBtn("Tree",         shared::ObstacleType::tree);
+      obstBtn("Rock",         shared::ObstacleType::rock);
+      obstBtn("Chest",        shared::ObstacleType::chest);
+      obstBtn("Fence",        shared::ObstacleType::fence);
+      obstBtn("Fishing Spot", shared::ObstacleType::fishing_spot);
     }
   }
   else if (activeTool_ == EditorTool::PlaceNPC) {

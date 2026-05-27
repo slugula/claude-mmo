@@ -75,7 +75,7 @@ constexpr int         kShadowMapSize     = 2048;
 constexpr glm::vec3 kPlayerColor       { 0.62f, 0.45f, 0.30f};  // skin tone, modulated by Lambert
 constexpr float     kPlayerScale       = 1.0f;
 constexpr glm::vec3 kFishingSpotColor  { 0.50f, 0.75f, 0.90f};  // light blue water tone
-constexpr float     kFishingSpotScale  = 1.0f;                   // tune if model arrives at wrong size
+constexpr float     kFishingSpotScale  = 0.10f;                  // tune if model is wrong size
 
 // Convert sun (yaw, pitch) in degrees to a unit "light travel" vector
 // (sun-toward-ground). yaw is around +Y measured from +Z toward +X; pitch
@@ -1260,6 +1260,8 @@ void App::renderFrame() {
         glm::mat4 fsModel = glm::translate(glm::mat4(1.0f),
                                            glm::vec3(static_cast<float>(ftx), cy,
                                                      static_cast<float>(fty)));
+        // Correct Blender Z-up export: model lies flat without this rotation.
+        fsModel = glm::rotate(fsModel, glm::radians(-90.0f), glm::vec3(1.0f, 0.0f, 0.0f));
         fsModel = glm::scale(fsModel, glm::vec3(kFishingSpotScale));
         fishingSpotMesh_.render(skinnedShader_, fsModel);
       }
