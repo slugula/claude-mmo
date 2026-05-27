@@ -1801,13 +1801,14 @@ void App::renderFrame() {
 
   // ── Dispatch Clay modal results ─────────────────────────────────────────────
   if (showClayUi_) {
-    // Login modal: submitted → call network
+    // Login modal: submitted → call network, then immediately zero password buffer
     const auto& lf = ui::loginFormState();
     if (lf.submitted) {
       if (lf.registerMode)
         network_.registerAndConnect(lf.host, lf.port, lf.username, lf.password);
       else
         network_.loginAndConnect(lf.host, lf.port, lf.username, lf.password);
+      ui::loginClearPassword(); // password copied into network thread; zero UI buffer now
     }
     // Join modal: submitted → send SET_NAME
     const auto& jf = ui::joinFormState();

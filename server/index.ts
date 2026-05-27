@@ -122,7 +122,10 @@ const wss = new WebSocketServer({ server: httpServer });
 
 wss.on('connection', async (ws: WebSocket, req: IncomingMessage) => {
   const { query } = parse(req.url ?? '', true);
-  const token = typeof query.token === 'string' ? query.token : null;
+  // Accept token from Authorization header (production WSS path) or URL query param (dev fallback)
+  const authHeader = req.headers['authorization'];
+  const token = (authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null)
+             ?? (typeof query.token === 'string' ? query.token : null);
 
   if (!token) {
     ws.close(4001, 'Authentication required');

@@ -76,7 +76,7 @@ void NetworkClient::runLoginThread(std::string host, int port,
 
   // ---- Optional: POST /auth/register first --------------------------------
   if (registerFirst) {
-    const std::string regUrl = "http://" + host + ":" + std::to_string(port) + "/auth/register";
+    const std::string regUrl = "https://" + host + ":" + std::to_string(port) + "/auth/register";
     auto regResp = http.post(regUrl, body, args);
     if (!regResp) {
       lastError_ = "no response from server";
@@ -91,8 +91,8 @@ void NetworkClient::runLoginThread(std::string host, int port,
     // Registration succeeded — now fall through to login.
   }
 
-  // ---- HTTP POST /auth/login ---------------------------------------------
-  const std::string url = "http://" + host + ":" + std::to_string(port) + "/auth/login";
+  // ---- HTTPS POST /auth/login --------------------------------------------
+  const std::string url = "https://" + host + ":" + std::to_string(port) + "/auth/login";
   auto resp = http.post(url, body, args);
 
   if (!resp) {
@@ -115,11 +115,15 @@ void NetworkClient::runLoginThread(std::string host, int port,
     return;
   }
 
-  // ---- WebSocket connect --------------------------------------------------
+  // ---- WebSocket connect (WSS) --------------------------------------------
   status_ = Connection::Connecting;
   ws_     = std::make_unique<ix::WebSocket>();
-  const std::string wsUrl = "ws://" + host + ":" + std::to_string(port) + "/?token=" + token_;
+  const std::string wsUrl = "wss://" + host + ":" + std::to_string(port) + "/";
   ws_->setUrl(wsUrl);
+  // Pass JWT in Authorization header — keeps the token out of URLs and logs.
+  ix::WebSocketHttpHeaders wsHeaders;
+  wsHeaders["Authorization"] = "Bearer " + token_;
+  ws_->setExtraHeaders(wsHeaders);
   // Keep the connection alive without ping/pong noise; the 200 ms tick
   // traffic is plenty.
   ws_->disablePerMessageDeflate();
