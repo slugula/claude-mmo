@@ -129,8 +129,8 @@ endif()
 if (PRODUCTION_BUILD)
   target_compile_definitions(client-native PRIVATE
     PRODUCTION_BUILD
-    PRODUCTION_HOST="34.204.12.71"
-    PRODUCTION_PORT=8080
+    PRODUCTION_HOST="loom-online.com"
+    PRODUCTION_PORT=443
   )
 endif()
 

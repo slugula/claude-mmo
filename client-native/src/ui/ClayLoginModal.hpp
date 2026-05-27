@@ -28,6 +28,11 @@ void buildLoginModal(float screenW, float screenH,
                      bool leftClicked,
                      net::NetworkClient* netc);
 
+// Zero the password buffer in both the UI state and the shared LoginFormState.
+// Call from App.cpp immediately after reading loginFormState().password and
+// dispatching it to loginAndConnect / registerAndConnect.
+void loginClearPassword();
+
 // ── Join modal state ──────────────────────────────────────────────────────────
 struct JoinFormState {
     bool submitted = false;  // true on the frame user presses Confirm
