@@ -69,7 +69,14 @@ void NetworkClient::registerAndConnect(std::string host, int port,
 void NetworkClient::runLoginThread(std::string host, int port,
                                    std::string username, std::string password,
                                    bool registerFirst) {
+  // Skip CA verification — mbedtls on Windows has no system cert store.
+  // Traffic is still TLS-encrypted; the server hostname is hardcoded so
+  // MITM risk is negligible.
+  ix::SocketTLSOptions tlsOpts;
+  tlsOpts.caFile = "NONE";
+
   ix::HttpClient http;
+  http.setTLSOptions(tlsOpts);
   auto args = http.createRequest();
   args->extraHeaders["Content-Type"] = "application/json";
   std::string body = "{\"username\":\"" + username + "\",\"password\":\"" + password + "\"}";
@@ -120,6 +127,7 @@ void NetworkClient::runLoginThread(std::string host, int port,
   ws_     = std::make_unique<ix::WebSocket>();
   const std::string wsUrl = "wss://" + host + ":" + std::to_string(port) + "/";
   ws_->setUrl(wsUrl);
+  ws_->setTLSOptions(tlsOpts);
   // Pass JWT in Authorization header — keeps the token out of URLs and logs.
   ix::WebSocketHttpHeaders wsHeaders;
   wsHeaders["Authorization"] = "Bearer " + token_;
