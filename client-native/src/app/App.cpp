@@ -1260,7 +1260,6 @@ void App::renderFrame() {
         glm::mat4 fsModel = glm::translate(glm::mat4(1.0f),
                                            glm::vec3(static_cast<float>(ftx), cy,
                                                      static_cast<float>(fty)));
-        fsModel = glm::rotate(fsModel, glm::radians(90.0f), glm::vec3(1.0f, 0.0f, 0.0f));
         fsModel = glm::scale(fsModel, glm::vec3(kFishingSpotScale));
         fishingSpotMesh_.render(skinnedShader_, fsModel);
       }
