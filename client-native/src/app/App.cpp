@@ -63,16 +63,19 @@ constexpr const char* kOutlineCompositeFragPath = "shaders/outline_composite.fra
 constexpr const char* kShadowInstVertPath    = "shaders/shadow_instanced.vert";
 constexpr const char* kShadowSkinnedVertPath = "shaders/shadow_skinned.vert";
 constexpr const char* kShadowFragPath        = "shaders/shadow.frag";
-constexpr const char* kPlayerModelPath   = "assets/models/player.glb";
-constexpr const char* kTreeModelPath     = "assets/models/tree.gltf";
+constexpr const char* kPlayerModelPath       = "assets/models/player.glb";
+constexpr const char* kFishingSpotModelPath  = "assets/models/fishing_spot.glb";
+constexpr const char* kTreeModelPath         = "assets/models/tree.gltf";
 constexpr const char* kWaterVertPath     = "shaders/water.vert";
 constexpr const char* kWaterFragPath     = "shaders/water.frag";
 constexpr const char* kWaterNormalPath   = "assets/water_normal.png";
 constexpr const char* kWorldMapPath      = "worldMap.json";
 constexpr int         kShadowMapSize     = 2048;
 
-constexpr glm::vec3 kPlayerColor  { 0.62f, 0.45f, 0.30f};  // skin tone, modulated by Lambert
-constexpr float     kPlayerScale  = 1.0f;
+constexpr glm::vec3 kPlayerColor       { 0.62f, 0.45f, 0.30f};  // skin tone, modulated by Lambert
+constexpr float     kPlayerScale       = 1.0f;
+constexpr glm::vec3 kFishingSpotColor  { 0.50f, 0.75f, 0.90f};  // light blue water tone
+constexpr float     kFishingSpotScale  = 1.0f;                   // tune if model arrives at wrong size
 
 // Convert sun (yaw, pitch) in degrees to a unit "light travel" vector
 // (sun-toward-ground). yaw is around +Y measured from +Z toward +X; pitch
@@ -517,6 +520,15 @@ bool App::init() {
     std::fprintf(stderr, "[App] player glTF load failed — proceeding without a player model\n");
   } else {
     playerModel_.setClip("Idle_Loop");
+  }
+
+  // Fishing spot animated model — loads first animation clip and loops it.
+  if (!fishingSpotMesh_.load(resolveFromExe(kFishingSpotModelPath))) {
+    std::fprintf(stderr, "[App] fishing_spot model load failed — fishing spots will not render\n");
+  } else {
+    fishingSpotMesh_.setClip("");  // empty string → falls back to first animation in file
+    std::fprintf(stdout, "[App] fishing_spot model loaded (%d anim(s), %d joint(s))\n",
+                 fishingSpotMesh_.animationCount(), fishingSpotMesh_.jointCount());
   }
 
   // Snap the camera to the map center so the first frame isn't mid-lerp.
@@ -1197,6 +1209,60 @@ void App::renderFrame() {
         it = remoteAnims_.erase(it);
       else
         ++it;
+    }
+  }
+
+  // ---- Fishing spot animated models ------------------------------------------
+  // All instances share one SkinnedMesh (same GPU buffers, same pose each frame).
+  // We advance the animation once then render one instance per fishing_spot tile.
+  if (fishingSpotMesh_.isLoaded()) {
+    fishingSpotMesh_.update(dt);
+
+    skinnedShader_.use();
+    skinnedShader_.setMat4 ("u_viewProj",       viewProj);
+    skinnedShader_.setMat4 ("u_lightViewProj",  lightVP);
+    skinnedShader_.setVec3 ("u_lightDir",       sunDir);
+    skinnedShader_.setVec3 ("u_paletteLevels",
+                            glm::vec3(static_cast<float>(paletteHues_),
+                                      static_cast<float>(paletteSats_),
+                                      static_cast<float>(paletteLums_)));
+    skinnedShader_.setFloat("u_paletteEnabled",  palette_ ? 1.0f : 0.0f);
+    skinnedShader_.setFloat("u_ambient",         ambient_);
+    skinnedShader_.setFloat("u_diffuse",         diffuse_);
+    skinnedShader_.setFloat("u_lightingEnabled", lightingEnabled_ ? 1.0f : 0.0f);
+    skinnedShader_.setInt  ("u_shadowMap",       1);
+    skinnedShader_.setFloat("u_shadowsEnabled",  shadowsEnabled_ ? 1.0f : 0.0f);
+    skinnedShader_.setFloat("u_shadowDarkness",  shadowDarkness_);
+    skinnedShader_.setFloat("u_shadowBias",      shadowBias_);
+    skinnedShader_.setFloat("u_fogEnabled",      fogEnabled_  ? 1.0f : 0.0f);
+    skinnedShader_.setVec3 ("u_fogColor",        fogColor_);
+    skinnedShader_.setFloat("u_fogDensity",      fogDensity_);
+    skinnedShader_.setFloat("u_fogStart",        fogStart_);
+    skinnedShader_.setVec3 ("u_color",           kFishingSpotColor);
+
+    const int   fsW    = map_.width;
+    const int   fsH    = map_.height;
+    const auto& fsVh   = map_.vertexHeights;
+    const bool  fsVhOk = (static_cast<int>(fsVh.size()) == (fsW + 1) * (fsH + 1));
+
+    for (int fty = 0; fty < fsH; ++fty) {
+      for (int ftx = 0; ftx < fsW; ++ftx) {
+        if (map_.tiles[fty][ftx].obstacle != shared::ObstacleType::fishing_spot) continue;
+        // Average the 4 corner heights to get tile-centre Y (same as ObstacleSystem).
+        float cy = 0.0f;
+        if (fsVhOk) {
+          const float SW = fsVh[(fsH - fty)     * (fsW + 1) + ftx    ] * shared::kMaxTerrainH;
+          const float SE = fsVh[(fsH - fty)     * (fsW + 1) + ftx + 1] * shared::kMaxTerrainH;
+          const float NW = fsVh[(fsH - fty - 1) * (fsW + 1) + ftx    ] * shared::kMaxTerrainH;
+          const float NE = fsVh[(fsH - fty - 1) * (fsW + 1) + ftx + 1] * shared::kMaxTerrainH;
+          cy = (SW + SE + NW + NE) * 0.25f;
+        }
+        glm::mat4 fsModel = glm::translate(glm::mat4(1.0f),
+                                           glm::vec3(static_cast<float>(ftx), cy,
+                                                     static_cast<float>(fty)));
+        fsModel = glm::scale(fsModel, glm::vec3(kFishingSpotScale));
+        fishingSpotMesh_.render(skinnedShader_, fsModel);
+      }
     }
   }
 
