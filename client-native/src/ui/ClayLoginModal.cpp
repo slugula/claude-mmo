@@ -106,12 +106,6 @@ void loginClearPassword() {
     s_fLens[kFPass] = 0;
 }
 
-void loginClearPassword() {
-    std::memset(s_fPass,               0, sizeof(s_fPass));
-    std::memset(s_loginState.password, 0, sizeof(s_loginState.password));
-    s_fLens[kFPass] = 0;
-}
-
 static void loginCaptureKeys() {
     const ImGuiIO& io = ImGui::GetIO();
     if (ImGui::IsAnyItemActive()) return;
