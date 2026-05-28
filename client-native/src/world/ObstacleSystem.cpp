@@ -324,7 +324,7 @@ void ObstacleSystem::rebuildFromMap(const shared::WorldMapFile& map) {
   for (int ty = 0; ty < H; ++ty) {
     for (int tx = 0; tx < W; ++tx) {
       const auto& tile = map.tiles[ty][tx];
-      if (tile.obstacle.empty()) continue;
+      if (tile.obstacle.empty() || tile.obstacle == "none") continue;
 
       const float y = tileCenterY(vh, W, H, tx, ty);
       const bool  submerged = isWater(tx, ty);

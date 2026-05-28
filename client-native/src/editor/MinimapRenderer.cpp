@@ -73,7 +73,7 @@ void MinimapRenderer::rebuild(const shared::WorldMapFile& map,
       hexToRgbf(tile.groundColor.c_str(), fr, fg, fb);
 
       // Darken if obstacle present.
-      if (!tile.obstacle.empty()) {
+      if (!tile.obstacle.empty() && tile.obstacle != "none") {
         const auto& obs = tile.obstacle;
         if      (obs == "tree")  { fr = 0.07f; fg = 0.22f; fb = 0.04f; } // dark green
         else if (obs == "rock")  { fr = 0.40f; fg = 0.40f; fb = 0.40f; } // grey

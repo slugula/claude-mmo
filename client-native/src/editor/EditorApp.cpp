@@ -1418,7 +1418,7 @@ void EditorApp::drawGridView() {
       }
 
       // Obstacle dot
-      if (z >= 6.0f && tile.obstacle != "") {
+      if (z >= 6.0f && !tile.obstacle.empty() && tile.obstacle != "none") {
         ImU32 oc = IM_COL32(20, 90, 10, 255);
         if (tile.obstacle == "rock")  oc = IM_COL32(110, 110, 110, 255);
         if (tile.obstacle == "chest") oc = IM_COL32(200, 160, 30,  255);
@@ -1810,7 +1810,7 @@ void EditorApp::setObstacleAtTile(int tx, int ty, const std::string& obs) {
   if (tx < 0 || tx >= static_cast<int>(map_.tiles[ty].size())) return;
   auto& tile = map_.tiles[ty][tx];
   tile.obstacle = obs;
-  if (obs == "") {
+  if (obs.empty() || obs == "none") {
     tile.walkable = true; tile.blocksRanged = false;
   } else if (obs == "fence") {
     tile.walkable = false; tile.blocksRanged = false;

@@ -760,8 +760,8 @@ void App::renderFrame() {
       // ---- Obstacles (trees / rocks / chests) --------------------------------
       for (int oty = 0; oty < terrainTileH_; ++oty) {
         for (int otx = 0; otx < terrainTileW_; ++otx) {
-          const auto obs = map_.tiles[oty][otx].obstacle;
-          if (obs == "") continue;
+          const auto& obs = map_.tiles[oty][otx].obstacle;
+          if (obs.empty() || obs == "none") continue;
 
           const float baseY = tileWorldY(map_, otx, oty);
 

@@ -137,7 +137,7 @@ void MinimapRenderer::buildBaseLayer(const shared::WorldMapFile& map)
             uint8_t r, g, b;
             hexToRgb8(tile.groundColor, r, g, b);
 
-            if (!tile.obstacle.empty()) {
+            if (!tile.obstacle.empty() && tile.obstacle != "none") {
                 obstacleColor(tile.obstacle, r, g, b);
             }
 

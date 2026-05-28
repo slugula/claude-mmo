@@ -117,6 +117,13 @@ inline bool loadWorldMap(const std::filesystem::path& path, WorldMapFile& out) {
       out.tiles[ty][tx].y = ty;
     }
 
+  // Backward-compat: old maps stored obstacle as the string "none" (the old
+  // enum serialisation).  Normalise to "" so every consumer can use .empty().
+  for (int ty = 0; ty < out.height && ty < static_cast<int>(out.tiles.size()); ++ty)
+    for (int tx = 0; tx < out.width && tx < static_cast<int>(out.tiles[ty].size()); ++tx)
+      if (out.tiles[ty][tx].obstacle == "none")
+        out.tiles[ty][tx].obstacle = "";
+
   // Enforce walkable=false for every water tile. Old maps may have the
   // waterTiles list correct but tile.walkable=true due to a now-fixed editor
   // bug. Re-derive walkability from waterTiles so overlays and picking are right.
