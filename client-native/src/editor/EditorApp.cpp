@@ -1152,6 +1152,19 @@ void EditorApp::drawPreferencesWindow() {
   ImGui::SameLine();
   ImGui::TextDisabled("Writes to settings.cfg");
 
+  // DB connection status — shown at the bottom of the panel
+  ImGui::Spacing();
+  ImGui::Separator();
+  if (dbLoaded_) {
+    ImGui::TextColored({0.4f, 0.9f, 0.4f, 1.0f}, "DB: connected");
+  } else {
+    ImGui::TextColored({1.0f, 0.8f, 0.2f, 1.0f}, "DB: offline");
+    ImGui::TextDisabled("(built-ins only)");
+    if (ImGui::SmallButton("Retry")) {
+      try { dbLoadAll(); } catch (...) {}
+    }
+  }
+
   ImGui::EndChild();
   ImGui::End();
 }
