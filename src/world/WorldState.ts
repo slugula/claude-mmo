@@ -1,4 +1,4 @@
-import type { WorldState, TileData, ObstacleType } from '../shared/types';
+import type { WorldState, TileData } from '../shared/types';
 import {
   GRID_WIDTH, GRID_HEIGHT,
   PLAYER_START_X, PLAYER_START_Y,
@@ -63,7 +63,7 @@ export function createWorldState(seed = 42): WorldState {
   for (let y = 0; y < GRID_HEIGHT; y++) {
     tiles[y] = [];
     for (let x = 0; x < GRID_WIDTH; x++) {
-      tiles[y][x] = { x, y, walkable: true, type: 'grass', obstacle: 'none', blocksRanged: false, groundColor: '#7ec850', height: 0 };
+      tiles[y][x] = { x, y, walkable: true, type: 'grass', obstacle: '', blocksRanged: false, groundColor: '#7ec850', height: 0 };
     }
   }
 
@@ -75,7 +75,7 @@ export function createWorldState(seed = 42): WorldState {
       if (Math.sqrt(dx * dx + dy * dy) < OBSTACLE_CLEAR_RADIUS) continue;
 
       if (rng() < OBSTACLE_DENSITY) {
-        const obstacle: ObstacleType = rng() < 0.6 ? 'tree' : 'rock';
+        const obstacle = rng() < 0.6 ? 'tree' : 'rock';
         tiles[y][x].walkable     = false;
         tiles[y][x].obstacle     = obstacle;
         tiles[y][x].blocksRanged = obstacle === 'tree';
@@ -94,9 +94,9 @@ export function createWorldState(seed = 42): WorldState {
       const nx = (x - POOL_CX) / POOL_RX;
       const ny = (y - POOL_CY) / POOL_RY;
       if (nx * nx + ny * ny <= 1) {
-        tiles[y][x] = { x, y, walkable: false, type: 'water', obstacle: 'none', blocksRanged: false, groundColor: '#1878e5', height: 0 };
+        tiles[y][x] = { x, y, walkable: false, type: 'water', obstacle: '', blocksRanged: false, groundColor: '#1878e5', height: 0 };
       } else if (nx * nx + ny * ny <= 1.6) {
-        tiles[y][x].obstacle = 'none';
+        tiles[y][x].obstacle = '';
         tiles[y][x].walkable = true;
       }
     }

@@ -170,7 +170,7 @@ shared::WorldMapFile generateMap(int width, int height, uint32_t seed,
       tile.y            = ty;
       tile.type         = shared::TileType::grass;
       tile.walkable     = true;
-      tile.obstacle     = shared::ObstacleType::none;
+      tile.obstacle     = "";
       tile.blocksRanged = false;
       tile.height       = 0.0f;  // unused — actual heights live in vertexHeights
       tile.groundColor  = pickPaletteColor(moisture, variant);
@@ -201,10 +201,9 @@ shared::WorldMapFile generateMap(int width, int height, uint32_t seed,
 
       if (r0 >= kObstacleDensity) continue;
       auto& tile = map.tiles[ty][tx];
-      tile.obstacle     = (r1 < 0.6f) ? shared::ObstacleType::tree
-                                      : shared::ObstacleType::rock;
+      tile.obstacle     = (r1 < 0.6f) ? "tree" : "rock";
       tile.walkable     = false;
-      tile.blocksRanged = (tile.obstacle == shared::ObstacleType::tree);
+      tile.blocksRanged = (tile.obstacle == "tree");
     }
   }
 

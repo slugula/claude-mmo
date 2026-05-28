@@ -73,22 +73,13 @@ void MinimapRenderer::rebuild(const shared::WorldMapFile& map,
       hexToRgbf(tile.groundColor.c_str(), fr, fg, fb);
 
       // Darken if obstacle present.
-      if (tile.obstacle != shared::ObstacleType::none) {
-        switch (tile.obstacle) {
-          case shared::ObstacleType::tree:
-            fr = 0.07f; fg = 0.22f; fb = 0.04f; break; // dark tree green
-          case shared::ObstacleType::rock:
-            fr = 0.40f; fg = 0.40f; fb = 0.40f; break; // grey
-          case shared::ObstacleType::chest:
-            fr = 0.55f; fg = 0.45f; fb = 0.10f; break; // gold
-          case shared::ObstacleType::fence:
-            fr = 0.36f; fg = 0.22f; fb = 0.08f; break; // wood brown
-          default:
-            fr *= kObstacleDarken;
-            fg *= kObstacleDarken;
-            fb *= kObstacleDarken;
-            break;
-        }
+      if (!tile.obstacle.empty()) {
+        const auto& obs = tile.obstacle;
+        if      (obs == "tree")  { fr = 0.07f; fg = 0.22f; fb = 0.04f; } // dark green
+        else if (obs == "rock")  { fr = 0.40f; fg = 0.40f; fb = 0.40f; } // grey
+        else if (obs == "chest") { fr = 0.55f; fg = 0.45f; fb = 0.10f; } // gold
+        else if (obs == "fence") { fr = 0.36f; fg = 0.22f; fb = 0.08f; } // wood brown
+        else { fr *= kObstacleDarken; fg *= kObstacleDarken; fb *= kObstacleDarken; }
       }
 
       const auto r = static_cast<uint8_t>(std::clamp(fr, 0.0f, 1.0f) * 255.0f);

@@ -2,9 +2,10 @@
 
 // Glaze JSON adapters for the types in SharedTypes.hpp.
 //
-// String-backed enums (TileType, ObstacleType) need explicit enumerate() meta.
+// TileType needs explicit enumerate() meta (string-backed enum).
 // NpcSpawn and WaterTile also have explicit object() meta to guarantee named-key
 // JSON objects on all compilers. TileData and OnDisk use auto-reflection.
+// TileData::obstacle is now a plain std::string — no glaze meta needed.
 
 #include "shared/SharedTypes.hpp"
 
@@ -22,18 +23,6 @@ struct glz::meta<shared::TileType> {
     "cliff", cliff,
     "wall",  wall,
     "door",  door);
-};
-
-template <>
-struct glz::meta<shared::ObstacleType> {
-  using enum shared::ObstacleType;
-  static constexpr auto value = enumerate(
-    "tree",         tree,
-    "rock",         rock,
-    "chest",        chest,
-    "fishing_spot", fishing_spot,
-    "fence",        fence,
-    "none",         none);
 };
 
 // Explicit metas for NpcSpawn and WaterTile ensure glaze always deserialises
@@ -200,18 +189,8 @@ inline bool saveWorldMap(const std::filesystem::path& path,
         }
         return "grass";
       };
-      auto obsStr = [&]() -> const char* {
-        switch (t.obstacle) {
-          case ObstacleType::tree:         return "tree";
-          case ObstacleType::rock:         return "rock";
-          case ObstacleType::chest:        return "chest";
-          case ObstacleType::fishing_spot: return "fishing_spot";
-          case ObstacleType::fence:        return "fence";
-          case ObstacleType::none:         return "none";
-        }
-        return "none";
-      };
-
+      // obstacle is now a plain std::string — write it directly.
+      // Empty string means no obstacle; write "" to match the load path.
       std::fprintf(f,
         "%s{\"x\":%d,\"y\":%d,\"walkable\":%s,"
         "\"type\":\"%s\",\"obstacle\":\"%s\","
@@ -219,7 +198,7 @@ inline bool saveWorldMap(const std::filesystem::path& path,
         tx == 0 ? "" : ",",
         t.x, t.y,
         t.walkable     ? "true" : "false",
-        typeStr(), obsStr(),
+        typeStr(), t.obstacle.c_str(),
         t.blocksRanged ? "true" : "false",
         hexOf(t.groundColor).c_str(),
         t.height);

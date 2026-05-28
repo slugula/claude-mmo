@@ -720,7 +720,7 @@ void EditorApp::render3DViewport(float dt) {
 
     for (int fty = 0; fty < fsH; ++fty) {
       for (int ftx = 0; ftx < fsW; ++ftx) {
-        if (map_.tiles[fty][ftx].obstacle != shared::ObstacleType::fishing_spot) continue;
+        if (map_.tiles[fty][ftx].obstacle != "fishing_spot") continue;
         float cy = 0.0f;
         if (fsVhOk) {
           const float SW = fsVh[(fsH - fty)     * (fsW + 1) + ftx    ] * shared::kMaxTerrainH;
@@ -1014,41 +1014,26 @@ void EditorApp::drawProperties() {
   }
   else if (activeTool_ == EditorTool::PlaceObstacle) {
     ImGui::TextDisabled("Object type");
-    // Helper: map DB object id → ObstacleType enum (for the 5 built-in types)
-    auto idToObs = [](const std::string& id) -> shared::ObstacleType {
-      if (id == "tree")         return shared::ObstacleType::tree;
-      if (id == "rock")         return shared::ObstacleType::rock;
-      if (id == "chest")        return shared::ObstacleType::chest;
-      if (id == "fence")        return shared::ObstacleType::fence;
-      if (id == "fishing_spot") return shared::ObstacleType::fishing_spot;
-      return shared::ObstacleType::none;
+    // Scrollable object list — DB-driven when loaded, hardcoded fallback otherwise.
+    // obstacleSubtype_ is now a plain string ID (e.g. "tree", "bookcase_oak").
+    auto obstBtn = [&](const char* label, const std::string& id) {
+      const bool a = (obstacleSubtype_ == id);
+      if (a) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f, 0.34f, 0.10f, 1.0f));
+      if (ImGui::Button(label, ImVec2(-1, 0))) obstacleSubtype_ = id;
+      if (a) ImGui::PopStyleColor();
     };
     if (!dbObjects_.empty()) {
-      // DB-driven list
+      // DB-driven grouped list
       for (const auto& obj : dbObjects_) {
-        const auto t = idToObs(obj.id);
-        if (t == shared::ObstacleType::none) {
-          ImGui::TextDisabled("%s (not placeable yet)", obj.name.c_str());
-          continue;
-        }
-        const bool a = (obstacleSubtype_ == t);
-        if (a) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f, 0.34f, 0.10f, 1.0f));
-        if (ImGui::Button(obj.name.c_str(), ImVec2(-1, 0))) obstacleSubtype_ = t;
-        if (a) ImGui::PopStyleColor();
+        obstBtn(obj.name.c_str(), obj.id);
       }
     } else {
-      // Fallback when DB not loaded
-      auto obstBtn = [&](const char* label, shared::ObstacleType t) {
-        const bool a = (obstacleSubtype_ == t);
-        if (a) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f, 0.34f, 0.10f, 1.0f));
-        if (ImGui::Button(label, ImVec2(-1, 0))) obstacleSubtype_ = t;
-        if (a) ImGui::PopStyleColor();
-      };
-      obstBtn("Tree",         shared::ObstacleType::tree);
-      obstBtn("Rock",         shared::ObstacleType::rock);
-      obstBtn("Chest",        shared::ObstacleType::chest);
-      obstBtn("Fence",        shared::ObstacleType::fence);
-      obstBtn("Fishing Spot", shared::ObstacleType::fishing_spot);
+      // Fallback built-ins when DB not loaded
+      obstBtn("Tree",         "tree");
+      obstBtn("Rock",         "rock");
+      obstBtn("Chest",        "chest");
+      obstBtn("Fence",        "fence");
+      obstBtn("Fishing Spot", "fishing_spot");
     }
   }
   else if (activeTool_ == EditorTool::PlaceNPC) {
@@ -1347,11 +1332,11 @@ void EditorApp::drawGridView() {
       }
 
       // Obstacle dot
-      if (z >= 6.0f && tile.obstacle != shared::ObstacleType::none) {
+      if (z >= 6.0f && tile.obstacle != "") {
         ImU32 oc = IM_COL32(20, 90, 10, 255);
-        if (tile.obstacle == shared::ObstacleType::rock)  oc = IM_COL32(110, 110, 110, 255);
-        if (tile.obstacle == shared::ObstacleType::chest) oc = IM_COL32(200, 160, 30,  255);
-        if (tile.obstacle == shared::ObstacleType::fence) oc = IM_COL32(100, 60,  20,  255);
+        if (tile.obstacle == "rock")  oc = IM_COL32(110, 110, 110, 255);
+        if (tile.obstacle == "chest") oc = IM_COL32(200, 160, 30,  255);
+        if (tile.obstacle == "fence") oc = IM_COL32(100, 60,  20,  255);
         dl->AddCircleFilled(ImVec2(px + z * 0.5f, py + z * 0.5f), std::max(2.0f, z * 0.28f), oc);
       }
 
@@ -1443,7 +1428,7 @@ void EditorApp::drawGridView() {
         }
         if (ty < static_cast<int>(map_.tiles.size()) &&
             tx < static_cast<int>(map_.tiles[ty].size())) {
-          setObstacleAtTile(tx, ty, shared::ObstacleType::none);
+          setObstacleAtTile(tx, ty, "");
           map_.tiles[ty][tx].walkable = true;
           npcSpawns_.erase(std::remove_if(npcSpawns_.begin(), npcSpawns_.end(),
             [tx, ty](const shared::NpcSpawn& n){ return n.tileX == tx && n.tileY == ty; }),
@@ -1560,7 +1545,7 @@ void EditorApp::applyToolAt(int tx, int ty, float dt, bool rightClick,
     }
     case EditorTool::PlaceObstacle: {
       if (rightClick) {
-        setObstacleAtTile(tx, ty, shared::ObstacleType::none);
+        setObstacleAtTile(tx, ty, "");
         tile.walkable = true;
       } else {
         setObstacleAtTile(tx, ty, obstacleSubtype_);
@@ -1609,7 +1594,7 @@ void EditorApp::applyToolAt(int tx, int ty, float dt, bool rightClick,
           map_.waterTiles.push_back({ tx, ty });
           // Clear any obstacle first (setObstacleAtTile(none) resets walkable to
           // true internally, so we must force it back to false afterwards).
-          setObstacleAtTile(tx, ty, shared::ObstacleType::none);
+          setObstacleAtTile(tx, ty, "");
           tile.walkable = false;
           bakeWaterBank(tx, ty);
           dirtyTerrain = true;
@@ -1621,7 +1606,7 @@ void EditorApp::applyToolAt(int tx, int ty, float dt, bool rightClick,
       break;
     }
     case EditorTool::Erase: {
-      setObstacleAtTile(tx, ty, shared::ObstacleType::none);
+      setObstacleAtTile(tx, ty, "");
       tile.walkable = true;
       npcSpawns_.erase(std::remove_if(npcSpawns_.begin(), npcSpawns_.end(),
         [tx, ty](const shared::NpcSpawn& n){ return n.tileX == tx && n.tileY == ty; }),
@@ -1704,7 +1689,7 @@ void EditorApp::initNewMap(int w, int h) {
       t.x = tx; t.y = ty; t.walkable = true;
       t.groundColor = kDefaultGroundColor;
       t.type = shared::TileType::grass;
-      t.obstacle = shared::ObstacleType::none;
+      t.obstacle = "";
       t.blocksRanged = false; t.height = 0.0f;
     }
   }
@@ -1734,14 +1719,14 @@ void EditorApp::rebuildObstacles() {
 }
 
 // -----------------------------------------------------------------------
-void EditorApp::setObstacleAtTile(int tx, int ty, shared::ObstacleType obs) {
+void EditorApp::setObstacleAtTile(int tx, int ty, const std::string& obs) {
   if (ty < 0 || ty >= static_cast<int>(map_.tiles.size())) return;
   if (tx < 0 || tx >= static_cast<int>(map_.tiles[ty].size())) return;
   auto& tile = map_.tiles[ty][tx];
   tile.obstacle = obs;
-  if (obs == shared::ObstacleType::none) {
+  if (obs == "") {
     tile.walkable = true; tile.blocksRanged = false;
-  } else if (obs == shared::ObstacleType::fence) {
+  } else if (obs == "fence") {
     tile.walkable = false; tile.blocksRanged = false;
   } else {
     tile.walkable = false; tile.blocksRanged = true;
@@ -1932,7 +1917,7 @@ void EditorApp::resizeMap(int newW, int newH) {
         auto& t = newTiles[ty][tx];
         t.x = tx; t.y = ty; t.walkable = true;
         t.groundColor = kDefaultGroundColor;
-        t.type = shared::TileType::grass; t.obstacle = shared::ObstacleType::none;
+        t.type = shared::TileType::grass; t.obstacle = "";
       }
     }
   }

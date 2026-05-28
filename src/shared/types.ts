@@ -74,14 +74,12 @@ export interface ItemStack {
 
 export type TileType = 'grass' | 'dirt' | 'stone' | 'water' | 'cliff' | 'wall' | 'door';
 
-export type ObstacleType = 'tree' | 'rock' | 'chest' | 'fishing_spot' | 'none';
-
 export interface TileData {
   x: number;
   y: number;
   walkable: boolean;
   type: TileType;
-  obstacle: ObstacleType;
+  obstacle: string;     // empty = none; otherwise a DB object ID e.g. "tree", "rock"
   blocksRanged: boolean;
   groundColor: string;  // hex color for terrain texture, e.g. '#7ec850'
   height: number;       // legacy: per-tile average height kept for backward-compat migration

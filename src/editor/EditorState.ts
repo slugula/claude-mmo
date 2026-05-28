@@ -25,7 +25,7 @@ interface EditCommand {
 }
 
 function blankTile(x: number, y: number): TileData {
-  return { x, y, walkable: true, type: 'grass', obstacle: 'none', blocksRanged: false, groundColor: '#7ec850', height: 0 };
+  return { x, y, walkable: true, type: 'grass', obstacle: '', blocksRanged: false, groundColor: '#7ec850', height: 0 };
 }
 
 function createBlankTiles(w: number, h: number): TileData[][] {
@@ -259,7 +259,7 @@ export class EditorState {
     } else if (this.activeLayer === 'objects') {
       this.tiles[y][x] = {
         ...this.tiles[y][x],
-        obstacle: 'none', walkable: true, blocksRanged: false,
+        obstacle: '', walkable: true, blocksRanged: false,
         type: 'grass',
       };
       this.npcSpawns = this.npcSpawns.filter(s => !(s.x === x && s.y === y));
@@ -276,9 +276,9 @@ export class EditorState {
     }
 
     if (obj === 'water') {
-      this.tiles[y][x] = { ...this.tiles[y][x], type: 'water', walkable: false, obstacle: 'none', blocksRanged: false, groundColor: '#1878e5' };
+      this.tiles[y][x] = { ...this.tiles[y][x], type: 'water', walkable: false, obstacle: '', blocksRanged: false, groundColor: '#1878e5' };
     } else if (obj === 'wall') {
-      this.tiles[y][x] = { ...this.tiles[y][x], type: 'wall', walkable: false, obstacle: 'none', blocksRanged: true };
+      this.tiles[y][x] = { ...this.tiles[y][x], type: 'wall', walkable: false, obstacle: '', blocksRanged: true };
     } else {
       this.tiles[y][x] = {
         ...this.tiles[y][x],

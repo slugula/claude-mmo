@@ -351,11 +351,11 @@ bool App::init() {
           if (ey >= 0 && ey < static_cast<int>(map_.tiles.size()) &&
               ex >= 0 && ex < static_cast<int>(map_.tiles[ey].size())) {
             const auto obs = map_.tiles[ey][ex].obstacle;
-            if      (obs == shared::ObstacleType::tree)
+            if      (obs == "tree")
               cm.entries.push_back({ "Chop down", "Tree" });
-            else if (obs == shared::ObstacleType::rock)
+            else if (obs == "rock")
               cm.entries.push_back({ "Mine", "Rock" });
-            else if (obs == shared::ObstacleType::chest)
+            else if (obs == "chest")
               cm.entries.push_back({ "Bank", "Chest" });
           }
         } else if (hoveredEntity_.kind == HoveredEntity::Kind::Npc) {
@@ -761,13 +761,13 @@ void App::renderFrame() {
       for (int oty = 0; oty < terrainTileH_; ++oty) {
         for (int otx = 0; otx < terrainTileW_; ++otx) {
           const auto obs = map_.tiles[oty][otx].obstacle;
-          if (obs == shared::ObstacleType::none) continue;
+          if (obs == "") continue;
 
           const float baseY = tileWorldY(map_, otx, oty);
 
           // Model-space AABB (centred on tile, base at Y=0).
           glm::vec3 lMin, lMax;
-          if (obs == shared::ObstacleType::tree) {
+          if (obs == "tree") {
             if (obstacles_.treeModelLoaded()) {
               lMin = obstacles_.treeGltfAABBMin();
               lMax = obstacles_.treeGltfAABBMax();
@@ -775,7 +775,7 @@ void App::renderFrame() {
               lMin = glm::vec3(-0.45f,  0.00f, -0.45f);
               lMax = glm::vec3( 0.45f,  1.60f,  0.45f);
             }
-          } else if (obs == shared::ObstacleType::rock) {
+          } else if (obs == "rock") {
             lMin = glm::vec3(-0.28f,  0.00f, -0.24f);
             lMax = glm::vec3( 0.28f,  0.36f,  0.24f);
           } else {  // chest
@@ -1254,7 +1254,7 @@ void App::renderFrame() {
 
     for (int fty = 0; fty < fsH; ++fty) {
       for (int ftx = 0; ftx < fsW; ++ftx) {
-        if (map_.tiles[fty][ftx].obstacle != shared::ObstacleType::fishing_spot) continue;
+        if (map_.tiles[fty][ftx].obstacle != "fishing_spot") continue;
         // Average the 4 corner heights to get tile-centre Y (same as ObstacleSystem).
         float cy = 0.0f;
         if (fsVhOk) {
@@ -1453,9 +1453,9 @@ void App::renderFrame() {
           if (ey >= 0 && ey < static_cast<int>(map_.tiles.size()) &&
               ex >= 0 && ex < static_cast<int>(map_.tiles[ey].size())) {
             const auto obs = map_.tiles[ey][ex].obstacle;
-            if      (obs == shared::ObstacleType::tree)  { ctxVerb = "Chop"; ctxSubject = "Tree"; }
-            else if (obs == shared::ObstacleType::rock)  { ctxVerb = "Mine"; ctxSubject = "Rock"; }
-            else if (obs == shared::ObstacleType::chest) { ctxVerb = "Bank"; ctxSubject = "Chest"; }
+            if      (obs == "tree")  { ctxVerb = "Chop"; ctxSubject = "Tree"; }
+            else if (obs == "rock")  { ctxVerb = "Mine"; ctxSubject = "Rock"; }
+            else if (obs == "chest") { ctxVerb = "Bank"; ctxSubject = "Chest"; }
           }
           break;
         }
@@ -1549,11 +1549,11 @@ void App::renderFrame() {
             if (ey >= 0 && ey < static_cast<int>(map_.tiles.size()) &&
                 ex >= 0 && ex < static_cast<int>(map_.tiles[ey].size())) {
               const auto obs = map_.tiles[ey][ex].obstacle;
-              if      (obs == shared::ObstacleType::tree)
+              if      (obs == "tree")
                 ui::showTooltip({ TL{ {"Chop ", TC::White()}, {"Tree",  TC::Orange()} } });
-              else if (obs == shared::ObstacleType::rock)
+              else if (obs == "rock")
                 ui::showTooltip({ TL{ {"Mine ", TC::White()}, {"Rock",  TC::Orange()} } });
-              else if (obs == shared::ObstacleType::chest)
+              else if (obs == "chest")
                 ui::showTooltip({ TL{ {"Bank ", TC::White()}, {"Chest", TC::Orange()} } });
             }
             break;
@@ -1685,15 +1685,15 @@ void App::renderFrame() {
           if (ty >= 0 && ty < static_cast<int>(map_.tiles.size()) &&
               tx >= 0 && tx < static_cast<int>(map_.tiles[ty].size())) {
             const auto obs = map_.tiles[ty][tx].obstacle;
-            if (obs == shared::ObstacleType::tree) {
+            if (obs == "tree") {
               network_.sendChopTree(tx, ty);
               oneShotClip_.clear();
               dispatched = true; clickFeedbackColor_ = 1;
-            } else if (obs == shared::ObstacleType::rock) {
+            } else if (obs == "rock") {
               network_.sendMineRock(tx, ty);
               oneShotClip_.clear();
               dispatched = true; clickFeedbackColor_ = 1;
-            } else if (obs == shared::ObstacleType::chest) {
+            } else if (obs == "chest") {
               network_.sendOpenBank();
               bankOpen_ = true;
               dispatched = true; clickFeedbackColor_ = 1;
@@ -1841,13 +1841,13 @@ void App::renderFrame() {
         if (ctxMenuTileY_ >= 0 && ctxMenuTileY_ < static_cast<int>(map_.tiles.size()) &&
             ctxMenuTileX_ >= 0 && ctxMenuTileX_ < static_cast<int>(map_.tiles[ctxMenuTileY_].size())) {
           const auto obs = map_.tiles[ctxMenuTileY_][ctxMenuTileX_].obstacle;
-          if (obs == shared::ObstacleType::tree) {
+          if (obs == "tree") {
             chatLog_.appendSystem("A sturdy tree.");
             ui::chatAppendSystem("A sturdy tree.");
-          } else if (obs == shared::ObstacleType::rock) {
+          } else if (obs == "rock") {
             chatLog_.appendSystem("A rocky outcrop.");
             ui::chatAppendSystem("A rocky outcrop.");
-          } else if (obs == shared::ObstacleType::chest) {
+          } else if (obs == "chest") {
             chatLog_.appendSystem("A secure bank chest.");
             ui::chatAppendSystem("A secure bank chest.");
           }
@@ -2034,9 +2034,9 @@ void App::renderFrame() {
           ty >= 0 && ty < static_cast<int>(map_.tiles.size()) &&
           tx >= 0 && tx < static_cast<int>(map_.tiles[ty].size())) {
         const auto obs = map_.tiles[ty][tx].obstacle;
-        if      (obs == shared::ObstacleType::tree)  tooltipName = "Tree";
-        else if (obs == shared::ObstacleType::rock)  tooltipName = "Rock";
-        else if (obs == shared::ObstacleType::chest) tooltipName = "Chest";
+        if      (obs == "tree")  tooltipName = "Tree";
+        else if (obs == "rock")  tooltipName = "Rock";
+        else if (obs == "chest") tooltipName = "Chest";
       }
       if (!tooltipName) {
         for (const auto& di : droppedItems_) {
@@ -2303,37 +2303,32 @@ void App::drawWorldContextMenu() {
   ImGui::Separator();
 
   // ---- Tile obstacle ------------------------------------------------------
-  shared::ObstacleType obstacle = shared::ObstacleType::none;
-  if (ctxMenuTileY_ >= 0 && ctxMenuTileY_ < static_cast<int>(map_.tiles.size()) &&
-      ctxMenuTileX_ >= 0 && ctxMenuTileX_ < static_cast<int>(map_.tiles[ctxMenuTileY_].size())) {
-    obstacle = map_.tiles[ctxMenuTileY_][ctxMenuTileX_].obstacle;
-  }
-  switch (obstacle) {
-    case shared::ObstacleType::tree:
-      if (ImGui::Selectable("Chop down  Tree")) {
-        network_.sendChopTree(ctxMenuTileX_, ctxMenuTileY_);
-        oneShotClip_.clear();
-      }
-      if (ImGui::Selectable("Examine  Tree"))
-        chatLog_.appendSystem("A sturdy tree.");
-      break;
-    case shared::ObstacleType::rock:
-      if (ImGui::Selectable("Mine  Rock")) {
-        network_.sendMineRock(ctxMenuTileX_, ctxMenuTileY_);
-        oneShotClip_.clear();
-      }
-      if (ImGui::Selectable("Examine  Rock"))
-        chatLog_.appendSystem("A rocky outcrop.");
-      break;
-    case shared::ObstacleType::chest:
-      if (ImGui::Selectable("Bank  Chest")) {
-        network_.sendOpenBank();
-        bankOpen_ = true;
-      }
-      if (ImGui::Selectable("Examine  Chest"))
-        chatLog_.appendSystem("A secure bank chest.");
-      break;
-    default: break;
+  const std::string obstacle =
+    (ctxMenuTileY_ >= 0 && ctxMenuTileY_ < static_cast<int>(map_.tiles.size()) &&
+     ctxMenuTileX_ >= 0 && ctxMenuTileX_ < static_cast<int>(map_.tiles[ctxMenuTileY_].size()))
+    ? map_.tiles[ctxMenuTileY_][ctxMenuTileX_].obstacle : "";
+
+  if (obstacle == "tree") {
+    if (ImGui::Selectable("Chop down  Tree")) {
+      network_.sendChopTree(ctxMenuTileX_, ctxMenuTileY_);
+      oneShotClip_.clear();
+    }
+    if (ImGui::Selectable("Examine  Tree"))
+      chatLog_.appendSystem("A sturdy tree.");
+  } else if (obstacle == "rock") {
+    if (ImGui::Selectable("Mine  Rock")) {
+      network_.sendMineRock(ctxMenuTileX_, ctxMenuTileY_);
+      oneShotClip_.clear();
+    }
+    if (ImGui::Selectable("Examine  Rock"))
+      chatLog_.appendSystem("A rocky outcrop.");
+  } else if (obstacle == "chest") {
+    if (ImGui::Selectable("Bank  Chest")) {
+      network_.sendOpenBank();
+      bankOpen_ = true;
+    }
+    if (ImGui::Selectable("Examine  Chest"))
+      chatLog_.appendSystem("A secure bank chest.");
   }
 
   // ---- NPCs at this tile --------------------------------------------------
@@ -2412,21 +2407,14 @@ void App::exportWorldMap() {
         case shared::TileType::door:  typeStr = "door";  break;
         default: break;
       }
-      const char* obsStr = "none";
-      switch (t.obstacle) {
-        case shared::ObstacleType::tree:         obsStr = "tree";         break;
-        case shared::ObstacleType::rock:         obsStr = "rock";         break;
-        case shared::ObstacleType::chest:        obsStr = "chest";        break;
-        case shared::ObstacleType::fishing_spot: obsStr = "fishing_spot"; break;
-        default: break;
-      }
+      // obstacle is now a plain string — write it directly
       std::fprintf(f,
           "{\"x\":%d,\"y\":%d,\"walkable\":%s,\"type\":\"%s\","
           "\"obstacle\":\"%s\",\"blocksRanged\":%s,"
           "\"groundColor\":\"%s\",\"height\":%.3f}",
           t.x, t.y,
           t.walkable ? "true" : "false",
-          typeStr, obsStr,
+          typeStr, t.obstacle.c_str(),
           t.blocksRanged ? "true" : "false",
           t.groundColor.c_str(),
           t.height);

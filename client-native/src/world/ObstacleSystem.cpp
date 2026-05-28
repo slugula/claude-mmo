@@ -305,17 +305,17 @@ void ObstacleSystem::rebuildFromMap(const shared::WorldMapFile& map) {
   for (int ty = 0; ty < H; ++ty) {
     for (int tx = 0; tx < W; ++tx) {
       const auto& tile = map.tiles[ty][tx];
-      if (tile.obstacle == shared::ObstacleType::none) continue;
+      if (tile.obstacle.empty()) continue;
 
       const float y = tileCenterY(vh, W, H, tx, ty);
 
-      if (tile.obstacle == shared::ObstacleType::tree) {
+      if (tile.obstacle == "tree") {
         trees.push_back({ static_cast<float>(tx), y,
                           static_cast<float>(ty), hashRotation(tx, ty) });
-      } else if (tile.obstacle == shared::ObstacleType::rock) {
+      } else if (tile.obstacle == "rock") {
         rocks.push_back({ static_cast<float>(tx), y,
                           static_cast<float>(ty), hashRotation(tx, ty) });
-      } else if (tile.obstacle == shared::ObstacleType::fence) {
+      } else if (tile.obstacle == "fence") {
         fences.push_back({ static_cast<float>(tx), y,
                            static_cast<float>(ty), hashRotation(tx, ty) });
       }
@@ -471,16 +471,15 @@ bool ObstacleSystem::renderOutlineAt(render::Shader& outlineShader,
                                      const shared::WorldMapFile& map,
                                      int tileX, int tileY) {
   if (tileY < 0 || tileY >= map.height || tileX < 0 || tileX >= map.width) return false;
-  const auto obs = map.tiles[tileY][tileX].obstacle;
-  if (obs == shared::ObstacleType::none ||
-      obs == shared::ObstacleType::fishing_spot) return false;
+  const auto& obs = map.tiles[tileY][tileX].obstacle;
+  if (obs.empty() || obs == "fishing_spot") return false;
 
   const auto& vh = map.vertexHeights;
   if (static_cast<int>(vh.size()) != (map.width + 1) * (map.height + 1)) return false;
 
   const float cy = tileCenterY(vh, map.width, map.height, tileX, tileY);
-  const bool  isTree  = (obs == shared::ObstacleType::tree);
-  const bool  isFence = (obs == shared::ObstacleType::fence);
+  const bool  isTree  = (obs == "tree");
+  const bool  isFence = (obs == "fence");
 
   // Upload the single-instance data into the appropriate outline VBO.
   // Instance position must match what rebuildFromMap uploaded:
@@ -571,16 +570,15 @@ bool ObstacleSystem::renderGeometryAt(render::Shader& /*maskShader*/,
                                       const shared::WorldMapFile& map,
                                       int tileX, int tileY) {
   if (tileY < 0 || tileY >= map.height || tileX < 0 || tileX >= map.width) return false;
-  const auto obs = map.tiles[tileY][tileX].obstacle;
-  if (obs == shared::ObstacleType::none ||
-      obs == shared::ObstacleType::fishing_spot) return false;
+  const auto& obs = map.tiles[tileY][tileX].obstacle;
+  if (obs.empty() || obs == "fishing_spot") return false;
 
   const auto& vh = map.vertexHeights;
   if (static_cast<int>(vh.size()) != (map.width + 1) * (map.height + 1)) return false;
 
   const float cy      = tileCenterY(vh, map.width, map.height, tileX, tileY);
-  const bool  isTree  = (obs == shared::ObstacleType::tree);
-  const bool  isFence = (obs == shared::ObstacleType::fence);
+  const bool  isTree  = (obs == "tree");
+  const bool  isFence = (obs == "fence");
 
   // Upload the single instance (same position as renderOutlineAt).
   const Instance inst{ static_cast<float>(tileX), cy,

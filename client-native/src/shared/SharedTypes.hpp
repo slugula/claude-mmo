@@ -30,10 +30,6 @@ enum class TileType {
   grass, dirt, stone, water, cliff, wall, door,
 };
 
-enum class ObstacleType {
-  tree, rock, chest, fishing_spot, fence, none,
-};
-
 // ---- TileData ------------------------------------------------------------
 
 struct TileData {
@@ -41,7 +37,7 @@ struct TileData {
   int          y            = 0;
   bool         walkable     = true;
   TileType     type         = TileType::grass;
-  ObstacleType obstacle     = ObstacleType::none;
+  std::string  obstacle     = "";   // empty = none; otherwise a DB object ID e.g. "tree"
   bool         blocksRanged = false;
   std::string  groundColor  = "#7ec850";
   float        height       = 0.0f;

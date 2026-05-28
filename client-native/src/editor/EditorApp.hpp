@@ -109,7 +109,7 @@ private:
 
   // ---- Utilities
   float tileWorldY(int tx, int ty) const;
-  void  setObstacleAtTile(int tx, int ty, shared::ObstacleType obs);
+  void  setObstacleAtTile(int tx, int ty, const std::string& obs);
 
   // ---- Water
   // Deform vertex heights in a ±2 tile radius around the placed water tile so
@@ -179,7 +179,7 @@ private:
   bool          middleClickIn3D_  = false;   // middle-click started in 3D viewport (locks orbit there)
 
   // Sub-selection within tools
-  shared::ObstacleType  obstacleSubtype_ = shared::ObstacleType::tree;
+  std::string           obstacleSubtype_ = "tree";  // DB object ID of selected obstacle type
   std::string           npcSubtype_      = "chicken";
 
   // Active terrain colour (PaintTerrain tool)
