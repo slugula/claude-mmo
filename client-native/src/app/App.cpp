@@ -1258,9 +1258,12 @@ void App::renderFrame() {
   if (!map_.waterTiles.empty() && waterRenderer_.valid()) {
     glEnable(GL_STENCIL_TEST);
     glStencilFunc(GL_EQUAL, 1, 0xFF);
-    glStencilMask(0x00);    // don't modify stencil
-    glEnable(GL_DEPTH_TEST);
-    glDepthMask(GL_FALSE);  // don't write depth
+    glStencilMask(0x00);     // don't modify stencil
+    glDisable(GL_DEPTH_TEST); // submerged geometry is at terrain-floor Y = same
+                              // depth as depth buffer → GL_LESS would fail.
+                              // Stencil (written by water's depth test) handles
+                              // foreground occlusion correctly without this.
+    glDepthMask(GL_FALSE);   // don't write depth
 
     // Submerged static obstacles (rocks, fences, custom objects on water tiles)
     obstacleShader_.use();
@@ -1325,8 +1328,9 @@ void App::renderFrame() {
       }
     }
 
+    glEnable(GL_DEPTH_TEST);  // restore depth test for subsequent passes
     glDepthMask(GL_TRUE);
-    glStencilMask(0xFF);   // restore so glClear(GL_STENCIL_BUFFER_BIT) works next frame
+    glStencilMask(0xFF);      // restore so glClear(GL_STENCIL_BUFFER_BIT) works next frame
     glDisable(GL_STENCIL_TEST);
   }
 

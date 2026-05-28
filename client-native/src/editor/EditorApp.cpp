@@ -765,7 +765,10 @@ void EditorApp::render3DViewport(float dt) {
     glEnable(GL_STENCIL_TEST);
     glStencilFunc(GL_EQUAL, 1, 0xFF);
     glStencilMask(0x00);
-    glEnable(GL_DEPTH_TEST);
+    // Depth test OFF: submerged geometry sits at terrain-floor Y, which matches
+    // what's already in the depth buffer → GL_LESS would fail.  The stencil mask
+    // (written by water's own depth test) already handles foreground occlusion.
+    glDisable(GL_DEPTH_TEST);
     glDepthMask(GL_FALSE);
 
     obstacleShader_.use();
@@ -825,8 +828,9 @@ void EditorApp::render3DViewport(float dt) {
       }
     }
 
+    glEnable(GL_DEPTH_TEST);  // restore depth test for subsequent passes
     glDepthMask(GL_TRUE);
-    glStencilMask(0xFF);   // restore so glClear(GL_STENCIL_BUFFER_BIT) works next frame
+    glStencilMask(0xFF);      // restore so glClear(GL_STENCIL_BUFFER_BIT) works next frame
     glDisable(GL_STENCIL_TEST);
   }
 
