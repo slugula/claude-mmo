@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <unordered_set>
 
 namespace world {
 
@@ -290,12 +291,20 @@ void ObstacleSystem::initGL() {
 }
 
 void ObstacleSystem::rebuildFromMap(const shared::WorldMapFile& map) {
-  std::vector<Instance> trees;
-  std::vector<Instance> rocks;
-  std::vector<Instance> fences;
-  trees.reserve(256);
-  rocks.reserve(256);
-  fences.reserve(64);
+  // Build a fast water-tile lookup set.
+  std::unordered_set<int> waterSet;
+  waterSet.reserve(map.waterTiles.size());
+  for (const auto& wt : map.waterTiles)
+    waterSet.insert(wt.tileY * map.width + wt.tileX);
+  auto isWater = [&](int tx, int ty) {
+    return waterSet.count(ty * map.width + tx) > 0;
+  };
+
+  // Separate above-water and below-water (submerged) instance lists.
+  // VBO layout: [above-water instances | submerged instances]
+  std::vector<Instance> treesAbove,  treesSub;
+  std::vector<Instance> rocksAbove,  rocksSub;
+  std::vector<Instance> fencesAbove, fencesSub;
 
   const int W = map.width;
   const int H = map.height;
@@ -308,31 +317,44 @@ void ObstacleSystem::rebuildFromMap(const shared::WorldMapFile& map) {
       if (tile.obstacle.empty()) continue;
 
       const float y = tileCenterY(vh, W, H, tx, ty);
+      const bool  submerged = isWater(tx, ty);
+      const Instance inst{ static_cast<float>(tx), y,
+                           static_cast<float>(ty), hashRotation(tx, ty) };
 
       if (tile.obstacle == "tree") {
-        trees.push_back({ static_cast<float>(tx), y,
-                          static_cast<float>(ty), hashRotation(tx, ty) });
+        (submerged ? treesSub  : treesAbove).push_back(inst);
       } else if (tile.obstacle == "rock") {
-        rocks.push_back({ static_cast<float>(tx), y,
-                          static_cast<float>(ty), hashRotation(tx, ty) });
+        (submerged ? rocksSub  : rocksAbove).push_back(inst);
       } else if (tile.obstacle == "fence") {
-        fences.push_back({ static_cast<float>(tx), y,
-                           static_cast<float>(ty), hashRotation(tx, ty) });
+        (submerged ? fencesSub : fencesAbove).push_back(inst);
       }
     }
   }
 
+  // Concatenate: above first, then submerged.  Store the split index.
+  auto concat = [](std::vector<Instance>& dst,
+                   std::vector<Instance>& above,
+                   std::vector<Instance>& sub,
+                   std::size_t& aboveCount) {
+    aboveCount = above.size();
+    dst = std::move(above);
+    dst.insert(dst.end(), sub.begin(), sub.end());
+  };
+  std::vector<Instance> trees, rocks, fences;
+  concat(trees,  treesAbove,  treesSub,  treeAboveCount_);
+  concat(rocks,  rocksAbove,  rocksSub,  rockAboveCount_);
+  concat(fences, fencesAbove, fencesSub, fenceAboveCount_);
+
   // Clamp to the buffer capacity reserved in initGL.
-  if (trees.size()  > 4096) trees.resize(4096);
-  if (rocks.size()  > 4096) rocks.resize(4096);
-  if (fences.size() > 4096) fences.resize(4096);
+  if (trees.size()  > 4096) { trees.resize(4096);  treeAboveCount_  = std::min(treeAboveCount_,  trees.size());  }
+  if (rocks.size()  > 4096) { rocks.resize(4096);  rockAboveCount_  = std::min(rockAboveCount_,  rocks.size());  }
+  if (fences.size() > 4096) { fences.resize(4096); fenceAboveCount_ = std::min(fenceAboveCount_, fences.size()); }
 
   const auto treeBytesz  = static_cast<GLsizeiptr>(trees.size()  * sizeof(Instance));
   const auto fenceBytesz = static_cast<GLsizeiptr>(fences.size() * sizeof(Instance));
 
   if (treeBytesz > 0)
     glNamedBufferSubData(treeInstanceVbo_, 0, treeBytesz, trees.data());
-  // The glTF VAOs read from treeGltfInstanceVbo_; keep it in sync.
   if (treeModelLoaded_ && treeGltfInstanceVbo_ && treeBytesz > 0)
     glNamedBufferSubData(treeGltfInstanceVbo_, 0, treeBytesz, trees.data());
   if (!rocks.empty())
@@ -345,7 +367,6 @@ void ObstacleSystem::rebuildFromMap(const shared::WorldMapFile& map) {
   treeCount_  = trees.size();
   rockCount_  = rocks.size();
   fenceCount_ = fences.size();
-
 }
 
 // ---- Data-driven definitions cache -----------------------------------------
@@ -389,45 +410,49 @@ std::pair<int,int> ObstacleSystem::footprint(const std::string& id) const {
   return d ? std::make_pair(d->sizeX, d->sizeY) : std::make_pair(1, 1);
 }
 
-void ObstacleSystem::render(render::Shader& obstacleShader) {
-  // The caller has already set u_viewProj, u_lightDir, and the palette
-  // uniforms. We just bind each VAO, set u_color, and issue an instanced draw.
+void ObstacleSystem::render(render::Shader& obstacleShader, bool submergedPass) {
+  // The caller has already set u_viewProj, u_lightDir, and the palette uniforms.
+  // submergedPass=false: draw instances [0, aboveCount) — dry obstacles.
+  // submergedPass=true : draw instances [aboveCount, total) — submerged obstacles.
+  // glDrawElementsInstancedBaseInstance selects the correct slice from each VBO.
+
+  auto drawSlice = [&](const Kit& kit, std::size_t total, std::size_t above) {
+    if (total == 0) return;
+    const GLsizei first = submergedPass ? static_cast<GLsizei>(above)
+                                        : 0;
+    const GLsizei count = submergedPass ? static_cast<GLsizei>(total - above)
+                                        : static_cast<GLsizei>(above);
+    if (count <= 0) return;
+    glBindVertexArray(kit.vao);
+    glDrawElementsInstancedBaseInstance(GL_TRIANGLES, kit.indexCount,
+                                        GL_UNSIGNED_INT, nullptr,
+                                        count, static_cast<GLuint>(first));
+  };
+
   if (treeCount_ > 0) {
     if (treeModelLoaded_) {
       if (treeTrunkGltf_.vao) {
         obstacleShader.setVec3("u_color", treeTrunkGltf_.color);
-        glBindVertexArray(treeTrunkGltf_.vao);
-        glDrawElementsInstanced(GL_TRIANGLES, treeTrunkGltf_.indexCount,
-                                GL_UNSIGNED_INT, nullptr, static_cast<GLsizei>(treeCount_));
+        drawSlice(treeTrunkGltf_, treeCount_, treeAboveCount_);
       }
       if (treeCanopyGltf_.vao) {
         obstacleShader.setVec3("u_color", treeCanopyGltf_.color);
-        glBindVertexArray(treeCanopyGltf_.vao);
-        glDrawElementsInstanced(GL_TRIANGLES, treeCanopyGltf_.indexCount,
-                                GL_UNSIGNED_INT, nullptr, static_cast<GLsizei>(treeCount_));
+        drawSlice(treeCanopyGltf_, treeCount_, treeAboveCount_);
       }
     } else {
       obstacleShader.setVec3("u_color", trunk_.color);
-      glBindVertexArray(trunk_.vao);
-      glDrawElementsInstanced(GL_TRIANGLES, trunk_.indexCount, GL_UNSIGNED_INT,
-                              nullptr, static_cast<GLsizei>(treeCount_));
+      drawSlice(trunk_,  treeCount_, treeAboveCount_);
       obstacleShader.setVec3("u_color", canopy_.color);
-      glBindVertexArray(canopy_.vao);
-      glDrawElementsInstanced(GL_TRIANGLES, canopy_.indexCount, GL_UNSIGNED_INT,
-                              nullptr, static_cast<GLsizei>(treeCount_));
+      drawSlice(canopy_, treeCount_, treeAboveCount_);
     }
   }
   if (rockCount_ > 0) {
     obstacleShader.setVec3("u_color", rock_.color);
-    glBindVertexArray(rock_.vao);
-    glDrawElementsInstanced(GL_TRIANGLES, rock_.indexCount, GL_UNSIGNED_INT,
-                            nullptr, static_cast<GLsizei>(rockCount_));
+    drawSlice(rock_, rockCount_, rockAboveCount_);
   }
   if (fenceCount_ > 0) {
     obstacleShader.setVec3("u_color", fence_.color);
-    glBindVertexArray(fence_.vao);
-    glDrawElementsInstanced(GL_TRIANGLES, fence_.indexCount, GL_UNSIGNED_INT,
-                            nullptr, static_cast<GLsizei>(fenceCount_));
+    drawSlice(fence_, fenceCount_, fenceAboveCount_);
   }
   glBindVertexArray(0);
 }

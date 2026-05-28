@@ -81,10 +81,11 @@ public:
   // Returns {1,1} for unknown ids.
   std::pair<int,int> footprint(const std::string& id) const;
 
-  // Issue three instanced draws (trunks, canopies, rocks). The shader is
-  // expected to have all uniforms except u_color set by the caller; this
-  // method sets u_color per draw to match the obstacle kit being drawn.
-  void render(render::Shader& obstacleShader);
+  // Issue instanced draws for obstacles.
+  // submergedPass=false (default): draws only obstacles on non-water tiles.
+  // submergedPass=true: draws only obstacles on water tiles (post-water pass).
+  // The shader must have all uniforms except u_color set by the caller.
+  void render(render::Shader& obstacleShader, bool submergedPass = false);
 
   // Depth-only pass for shadow casting. The supplied shader is expected to
   // have its u_lightViewProj already bound; we just issue the instanced
@@ -111,6 +112,12 @@ public:
   std::size_t treeCount()  const { return treeCount_;  }
   std::size_t rockCount()  const { return rockCount_;  }
   std::size_t fenceCount() const { return fenceCount_; }
+
+  // Above-water counts (first N instances in each VBO are above-water).
+  // Instances [aboveFoo, totalFoo) are submerged (on water tiles).
+  std::size_t treeAboveCount()  const { return treeAboveCount_;  }
+  std::size_t rockAboveCount()  const { return rockAboveCount_;  }
+  std::size_t fenceAboveCount() const { return fenceAboveCount_; }
 
   // Axis-aligned bounding box of the gltf tree model in world space (after
   // applying kScaleXZ/kScaleY). Valid only when treeModelLoaded() is true.
@@ -164,9 +171,13 @@ private:
   glm::vec3 treeGltfAABBMin_   = glm::vec3(-0.45f, 0.0f, -0.45f);  // fallback = procedural bounds
   glm::vec3 treeGltfAABBMax_   = glm::vec3( 0.45f, 1.6f,  0.45f);
 
-  std::size_t treeCount_  = 0;
-  std::size_t rockCount_  = 0;
-  std::size_t fenceCount_ = 0;
+  std::size_t treeCount_       = 0;
+  std::size_t rockCount_       = 0;
+  std::size_t fenceCount_      = 0;
+  // Split index: instances [0, above) are dry; [above, total) are submerged.
+  std::size_t treeAboveCount_  = 0;
+  std::size_t rockAboveCount_  = 0;
+  std::size_t fenceAboveCount_ = 0;
 
   // Object definitions cache (keyed by id string)
   std::unordered_map<std::string, ObjectDefCache> defs_;
