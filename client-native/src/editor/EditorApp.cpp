@@ -133,12 +133,37 @@ void EditorApp::dbLoadPreviewModel(const std::string& modelPath) {
     if (p.ebo)    glDeleteBuffers(1, &p.ebo);
   }
   dbPreviewPrims_.clear();
+  dbPreviewHasAnim_  = false;
+  dbPreviewClips_.clear();
   dbPreviewLoadedPath_ = modelPath;
   dbPreviewCenter_     = glm::vec3(0.f);
   dbPreviewRadius_     = 1.0f;
 
   if (modelPath.empty()) return;
 
+  // ---- Try SkinnedMesh first (handles animated glTF models) ---------------
+  {
+    std::string resolvedPath;
+    for (const char* prefix : { "", "assets/" }) {
+      auto candidate = resolveFromExe((std::string(prefix) + modelPath).c_str());
+      if (std::filesystem::exists(candidate)) { resolvedPath = candidate.string(); break; }
+    }
+    if (!resolvedPath.empty() && dbPreviewSkinned_.load(resolvedPath)) {
+      if (dbPreviewSkinned_.animationCount() > 0) {
+        dbPreviewHasAnim_ = true;
+        for (int i = 0; i < dbPreviewSkinned_.animationCount(); ++i) {
+          const std::string* n = dbPreviewSkinned_.animationNameAt(i);
+          dbPreviewClips_.push_back(n ? *n : "clip_" + std::to_string(i));
+        }
+        dbPreviewSkinned_.setClip("");  // default: first clip
+        // Estimate radius from bounding box
+        dbPreviewRadius_ = 1.5f;  // conservative; could compute AABB from joints
+        return;  // animated preview ready — skip static path
+      }
+    }
+  }
+
+  // ---- Fall back to static primitive preview --------------------------------
   // Try the path as-is (relative to exe), then with assets/ prefix
   std::optional<world::GltfModel> model;
   for (const char* prefix : { "", "assets/" }) {
@@ -213,7 +238,10 @@ void EditorApp::dbRenderPreview(float dt) {
   glClearColor(0.10f, 0.12f, 0.15f, 1.0f);
   glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-  if (!dbPreviewPrims_.empty() && dbPreviewShader_.isValid()) {
+  // Common camera setup
+  const bool hasContent = dbPreviewHasAnim_ ? dbPreviewSkinned_.isLoaded()
+                                            : !dbPreviewPrims_.empty();
+  if (hasContent) {
     glEnable(GL_DEPTH_TEST);
 
     // Orbit camera: fixed 20° elevation, auto-rotating azimuth
@@ -228,16 +256,39 @@ void EditorApp::dbRenderPreview(float dt) {
                                            camDist * 0.01f, camDist * 4.0f);
     glm::mat4 viewProj = proj * view;
 
-    dbPreviewShader_.use();
-    dbPreviewShader_.setMat4("u_model",    glm::mat4(1.0f));
-    dbPreviewShader_.setMat4("u_viewProj", viewProj);
-
-    for (const auto& prim : dbPreviewPrims_) {
-      dbPreviewShader_.setVec4("u_color", prim.color);
-      glBindVertexArray(prim.vao);
-      glDrawElements(GL_TRIANGLES, prim.indexCount, GL_UNSIGNED_INT, nullptr);
+    if (dbPreviewHasAnim_ && skinnedShader_.isValid()) {
+      // Animated preview via SkinnedMesh
+      dbPreviewSkinned_.update(dt);
+      skinnedShader_.use();
+      skinnedShader_.setMat4("u_viewProj",      viewProj);
+      skinnedShader_.setMat4("u_lightViewProj", glm::mat4(1.f));
+      skinnedShader_.setVec3("u_lightDir",      glm::vec3(0.f, -1.f, 0.f));
+      skinnedShader_.setVec3("u_paletteLevels", glm::vec3(0.f));
+      skinnedShader_.setFloat("u_paletteEnabled",  0.f);
+      skinnedShader_.setFloat("u_ambient",         0.35f);
+      skinnedShader_.setFloat("u_diffuse",         0.80f);
+      skinnedShader_.setFloat("u_lightingEnabled", 1.f);
+      skinnedShader_.setInt  ("u_shadowMap",       1);
+      skinnedShader_.setFloat("u_shadowsEnabled",  0.f);
+      skinnedShader_.setFloat("u_shadowDarkness",  0.f);
+      skinnedShader_.setFloat("u_shadowBias",      0.f);
+      skinnedShader_.setFloat("u_fogEnabled",      0.f);
+      skinnedShader_.setVec3 ("u_fogColor",        glm::vec3(0.f));
+      skinnedShader_.setFloat("u_fogDensity",      0.f);
+      skinnedShader_.setFloat("u_fogStart",        0.f);
+      dbPreviewSkinned_.render(skinnedShader_, glm::mat4(1.f), /*useMaterialColors=*/true);
+    } else if (dbPreviewShader_.isValid()) {
+      // Static primitive preview
+      dbPreviewShader_.use();
+      dbPreviewShader_.setMat4("u_model",    glm::mat4(1.0f));
+      dbPreviewShader_.setMat4("u_viewProj", viewProj);
+      for (const auto& prim : dbPreviewPrims_) {
+        dbPreviewShader_.setVec4("u_color", prim.color);
+        glBindVertexArray(prim.vao);
+        glDrawElements(GL_TRIANGLES, prim.indexCount, GL_UNSIGNED_INT, nullptr);
+      }
+      glBindVertexArray(0);
     }
-    glBindVertexArray(0);
   }
 
   // Restore FBO state for the rest of the frame
@@ -2238,6 +2289,11 @@ void EditorApp::dbLoadAll() {
       c.dropItemId   = obj.dropItemId;
       c.dropQuantity = obj.dropQuantity;
       c.respawnTicks = obj.respawnTicks;
+      c.defaultClip  = obj.defaultClip;
+      c.looping      = obj.looping;
+      c.rotationX    = obj.rotationX;
+      c.rotationY    = obj.rotationY;
+      c.rotationZ    = obj.rotationZ;
       caches.push_back(std::move(c));
     }
     obstacles_.rebuildFromDefinitions(caches);
@@ -2569,6 +2625,54 @@ void EditorApp::dbDrawObjectsTab() {
       }
     }
     if (d.modelPath != dbPreviewLoadedPath_) dbLoadPreviewModel(d.modelPath);
+
+    // ---- Animation section (only shown when the loaded model has clips) ----
+    if (dbPreviewHasAnim_ && !dbPreviewClips_.empty()) {
+      ImGui::Separator();
+      ImGui::TextColored({0.4f, 0.8f, 1.0f, 1.0f}, "Animation");
+      // Clip selector
+      const char* currentClip = d.defaultClip.empty() ? "(first clip)" : d.defaultClip.c_str();
+      if (ImGui::BeginCombo("Clip##obj_anim", currentClip)) {
+        if (ImGui::Selectable("(first clip)", d.defaultClip.empty())) {
+          d.defaultClip = "";
+          dbPreviewSkinned_.setClip("");
+        }
+        for (const auto& clip : dbPreviewClips_) {
+          bool sel = (d.defaultClip == clip);
+          if (ImGui::Selectable(clip.c_str(), sel)) {
+            d.defaultClip = clip;
+            dbPreviewSkinned_.setClip(clip);
+          }
+          if (sel) ImGui::SetItemDefaultFocus();
+        }
+        ImGui::EndCombo();
+      }
+      ImGui::Checkbox("Loop##obj_anim", &d.looping);
+    }
+
+    // ---- Orientation section (always shown when a model is loaded) ---------
+    if (!d.modelPath.empty()) {
+      ImGui::Separator();
+      ImGui::TextColored({0.9f, 0.7f, 0.3f, 1.0f}, "Orientation");
+      ImGui::TextDisabled("Rotation snaps to 90 degree increments");
+
+      auto rotSlider = [&](const char* label, float& angle) {
+        float prev = angle;
+        ImGui::SetNextItemWidth(-1);
+        if (ImGui::SliderFloat(label, &angle, -180.f, 180.f, "%.0f deg")) {
+          // Snap to nearest 90 degrees on change
+          angle = std::round(angle / 90.f) * 90.f;
+        }
+        (void)prev;
+      };
+      rotSlider("Rot X##obj_rot", d.rotationX);
+      rotSlider("Rot Y##obj_rot", d.rotationY);
+      rotSlider("Rot Z##obj_rot", d.rotationZ);
+      if (ImGui::Button("Reset Rotation##obj_rot")) {
+        d.rotationX = d.rotationY = d.rotationZ = 0.f;
+      }
+    }
+
     ImGui::TextUnformatted("Examine Text");
     ImGui::SetNextItemWidth(-1); dbInputText("##obj_examine", d.examineText);
 

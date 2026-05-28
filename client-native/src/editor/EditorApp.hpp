@@ -280,6 +280,10 @@ private:
   std::string                 dbPreviewLoadedPath_;
   glm::vec3                   dbPreviewCenter_ = glm::vec3(0.f);
   float                       dbPreviewRadius_ = 1.0f;
+  // Animated preview (used when the model has glTF animation clips)
+  world::SkinnedMesh          dbPreviewSkinned_;
+  bool                        dbPreviewHasAnim_  = false;
+  std::vector<std::string>    dbPreviewClips_;    // clip names from the loaded model
 
   EntityClient         dbClient_;
   bool                 showDbWindow_  = false;

@@ -39,7 +39,13 @@ CREATE TABLE IF NOT EXISTS object_definitions (
   respawn_ticks   INT  NOT NULL DEFAULT 25,
   -- ProductionFacility fields
   craft_action_id TEXT REFERENCES action_definitions(id),
-  examine_text    TEXT
+  examine_text    TEXT,
+  -- Animation & orientation
+  default_clip    TEXT,                       -- glTF animation clip name to play on loop
+  looping         BOOLEAN NOT NULL DEFAULT TRUE,
+  rotation_x      FLOAT   NOT NULL DEFAULT 0, -- degrees, applied as pre-rotation in world/preview
+  rotation_y      FLOAT   NOT NULL DEFAULT 0,
+  rotation_z      FLOAT   NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS npc_definitions (
@@ -167,3 +173,11 @@ INSERT INTO item_definitions (id, name, stackable, tradable, value, item_type, e
   ('kinetic_charges', 'Kinetic Charges', TRUE,  TRUE,  1,   'equipment', 'ammo',       FALSE, 0,  0, 0, 0, 0, 0, NULL,          NULL, NULL,      NULL,     NULL),
   ('basic_chaingun',  'Basic Chaingun',  FALSE, TRUE,  200, 'equipment', 'rightHand',  TRUE,  0,  0, 0, 8, 4, 0, NULL,          NULL, NULL,      'gunner', 'A heavy two-handed energy weapon.')
 ON CONFLICT (id) DO NOTHING;
+
+-- Migration: add animation/orientation columns to object_definitions if not present.
+-- Safe to run multiple times (DO NOTHING on conflict).
+ALTER TABLE object_definitions ADD COLUMN IF NOT EXISTS default_clip TEXT;
+ALTER TABLE object_definitions ADD COLUMN IF NOT EXISTS looping      BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE object_definitions ADD COLUMN IF NOT EXISTS rotation_x   FLOAT   NOT NULL DEFAULT 0;
+ALTER TABLE object_definitions ADD COLUMN IF NOT EXISTS rotation_y   FLOAT   NOT NULL DEFAULT 0;
+ALTER TABLE object_definitions ADD COLUMN IF NOT EXISTS rotation_z   FLOAT   NOT NULL DEFAULT 0;

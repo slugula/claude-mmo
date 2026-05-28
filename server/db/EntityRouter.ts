@@ -85,7 +85,12 @@ entityRouter.get('/objects', async (_req, res) => {
         COALESCE(drop_quantity,  1)  AS drop_quantity,
         COALESCE(respawn_ticks,  25) AS respawn_ticks,
         COALESCE(craft_action_id,'') AS craft_action_id,
-        COALESCE(examine_text,   '') AS examine_text
+        COALESCE(examine_text,   '') AS examine_text,
+        COALESCE(default_clip,   '') AS default_clip,
+        COALESCE(looping,        TRUE) AS looping,
+        COALESCE(rotation_x,     0)  AS rotation_x,
+        COALESCE(rotation_y,     0)  AS rotation_y,
+        COALESCE(rotation_z,     0)  AS rotation_z
       FROM object_definitions ORDER BY id`);
     ok(res, r.rows);
   } catch (e) { err(res, e); }
@@ -105,11 +110,13 @@ entityRouter.post('/objects', async (req, res) => {
     await pool.query(`
       INSERT INTO object_definitions
         (id,name,model_path,object_type,collision,size_x,size_y,action_id,required_skill,
-         required_level,drop_item_id,drop_quantity,respawn_ticks,craft_action_id,examine_text)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+         required_level,drop_item_id,drop_quantity,respawn_ticks,craft_action_id,examine_text,
+         default_clip,looping,rotation_x,rotation_y,rotation_z)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`,
       [b.id,b.name,b.model_path??null,b.object_type??'Decoration',b.collision??'full_blocking',
        b.size_x??1,b.size_y??1,b.action_id??null,b.required_skill??null,b.required_level??null,
-       b.drop_item_id??null,b.drop_quantity??1,b.respawn_ticks??25,b.craft_action_id??null,b.examine_text??null]);
+       b.drop_item_id??null,b.drop_quantity??1,b.respawn_ticks??25,b.craft_action_id??null,b.examine_text??null,
+       b.default_clip??null,b.looping??true,b.rotation_x??0,b.rotation_y??0,b.rotation_z??0]);
     ok(res, { ok: true });
   } catch (e) { err(res, e); }
 });
@@ -121,11 +128,14 @@ entityRouter.put('/objects/:id', async (req, res) => {
       UPDATE object_definitions SET
         name=$1,model_path=$2,object_type=$3,collision=$4,size_x=$5,size_y=$6,
         action_id=$7,required_skill=$8,required_level=$9,drop_item_id=$10,
-        drop_quantity=$11,respawn_ticks=$12,craft_action_id=$13,examine_text=$14
-      WHERE id=$15`,
+        drop_quantity=$11,respawn_ticks=$12,craft_action_id=$13,examine_text=$14,
+        default_clip=$15,looping=$16,rotation_x=$17,rotation_y=$18,rotation_z=$19
+      WHERE id=$20`,
       [b.name,b.model_path??null,b.object_type,b.collision,b.size_x??1,b.size_y??1,
        b.action_id??null,b.required_skill??null,b.required_level??null,b.drop_item_id??null,
-       b.drop_quantity??1,b.respawn_ticks??25,b.craft_action_id??null,b.examine_text??null,req.params.id]);
+       b.drop_quantity??1,b.respawn_ticks??25,b.craft_action_id??null,b.examine_text??null,
+       b.default_clip??null,b.looping??true,b.rotation_x??0,b.rotation_y??0,b.rotation_z??0,
+       req.params.id]);
     ok(res, { ok: true });
   } catch (e) { err(res, e); }
 });

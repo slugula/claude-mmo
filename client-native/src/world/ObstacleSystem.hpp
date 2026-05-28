@@ -54,8 +54,14 @@ public:
     std::string modelPath;
     std::string actionId;
     std::string dropItemId;
-    int         dropQuantity = 1;
-    int         respawnTicks = 25;
+    int         dropQuantity  = 1;
+    int         respawnTicks  = 25;
+    // Animation & orientation (from ObjectDef)
+    std::string defaultClip;           // glTF clip name; empty = first clip
+    bool        looping       = true;
+    float       rotationX     = 0.f;   // degrees
+    float       rotationY     = 0.f;
+    float       rotationZ     = 0.f;
   };
 
   // Populate the definitions cache from the server DB. Each entry's `id` field

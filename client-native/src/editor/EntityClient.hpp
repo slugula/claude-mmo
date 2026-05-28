@@ -45,7 +45,12 @@ template<> struct glz::meta<editor::ObjectDef> {
     "drop_quantity",   &T::dropQuantity,
     "respawn_ticks",   &T::respawnTicks,
     "craft_action_id", &T::craftActionId,
-    "examine_text",    &T::examineText);
+    "examine_text",    &T::examineText,
+    "default_clip",    &T::defaultClip,
+    "looping",         &T::looping,
+    "rotation_x",      &T::rotationX,
+    "rotation_y",      &T::rotationY,
+    "rotation_z",      &T::rotationZ);
 };
 
 template<> struct glz::meta<editor::NpcDef> {
