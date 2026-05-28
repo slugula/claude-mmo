@@ -112,12 +112,9 @@ public:
   std::size_t treeCount()  const { return treeCount_;  }
   std::size_t rockCount()  const { return rockCount_;  }
   std::size_t fenceCount() const { return fenceCount_; }
-
-  // Above-water counts (first N instances in each VBO are above-water).
-  // Instances [aboveFoo, totalFoo) are submerged (on water tiles).
-  std::size_t treeAboveCount()  const { return treeAboveCount_;  }
-  std::size_t rockAboveCount()  const { return rockAboveCount_;  }
-  std::size_t fenceAboveCount() const { return fenceAboveCount_; }
+  std::size_t treeSubCount()  const { return treeSubCount_;  }
+  std::size_t rockSubCount()  const { return rockSubCount_;  }
+  std::size_t fenceSubCount() const { return fenceSubCount_; }
 
   // Axis-aligned bounding box of the gltf tree model in world space (after
   // applying kScaleXZ/kScaleY). Valid only when treeModelLoaded() is true.
@@ -149,9 +146,22 @@ private:
   Kit rock_;
   Kit fence_;
 
-  GLuint treeInstanceVbo_  = 0;  // shared between trunk and canopy VAOs
+  GLuint treeInstanceVbo_  = 0;  // above-water instances (shared trunk+canopy)
   GLuint rockInstanceVbo_  = 0;
   GLuint fenceInstanceVbo_ = 0;
+
+  // Submerged (below-water) variants — separate VBOs so no BaseInstance needed.
+  Kit    trunkSub_;
+  Kit    canopySub_;
+  Kit    rockSub_;
+  Kit    fenceSub_;
+  GLuint treeInstanceVboSub_  = 0;
+  GLuint rockInstanceVboSub_  = 0;
+  GLuint fenceInstanceVboSub_ = 0;
+  // glTF submerged variant
+  Kit    treeTrunkGltfSub_;
+  Kit    treeCanopyGltfSub_;
+  GLuint treeGltfInstanceVboSub_ = 0;
   // Single-instance VBO for outline rendering of one obstacle at a time.
   GLuint outlineInstanceVbo_ = 0;
   Kit    outlineTrunk_;   // VAOs bound to outlineInstanceVbo_
@@ -171,13 +181,12 @@ private:
   glm::vec3 treeGltfAABBMin_   = glm::vec3(-0.45f, 0.0f, -0.45f);  // fallback = procedural bounds
   glm::vec3 treeGltfAABBMax_   = glm::vec3( 0.45f, 1.6f,  0.45f);
 
-  std::size_t treeCount_       = 0;
-  std::size_t rockCount_       = 0;
-  std::size_t fenceCount_      = 0;
-  // Split index: instances [0, above) are dry; [above, total) are submerged.
-  std::size_t treeAboveCount_  = 0;
-  std::size_t rockAboveCount_  = 0;
-  std::size_t fenceAboveCount_ = 0;
+  std::size_t treeCount_    = 0;  // above-water count
+  std::size_t rockCount_    = 0;
+  std::size_t fenceCount_   = 0;
+  std::size_t treeSubCount_ = 0;  // submerged count
+  std::size_t rockSubCount_ = 0;
+  std::size_t fenceSubCount_= 0;
 
   // Object definitions cache (keyed by id string)
   std::unordered_map<std::string, ObjectDefCache> defs_;
