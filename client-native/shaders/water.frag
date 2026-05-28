@@ -19,13 +19,19 @@ uniform float uCausticIntensity;
 uniform float uCausticScale;
 uniform float uCausticSpeed;
 uniform float uUseCausticMap;   // 1.0 = sample uCausticMap, 0.0 = procedural
-uniform float uFoamWidth;    // 0–1: how far from the tile edge foam extends inward
+uniform float uFoamWidth;       // 0–1: how far from the tile edge foam extends inward
 uniform float uFoamSpeed;
 uniform float uFoamScale;
 uniform float uParallaxDepth;
 uniform vec3  uShallowColor;
 uniform vec3  uDeepColor;
 uniform vec3  uFoamColor;
+
+// Per-frame lighting/view state (set by host each frame)
+uniform vec3  uCameraPos;           // world-space camera eye position
+uniform vec3  uSunDir;              // direction FROM sun TOWARD scene (same convention as u_lightDir)
+uniform float uSpecularStrength;    // 0–1, intensity of the sun specular highlight on water
+uniform float uWaterAlpha;          // 0–1, overall water opacity (0.8–0.9 looks good)
 
 out vec4 fragColor;
 
@@ -38,12 +44,10 @@ float causticPattern(vec2 uv, float t) {
     vec2 cuv2 = uv * uCausticScale * 1.3 - t * uCausticSpeed * vec2(-0.5,  0.9) * 0.7;
     float c1, c2;
     if (uUseCausticMap > 0.5) {
-        // Sample the user-supplied caustic image at two scrolling UVs
         c1 = texture(uCausticMap, cuv1).r;
         c2 = texture(uCausticMap, cuv2).r;
         return pow(c1 * c2, 1.5) * uCausticIntensity;
     } else {
-        // Procedural: abs(sin) interference
         vec2 d1 = vec2(0.8, 0.6);
         vec2 d2 = vec2(-0.5, 0.9);
         c1 = abs(sin(dot(cuv1, d1)));
@@ -70,58 +74,58 @@ void main() {
     vec3 n1 = texture(uNormalMap, uv1).rgb * 2.0 - 1.0;
     vec3 n2 = texture(uNormalMap, uv2).rgb * 2.0 - 1.0;
     // Blend normals; scale XZ by strength, keep Y dominant
-    vec3 blended = normalize((n1 + n2) * vec3(uNormalStrength, 1.0, uNormalStrength));
+    vec3 N = normalize((n1 + n2) * vec3(uNormalStrength, 1.0, uNormalStrength));
 
-    // ---- Screen-space reflection -------------------------------------------
+    // ---- Screen-space depth shimmer -------------------------------------------
     vec2 ndcXY    = vClipPos.xy / vClipPos.w;
     vec2 screenUV = ndcXY * 0.5 + 0.5;
 
-    // Water surface depth in [0,1] NDC → depth-buffer space.
     float waterDepth01 = vClipPos.z / vClipPos.w * 0.5 + 0.5;
 
-    // Perturb sample position using XZ of the blended normal.
-    vec2 reflUV = screenUV + blended.xz * 0.05 * uReflectStrength;
+    // Fixed small perturbation — NOT scaled by uReflectStrength.
+    // This decouples "how much scene is blended" from "how distorted the sample is",
+    // preventing the blocky/pixelated look at high Reflect values.
+    vec2 reflUV = screenUV + N.xz * 0.025;
     reflUV      = clamp(reflUV, vec2(0.001), vec2(0.999));
 
-    // Depth at the perturbed position.  If an opaque object sits IN FRONT of
-    // the water surface (shallower depth), the perturbation would bleed its
-    // edge.  Suppress distortion in that case by falling back to screenUV.
+    // Suppress distortion where a foreground object is in front of water.
     float sceneDepthAtRefl = texture(uSceneDepth, reflUV).r;
-    // Smoothly suppress distortion when the scene depth at the perturbed UV is
-    // shallower than the water surface (i.e. a foreground object is in the way).
-    // A 0.015 range gives enough tolerance to cover sub-pixel edge bleed without
-    // causing visible under-distortion on distant terrain.
-    float edgeMask = smoothstep(waterDepth01 - 0.015, waterDepth01, sceneDepthAtRefl);
-    // edgeMask → 0 when sampled scene is clearly shallower than water → no distortion.
-    vec2 safeReflUV = mix(screenUV, reflUV, edgeMask);
-
-    vec3 reflected = texture(uSceneColor, safeReflUV).rgb;
+    float edgeMask   = smoothstep(waterDepth01 - 0.015, waterDepth01, sceneDepthAtRefl);
+    vec2  safeReflUV = mix(screenUV, reflUV, edgeMask);
+    vec3  sceneColor = texture(uSceneColor, safeReflUV).rgb;
 
     // ---- Depth gradient + parallax ----------------------------------------
-    vec2 parallaxUV = vUV + blended.xz * uParallaxDepth * (1.0 - vShoreWeight);
+    vec2 parallaxUV = vUV + N.xz * uParallaxDepth * (1.0 - vShoreWeight);
     vec3 waterColor = mix(uDeepColor, uShallowColor, vShoreWeight);
 
     // ---- Caustics (open water only) ----------------------------------------
     float caus = causticPattern(parallaxUV, uTime) * (1.0 - vShoreWeight);
     waterColor += vec3(caus);
 
-    // ---- SSR blend (less reflection near shoreline) -------------------------
-    float reflWeight = uReflectStrength * (1.0 - vShoreWeight * 0.5);
-    waterColor = mix(waterColor, reflected, reflWeight);
+    // ---- Scene blend (depth shimmer / SSR) ---------------------------------
+    // Caps at 0.40 so water intrinsic colour always dominates — uReflectStrength
+    // tunes depth/distortion richness rather than turning the water transparent.
+    float sceneBlend = uReflectStrength * 0.40 * (1.0 - vShoreWeight * 0.5);
+    waterColor = mix(waterColor, sceneColor, sceneBlend);
+
+    // ---- Wave-crest sparkle ------------------------------------------------
+    // Wave facets that point directly upward (toward an overhead camera) catch
+    // the light and appear bright.  As the normal map scrolls, these shimmer
+    // and dance across the surface — the top-down equivalent of sun glints.
+    // Uses the upward component of the wave normal; shoreline calmer.
+    float upFacing = max(dot(N, vec3(0.0, 1.0, 0.0)), 0.0);
+    float sparkle  = pow(upFacing, 20.0) * uSpecularStrength
+                   * (1.0 - vShoreWeight * 0.7);
+    // Cool-tinted: peaks appear as white-blue glints
+    waterColor += vec3(sparkle * 0.80, sparkle * 0.90, sparkle * 1.00);
 
     // ---- Shore-weight foam -------------------------------------------------
-    // vShoreWeight encodes how many of the 4 adjacent tiles are non-water
-    // (0 = open water, 1 = surrounded by terrain on all sides).
-    // uFoamWidth [0,1] controls how far the foam band extends from the tile
-    // edge inward: 0 = no foam, 0.5 = moderate band, 1 = fills all boundary
-    // tiles with a smooth gradient toward the interior.
-    // smoothstep maps shore_weight into a [0,1] foam factor so the band fades
-    // naturally rather than cutting off with a hard edge.
     float foamFactor = smoothstep(max(0.0, 1.0 - uFoamWidth), 1.0, vShoreWeight);
     float foam = foamFactor * foamNoise(vUV, uTime);
     waterColor = mix(waterColor, uFoamColor, foam);
 
-    // Fully opaque — terrain must not poke through the water surface.
-    // The depth/shallow colour gradient + parallax already sell the depth.
-    fragColor = vec4(waterColor, 1.0);
+    // Semi-transparent water so objects (fish, submerged geometry) show through.
+    // Shore edges become slightly more opaque for a natural look.
+    float alpha = mix(uWaterAlpha, min(uWaterAlpha + 0.10, 1.0), vShoreWeight * 0.5);
+    fragColor = vec4(waterColor, alpha);
 }

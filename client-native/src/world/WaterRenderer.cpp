@@ -149,6 +149,19 @@ void WaterRenderer::render(float time,
                             const WaterUniforms& u) {
   if (!shader_.isValid() || mesh_.empty()) return;
 
+  // Water is semi-transparent — enable blending for the duration of this pass.
+  glEnable(GL_BLEND);
+  glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+  glDepthMask(GL_FALSE);  // water doesn't write into the depth buffer
+
+  // Write stencil = 1 on every pixel where water passes the depth test.
+  // Pixels blocked by trees/obstacles (depth fail) keep stencil = 0.
+  // The fish pass later uses GL_EQUAL/1 to draw only through water pixels.
+  glEnable(GL_STENCIL_TEST);
+  glStencilMask(0xFF);
+  glStencilFunc(GL_ALWAYS, 1, 0xFF);
+  glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);  // replace on depth-pass only
+
   shader_.use();
 
   // Matrices
@@ -166,13 +179,19 @@ void WaterRenderer::render(float time,
   shader_.setFloat("uCausticIntensity", u.causticIntensity);
   shader_.setFloat("uCausticScale",     u.causticScale);
   shader_.setFloat("uCausticSpeed",     u.causticSpeed);
-  shader_.setFloat("uFoamWidth",         u.foamWidth);
+  shader_.setFloat("uFoamWidth",        u.foamWidth);
   shader_.setFloat("uFoamSpeed",        u.foamSpeed);
   shader_.setFloat("uFoamScale",        u.foamScale);
   shader_.setFloat("uParallaxDepth",    u.parallaxDepth);
   shader_.setVec3 ("uShallowColor",     u.shallowColor);
   shader_.setVec3 ("uDeepColor",        u.deepColor);
   shader_.setVec3 ("uFoamColor",        u.foamColor);
+
+  // Per-frame lighting/view state
+  shader_.setVec3 ("uCameraPos",        u.cameraPos);
+  shader_.setVec3 ("uSunDir",           u.sunDir);
+  shader_.setFloat("uSpecularStrength", u.specularStrength);
+  shader_.setFloat("uWaterAlpha",       u.waterAlpha);
 
   // Textures
   shader_.setInt  ("uNormalMap",      0);
@@ -186,6 +205,13 @@ void WaterRenderer::render(float time,
   glBindTextureUnit(3, causticTex_);
 
   mesh_.draw();
+
+  // Stop writing stencil; disable stencil test so subsequent passes are unaffected.
+  glStencilMask(0x00);
+  glDisable(GL_STENCIL_TEST);
+
+  // Restore depth writes; blend is left enabled (caller owns subsequent state).
+  glDepthMask(GL_TRUE);
 }
 
 }  // namespace world

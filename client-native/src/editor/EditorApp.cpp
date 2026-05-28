@@ -46,7 +46,7 @@ constexpr const char* kSkinnedVertPath   = "shaders/skinned.vert";
 constexpr const char* kSkinnedFragPath   = "shaders/skinned.frag";
 constexpr const char* kShadowInstVertPath= "shaders/shadow_instanced.vert";
 constexpr const char* kShadowFragPath    = "shaders/shadow.frag";
-constexpr const char* kFishingSpotModelPath = "assets/models/fishing_spot.glb";
+constexpr const char* kFishingSpotModelPath = "assets/models/fishing_spot.gltf";
 constexpr const char* kWaterVertPath     = "shaders/water.vert";
 constexpr const char* kWaterFragPath     = "shaders/water.frag";
 constexpr const char* kWaterNormalPath   = "assets/water_normal.png";
@@ -631,7 +631,7 @@ void EditorApp::render3DViewport(float dt) {
   viewport3dFbo_->bind();
   glViewport(0, 0, viewport3dW_, viewport3dH_);
   glClearColor(0.45f, 0.65f, 0.85f, 1.0f);
-  glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+  glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
 
   glBindTextureUnit(1, shadowMap_.depthTexture());
 
@@ -688,7 +688,32 @@ void EditorApp::render3DViewport(float dt) {
     entities_.render(obstacleShader_);
   }
 
-  // ---- Fishing spot animated models ------------------------------------
+  // ---- Water pass -------------------------------------------------------
+  // Resolve colour (for SSR) and depth (for foam intersection) before drawing
+  // water.  Then re-bind the MSAA FBO, draw water on top, and resolve again.
+  if (!map_.waterTiles.empty() && waterRenderer_.valid()) {
+    viewport3dFbo_->resolve();      // pre-water colour snapshot for SSR
+    viewport3dFbo_->resolveDepth(); // pre-water depth snapshot for foam
+
+    viewport3dFbo_->bind();
+    glViewport(0, 0, viewport3dW_, viewport3dH_);
+
+    // Update per-frame lighting/view state before rendering.
+    waterUniforms_.sunDir    = sunDir;
+    waterUniforms_.cameraPos = camera_.cameraPosition();
+
+    waterRenderer_.render(
+        static_cast<float>(glfwGetTime()),
+        viewProj,
+        viewport3dFbo_->resolveColorTexture(),
+        viewport3dFbo_->resolveDepthTexture(),
+        waterUniforms_);
+  }
+
+  // ---- Fishing spot animated models — AFTER water, stencil-masked ------
+  // Water pass writes stencil=1 on pixels it covers (depth-gated, so trees
+  // block it naturally).  Fish render with GL_EQUAL stencil so they only
+  // appear through water, never above or over other geometry.
   if (fishingSpotMesh_.isLoaded()) {
     fishingSpotMesh_.update(dt);
 
@@ -704,19 +729,25 @@ void EditorApp::render3DViewport(float dt) {
     skinnedShader_.setFloat("u_diffuse",         diffuse_);
     skinnedShader_.setFloat("u_lightingEnabled", lightingEnabled_ ? 1.0f : 0.0f);
     skinnedShader_.setInt  ("u_shadowMap",       1);
-    skinnedShader_.setFloat("u_shadowsEnabled",  0.0f);  // no shadow pass for skinned in editor
+    skinnedShader_.setFloat("u_shadowsEnabled",  0.0f);
     skinnedShader_.setFloat("u_shadowDarkness",  0.0f);
     skinnedShader_.setFloat("u_shadowBias",      0.0f);
     skinnedShader_.setFloat("u_fogEnabled",      fogEnabled_ ? 1.0f : 0.0f);
     skinnedShader_.setVec3 ("u_fogColor",        fogColor_);
     skinnedShader_.setFloat("u_fogDensity",      fogDensity_);
     skinnedShader_.setFloat("u_fogStart",        fogStart_);
-    // u_color is set per-primitive from glTF material (useMaterialColors=true below).
 
     const int   fsW    = map_.width;
     const int   fsH    = map_.height;
     const auto& fsVh   = map_.vertexHeights;
     const bool  fsVhOk = (static_cast<int>(fsVh.size()) == (fsW + 1) * (fsH + 1));
+
+    // Only paint on pixels where the water stencil is 1.
+    glEnable(GL_STENCIL_TEST);
+    glStencilFunc(GL_EQUAL, 1, 0xFF);
+    glStencilMask(0x00);        // don't modify stencil values
+    glDisable(GL_DEPTH_TEST);   // fish are below the surface — skip depth test
+    glDepthMask(GL_FALSE);
 
     for (int fty = 0; fty < fsH; ++fty) {
       for (int ftx = 0; ftx < fsW; ++ftx) {
@@ -736,24 +767,11 @@ void EditorApp::render3DViewport(float dt) {
         fishingSpotMesh_.render(skinnedShader_, fsModel, /*useMaterialColors=*/true);
       }
     }
-  }
 
-  // ---- Water pass -------------------------------------------------------
-  // Resolve colour (for SSR) and depth (for foam intersection) before drawing
-  // water.  Then re-bind the MSAA FBO, draw water on top, and resolve again.
-  if (!map_.waterTiles.empty() && waterRenderer_.valid()) {
-    viewport3dFbo_->resolve();      // pre-water colour snapshot for SSR
-    viewport3dFbo_->resolveDepth(); // pre-water depth snapshot for foam
-
-    viewport3dFbo_->bind();
-    glViewport(0, 0, viewport3dW_, viewport3dH_);
-
-    waterRenderer_.render(
-        static_cast<float>(glfwGetTime()),
-        viewProj,
-        viewport3dFbo_->resolveColorTexture(),
-        viewport3dFbo_->resolveDepthTexture(),
-        waterUniforms_);
+    glDepthMask(GL_TRUE);
+    glEnable(GL_DEPTH_TEST);
+    glStencilMask(0xFF);
+    glDisable(GL_STENCIL_TEST);
   }
 
   // ---- Wireframe overlay — AFTER water so it composites on top ----------
@@ -943,8 +961,10 @@ void EditorApp::drawWaterSettings() {
     ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##wsp",  &u.waveSpeed,       0.0f, 2.0f,  "WaveSpd:%.2f");
     ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##wht",  &u.waveHeight,      0.0f, 0.5f,  "WaveH:%.3f");
     ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##nstr", &u.normalStrength,  0.0f, 2.0f,  "NrmStr:%.2f");
-    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##rfl",  &u.reflectStrength, 0.0f, 1.0f,  "Reflect:%.2f");
-    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##caus", &u.causticIntensity,0.0f, 1.0f,  "Caustic:%.2f");
+    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##rfl",  &u.reflectStrength,  0.0f, 1.0f,  "Reflect:%.2f");
+    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##spec", &u.specularStrength, 0.0f, 1.0f,  "Specular:%.2f");
+    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##walp", &u.waterAlpha,       0.5f, 1.0f,  "Opacity:%.2f");
+    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##caus", &u.causticIntensity, 0.0f, 1.0f,  "Caustic:%.2f");
     ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##fwid", &u.foamWidth,        0.0f, 1.0f,  "FoamWidth:%.2f");
   }
   if (ImGui::CollapsingHeader("Water — Advanced")) {

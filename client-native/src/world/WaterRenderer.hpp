@@ -33,6 +33,12 @@ struct WaterUniforms {
   float     parallaxDepth   = 0.04f;
   // waterOffset is in world units; also used by EditorApp banking.
   float     waterOffset     = 0.00f;
+  // ---- Lighting / transparency (new) ----
+  float     specularStrength = 0.50f;  // 0–1, sun glint intensity on water surface
+  float     waterAlpha       = 0.82f;  // 0–1, overall water opacity
+  // Per-frame state — host updates these before each render() call (not in settings sliders)
+  glm::vec3 cameraPos  = { 0.0f, 20.0f, 0.0f };
+  glm::vec3 sunDir     = { 0.34f, -0.82f, 0.46f }; // FROM sun TOWARD scene (matches default 200°/58°)
 };
 
 // Owns the water shader, normal-map GL texture, and WaterMesh.

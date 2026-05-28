@@ -64,7 +64,7 @@ constexpr const char* kShadowInstVertPath    = "shaders/shadow_instanced.vert";
 constexpr const char* kShadowSkinnedVertPath = "shaders/shadow_skinned.vert";
 constexpr const char* kShadowFragPath        = "shaders/shadow.frag";
 constexpr const char* kPlayerModelPath       = "assets/models/player.glb";
-constexpr const char* kFishingSpotModelPath  = "assets/models/fishing_spot.glb";
+constexpr const char* kFishingSpotModelPath  = "assets/models/fishing_spot.gltf";
 constexpr const char* kTreeModelPath         = "assets/models/tree.gltf";
 constexpr const char* kWaterVertPath     = "shaders/water.vert";
 constexpr const char* kWaterFragPath     = "shaders/water.frag";
@@ -1219,9 +1219,39 @@ void App::renderFrame() {
     }
   }
 
-  // ---- Fishing spot animated models ------------------------------------------
-  // All instances share one SkinnedMesh (same GPU buffers, same pose each frame).
-  // We advance the animation once then render one instance per fishing_spot tile.
+  // ---- SSR snapshot — resolve BEFORE water and fish so neither appears in the
+  //      reflected/refracted scene colour (avoids the "double fish" artefact and
+  //      prevents outlines from showing in reflections).
+  if (!map_.waterTiles.empty() && waterRenderer_.valid()) {
+    msaa_->resolve();
+    msaa_->resolveDepth();
+    msaa_->bind();
+    glViewport(0, 0, fbW, fbH);
+  }
+
+  // ---- Water pass ------------------------------------------------------------
+  // Drawn here — after SSR snapshot but BEFORE fish, hover outlines, and entity
+  // stencil outlines, so those always composite on top of water.
+  // WaterRenderer writes stencil = 1 on every pixel the water surface covers.
+  if (!map_.waterTiles.empty() && waterRenderer_.valid()) {
+    // Update per-frame lighting/view state so the shader has current values.
+    waterUniforms_.sunDir    = sunDir;
+    waterUniforms_.cameraPos = camera_.cameraPosition();
+
+    waterRenderer_.render(
+        static_cast<float>(glfwGetTime()),
+        viewProj,
+        msaa_->resolveColorTexture(),
+        msaa_->resolveDepthTexture(),
+        waterUniforms_);
+  }
+
+  // ---- Fishing spot animated models — rendered AFTER the water pass -----------
+  // Placing fish after water means they are NOT in sceneColorTex, so the water's
+  // SSR/shimmer pass cannot create a second ghost fish.
+  // The water pass wrote stencil = 1 on pixels it covered (blocked by trees →
+  // stencil stays 0).  Fish use GL_EQUAL stencil so they only paint through the
+  // water surface — trees and other opaque objects remain unaffected.
   if (fishingSpotMesh_.isLoaded()) {
     fishingSpotMesh_.update(dt);
 
@@ -1245,17 +1275,23 @@ void App::renderFrame() {
     skinnedShader_.setVec3 ("u_fogColor",        fogColor_);
     skinnedShader_.setFloat("u_fogDensity",      fogDensity_);
     skinnedShader_.setFloat("u_fogStart",        fogStart_);
-    // u_color is set per-primitive from glTF material (useMaterialColors=true below).
 
     const int   fsW    = map_.width;
     const int   fsH    = map_.height;
     const auto& fsVh   = map_.vertexHeights;
     const bool  fsVhOk = (static_cast<int>(fsVh.size()) == (fsW + 1) * (fsH + 1));
 
+    // Only paint on pixels where the water stencil is 1.
+    // Depth test off so fish show through the carved terrain below the waterline.
+    glEnable(GL_STENCIL_TEST);
+    glStencilFunc(GL_EQUAL, 1, 0xFF);
+    glStencilMask(0x00);          // don't modify stencil values
+    glDisable(GL_DEPTH_TEST);
+    glDepthMask(GL_FALSE);
+
     for (int fty = 0; fty < fsH; ++fty) {
       for (int ftx = 0; ftx < fsW; ++ftx) {
         if (map_.tiles[fty][ftx].obstacle != shared::ObstacleType::fishing_spot) continue;
-        // Average the 4 corner heights to get tile-centre Y (same as ObstacleSystem).
         float cy = 0.0f;
         if (fsVhOk) {
           const float SW = fsVh[(fsH - fty)     * (fsW + 1) + ftx    ] * shared::kMaxTerrainH;
@@ -1271,28 +1307,10 @@ void App::renderFrame() {
         fishingSpotMesh_.render(skinnedShader_, fsModel, /*useMaterialColors=*/true);
       }
     }
-  }
 
-  // ---- SSR snapshot — resolve BEFORE outlines so water doesn't reflect
-  //      tile/entity outlines (they're decorative UI, not world geometry).
-  if (!map_.waterTiles.empty() && waterRenderer_.valid()) {
-    msaa_->resolve();
-    msaa_->resolveDepth();
-    msaa_->bind();
-    glViewport(0, 0, fbW, fbH);
-  }
-
-  // ---- Water pass ------------------------------------------------------------
-  // Drawn here — after opaque geometry and SSR snapshot but BEFORE the hover
-  // tile outline and entity stencil outlines, so those always composite on top
-  // of water rather than being hidden beneath it.
-  if (!map_.waterTiles.empty() && waterRenderer_.valid()) {
-    waterRenderer_.render(
-        static_cast<float>(glfwGetTime()),
-        viewProj,
-        msaa_->resolveColorTexture(),
-        msaa_->resolveDepthTexture(),
-        waterUniforms_);
+    glDepthMask(GL_TRUE);
+    glEnable(GL_DEPTH_TEST);
+    glDisable(GL_STENCIL_TEST);
   }
 
   // ---- Wireframe grid overlay ------------------------------------------------
