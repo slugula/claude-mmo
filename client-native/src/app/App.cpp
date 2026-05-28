@@ -535,6 +535,7 @@ bool App::init() {
     }
     fishingSpotMesh_.setClip("");  // falls back to first animation
     std::fprintf(stdout, "[App] active clip = \"%s\"\n", fishingSpotMesh_.clipName().c_str());
+    fishingSpotMesh_.dumpTrackInfo();
   }
 
   // Snap the camera to the map center so the first frame isn't mid-lerp.

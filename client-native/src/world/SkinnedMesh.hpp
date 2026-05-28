@@ -52,9 +52,12 @@ public:
 
   // Compute joint matrices for the current pose and render. `model` is the
   // entity's world transform (position + rotation). The shader's uniforms
-  // (u_viewProj, u_lightDir, u_color, u_paletteLevels, u_paletteEnabled)
-  // are set by the caller; we only set u_model + u_jointMatrices here.
-  void render(render::Shader& shader, const glm::mat4& modelMatrix);
+  // (u_viewProj, u_lightDir, u_paletteLevels, u_paletteEnabled) are set by
+  // the caller; we set u_model + u_jointMatrices here.
+  // When useMaterialColors=true, u_color is also set per-primitive from the
+  // glTF material's baseColor (overriding the caller's u_color for each draw).
+  void render(render::Shader& shader, const glm::mat4& modelMatrix,
+              bool useMaterialColors = false);
 
   // Render with an externally-managed clip state — does NOT modify the
   // internal activeClip_/clipTime_. Used for remote players that each need
@@ -64,6 +67,9 @@ public:
 
   // Lookup a clip index by name. Returns -1 if not found.
   int findClipIndex(const std::string& clipName) const;
+
+  // Prints per-joint track info for the active clip to stdout (diagnostic).
+  void dumpTrackInfo() const;
 
   bool isLoaded()              const { return !primitives_.empty(); }
   const std::string& clipName() const { return activeClip_; }
@@ -76,10 +82,11 @@ public:
 
 private:
   struct PrimitiveGl {
-    GLuint  vao = 0;
-    GLuint  vboPos = 0, vboNrm = 0, vboJoint = 0, vboWeight = 0, ebo = 0;
-    GLsizei indexCount = 0;
-    int     materialIndex = -1;
+    GLuint    vao = 0;
+    GLuint    vboPos = 0, vboNrm = 0, vboJoint = 0, vboWeight = 0, ebo = 0;
+    GLsizei   indexCount = 0;
+    int       materialIndex = -1;
+    glm::vec3 matColor = glm::vec3(1.0f);  // cached from GltfMaterial.baseColor
   };
 
   void destroy();

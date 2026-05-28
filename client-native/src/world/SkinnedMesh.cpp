@@ -102,10 +102,14 @@ bool SkinnedMesh::load(const std::filesystem::path& glbPath) {
   localTransforms_.assign(jc, glm::mat4(1.0f));
   modelSpace_.assign(jc, glm::mat4(1.0f));
 
-  // Upload each primitive
+  // Upload each primitive and cache its material colour.
   primitives_.resize(model_.primitives.size());
   for (size_t i = 0; i < model_.primitives.size(); ++i) {
     uploadPrimitive(model_.primitives[i], primitives_[i]);
+    const int mi = model_.primitives[i].materialIndex;
+    if (mi >= 0 && mi < static_cast<int>(model_.materials.size())) {
+      primitives_[i].matColor = glm::vec3(model_.materials[mi].baseColor);
+    }
   }
 
   // Default to T-pose (identity joint matrices); setClip pivots from here.
@@ -239,7 +243,8 @@ void SkinnedMesh::evaluatePose() {
   }
 }
 
-void SkinnedMesh::render(render::Shader& shader, const glm::mat4& modelMatrix) {
+void SkinnedMesh::render(render::Shader& shader, const glm::mat4& modelMatrix,
+                         bool useMaterialColors) {
   if (primitives_.empty()) return;
 
   evaluatePose();
@@ -255,10 +260,36 @@ void SkinnedMesh::render(render::Shader& shader, const glm::mat4& modelMatrix) {
   }
 
   for (const auto& p : primitives_) {
+    if (useMaterialColors) {
+      shader.setVec3("u_color", p.matColor);
+    }
     glBindVertexArray(p.vao);
     glDrawElements(GL_TRIANGLES, p.indexCount, GL_UNSIGNED_INT, nullptr);
   }
   glBindVertexArray(0);
+}
+
+void SkinnedMesh::dumpTrackInfo() const {
+  if (activeClipIndex_ < 0 || activeClipIndex_ >= static_cast<int>(model_.animations.size())) {
+    std::fprintf(stdout, "  [dumpTrack] no active clip\n");
+    return;
+  }
+  const GltfAnimation& anim = model_.animations[activeClipIndex_];
+  std::fprintf(stdout, "  [dumpTrack] clip=\"%s\"  joints=%d  tracks=%d\n",
+               anim.name.c_str(),
+               static_cast<int>(model_.joints.size()),
+               static_cast<int>(anim.tracks.size()));
+  for (int j = 0; j < static_cast<int>(anim.tracks.size()); ++j) {
+    const GltfJointTrack& tr = anim.tracks[j];
+    const char* jname = (j < static_cast<int>(model_.joints.size()) && !model_.joints[j].name.empty())
+                        ? model_.joints[j].name.c_str() : "?";
+    std::fprintf(stdout, "    joint[%d] \"%s\" parent=%d  T=%s(%zu) R=%s(%zu) S=%s(%zu)\n",
+                 j, jname,
+                 (j < static_cast<int>(model_.joints.size())) ? model_.joints[j].parent : -99,
+                 tr.hasT ? "Y" : "n", tr.timesT.size(),
+                 tr.hasR ? "Y" : "n", tr.timesR.size(),
+                 tr.hasS ? "Y" : "n", tr.timesS.size());
+  }
 }
 
 int SkinnedMesh::findClipIndex(const std::string& clipName) const {
