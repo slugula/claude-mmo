@@ -826,6 +826,7 @@ void EditorApp::render3DViewport(float dt) {
     }
 
     glDepthMask(GL_TRUE);
+    glStencilMask(0xFF);   // restore so glClear(GL_STENCIL_BUFFER_BIT) works next frame
     glDisable(GL_STENCIL_TEST);
   }
 
