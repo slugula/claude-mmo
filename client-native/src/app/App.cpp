@@ -75,7 +75,7 @@ constexpr int         kShadowMapSize     = 2048;
 constexpr glm::vec3 kPlayerColor       { 0.62f, 0.45f, 0.30f};  // skin tone, modulated by Lambert
 constexpr float     kPlayerScale       = 1.0f;
 constexpr glm::vec3 kFishingSpotColor  { 0.50f, 0.75f, 0.90f};  // light blue water tone
-constexpr float     kFishingSpotScale  = 0.10f;                  // tune if model is wrong size
+constexpr float     kFishingSpotScale  = 1.0f;                   // tune if model is wrong size
 
 // Convert sun (yaw, pitch) in degrees to a unit "light travel" vector
 // (sun-toward-ground). yaw is around +Y measured from +Z toward +X; pitch
@@ -526,9 +526,15 @@ bool App::init() {
   if (!fishingSpotMesh_.load(resolveFromExe(kFishingSpotModelPath))) {
     std::fprintf(stderr, "[App] fishing_spot model load failed — fishing spots will not render\n");
   } else {
-    fishingSpotMesh_.setClip("");  // empty string → falls back to first animation in file
     std::fprintf(stdout, "[App] fishing_spot model loaded (%d anim(s), %d joint(s))\n",
                  fishingSpotMesh_.animationCount(), fishingSpotMesh_.jointCount());
+    for (int i = 0; i < fishingSpotMesh_.animationCount(); ++i) {
+      const std::string* n = fishingSpotMesh_.animationNameAt(i);
+      std::fprintf(stdout, "  anim[%d] = \"%s\"  dur=%.3fs\n",
+                   i, n ? n->c_str() : "?", fishingSpotMesh_.clipDuration(i));
+    }
+    fishingSpotMesh_.setClip("");  // falls back to first animation
+    std::fprintf(stdout, "[App] active clip = \"%s\"\n", fishingSpotMesh_.clipName().c_str());
   }
 
   // Snap the camera to the map center so the first frame isn't mid-lerp.
@@ -1238,7 +1244,7 @@ void App::renderFrame() {
     skinnedShader_.setVec3 ("u_fogColor",        fogColor_);
     skinnedShader_.setFloat("u_fogDensity",      fogDensity_);
     skinnedShader_.setFloat("u_fogStart",        fogStart_);
-    skinnedShader_.setVec3 ("u_color",           kFishingSpotColor);
+    // u_color is set per-primitive from glTF material (useMaterialColors=true below).
 
     const int   fsW    = map_.width;
     const int   fsH    = map_.height;
@@ -1261,7 +1267,7 @@ void App::renderFrame() {
                                            glm::vec3(static_cast<float>(ftx), cy,
                                                      static_cast<float>(fty)));
         fsModel = glm::scale(fsModel, glm::vec3(kFishingSpotScale));
-        fishingSpotMesh_.render(skinnedShader_, fsModel);
+        fishingSpotMesh_.render(skinnedShader_, fsModel, /*useMaterialColors=*/true);
       }
     }
   }

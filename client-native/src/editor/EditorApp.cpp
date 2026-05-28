@@ -711,7 +711,7 @@ void EditorApp::render3DViewport(float dt) {
     skinnedShader_.setVec3 ("u_fogColor",        fogColor_);
     skinnedShader_.setFloat("u_fogDensity",      fogDensity_);
     skinnedShader_.setFloat("u_fogStart",        fogStart_);
-    skinnedShader_.setVec3 ("u_color",           glm::vec3(0.50f, 0.75f, 0.90f));
+    // u_color is set per-primitive from glTF material (useMaterialColors=true below).
 
     const int   fsW    = map_.width;
     const int   fsH    = map_.height;
@@ -732,8 +732,8 @@ void EditorApp::render3DViewport(float dt) {
         glm::mat4 fsModel = glm::translate(glm::mat4(1.0f),
                                            glm::vec3(static_cast<float>(ftx), cy,
                                                      static_cast<float>(fty)));
-        fsModel = glm::scale(fsModel, glm::vec3(0.10f));
-        fishingSpotMesh_.render(skinnedShader_, fsModel);
+        fsModel = glm::scale(fsModel, glm::vec3(1.0f));
+        fishingSpotMesh_.render(skinnedShader_, fsModel, /*useMaterialColors=*/true);
       }
     }
   }
