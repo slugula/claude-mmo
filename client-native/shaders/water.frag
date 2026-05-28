@@ -102,11 +102,20 @@ void main() {
     float caus = causticPattern(parallaxUV, uTime) * (1.0 - vShoreWeight);
     waterColor += vec3(caus);
 
-    // ---- Scene blend (depth shimmer / SSR) ---------------------------------
-    // Caps at 0.40 so water intrinsic colour always dominates — uReflectStrength
-    // tunes depth/distortion richness rather than turning the water transparent.
-    float sceneBlend = uReflectStrength * 0.40 * (1.0 - vShoreWeight * 0.5);
-    waterColor = mix(waterColor, sceneColor, sceneBlend);
+    // ---- Refraction composite ----------------------------------------------
+    // `sceneColor` is the scene BEHIND the water sampled at the wave-perturbed,
+    // edge-safe UV — i.e. a refracted view of whatever is submerged (fish, the
+    // basin floor, etc.).  We use it as the see-through base and tint the water
+    // body colour over it.  This is what makes submerged meshes appear genuinely
+    // underwater: distorted by the waves and tinted by the water's colour/depth.
+    //   uWaterAlpha   → water density (how strongly it hides what's below)
+    //   shoreWeight   → clearer near the shore (less water depth)
+    //   uReflectStrength → higher = clearer water (more refracted scene shows)
+    float clarity = clamp(uReflectStrength, 0.0, 1.0);
+    float tint    = uWaterAlpha
+                  * (1.0 - vShoreWeight * 0.35)
+                  * (1.0 - clarity * 0.45);
+    vec3 surf = mix(sceneColor, waterColor, tint);
 
     // ---- Wave-crest sparkle ------------------------------------------------
     // Wave facets that point directly upward (toward an overhead camera) catch
@@ -117,15 +126,15 @@ void main() {
     float sparkle  = pow(upFacing, 20.0) * uSpecularStrength
                    * (1.0 - vShoreWeight * 0.7);
     // Cool-tinted: peaks appear as white-blue glints
-    waterColor += vec3(sparkle * 0.80, sparkle * 0.90, sparkle * 1.00);
+    surf += vec3(sparkle * 0.80, sparkle * 0.90, sparkle * 1.00);
 
     // ---- Shore-weight foam -------------------------------------------------
     float foamFactor = smoothstep(max(0.0, 1.0 - uFoamWidth), 1.0, vShoreWeight);
     float foam = foamFactor * foamNoise(vUV, uTime);
-    waterColor = mix(waterColor, uFoamColor, foam);
+    surf = mix(surf, uFoamColor, foam);
 
-    // Semi-transparent water so objects (fish, submerged geometry) show through.
-    // Shore edges become slightly more opaque for a natural look.
-    float alpha = mix(uWaterAlpha, min(uWaterAlpha + 0.10, 1.0), vShoreWeight * 0.5);
-    fragColor = vec4(waterColor, alpha);
+    // Output opaque: the "see-through" is the in-shader refraction sample above,
+    // so a translucent alpha would double-show the (undistorted) framebuffer
+    // scene beneath, breaking the refraction illusion.
+    fragColor = vec4(surf, 1.0);
 }

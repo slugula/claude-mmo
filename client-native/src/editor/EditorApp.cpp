@@ -688,32 +688,11 @@ void EditorApp::render3DViewport(float dt) {
     entities_.render(obstacleShader_);
   }
 
-  // ---- Water pass -------------------------------------------------------
-  // Resolve colour (for SSR) and depth (for foam intersection) before drawing
-  // water.  Then re-bind the MSAA FBO, draw water on top, and resolve again.
-  if (!map_.waterTiles.empty() && waterRenderer_.valid()) {
-    viewport3dFbo_->resolve();      // pre-water colour snapshot for SSR
-    viewport3dFbo_->resolveDepth(); // pre-water depth snapshot for foam
-
-    viewport3dFbo_->bind();
-    glViewport(0, 0, viewport3dW_, viewport3dH_);
-
-    // Update per-frame lighting/view state before rendering.
-    waterUniforms_.sunDir    = sunDir;
-    waterUniforms_.cameraPos = camera_.cameraPosition();
-
-    waterRenderer_.render(
-        static_cast<float>(glfwGetTime()),
-        viewProj,
-        viewport3dFbo_->resolveColorTexture(),
-        viewport3dFbo_->resolveDepthTexture(),
-        waterUniforms_);
-  }
-
-  // ---- Fishing spot animated models — AFTER water, stencil-masked ------
-  // Water pass writes stencil=1 on pixels it covers (depth-gated, so trees
-  // block it naturally).  Fish render with GL_EQUAL stencil so they only
-  // appear through water, never above or over other geometry.
+  // ---- Submerged meshes (fishing spots) — rendered in the OPAQUE pass ----
+  // Drawn with normal depth test + write, BEFORE the refraction snapshot, so
+  // they are correctly occluded by anything in front and are captured in the
+  // scene-colour texture the water pass refracts.  The water surface composites
+  // on top of them — they never appear above the water or over other objects.
   if (fishingSpotMesh_.isLoaded()) {
     fishingSpotMesh_.update(dt);
 
@@ -742,13 +721,6 @@ void EditorApp::render3DViewport(float dt) {
     const auto& fsVh   = map_.vertexHeights;
     const bool  fsVhOk = (static_cast<int>(fsVh.size()) == (fsW + 1) * (fsH + 1));
 
-    // Only paint on pixels where the water stencil is 1.
-    glEnable(GL_STENCIL_TEST);
-    glStencilFunc(GL_EQUAL, 1, 0xFF);
-    glStencilMask(0x00);        // don't modify stencil values
-    glDisable(GL_DEPTH_TEST);   // fish are below the surface — skip depth test
-    glDepthMask(GL_FALSE);
-
     for (int fty = 0; fty < fsH; ++fty) {
       for (int ftx = 0; ftx < fsW; ++ftx) {
         if (map_.tiles[fty][ftx].obstacle != shared::ObstacleType::fishing_spot) continue;
@@ -767,11 +739,29 @@ void EditorApp::render3DViewport(float dt) {
         fishingSpotMesh_.render(skinnedShader_, fsModel, /*useMaterialColors=*/true);
       }
     }
+  }
 
-    glDepthMask(GL_TRUE);
-    glEnable(GL_DEPTH_TEST);
-    glStencilMask(0xFF);
-    glDisable(GL_STENCIL_TEST);
+  // ---- Water pass -------------------------------------------------------
+  // Resolve colour (refraction source, now including submerged fish) and depth
+  // (foam intersection) before drawing water.  Then re-bind the MSAA FBO and
+  // draw the water surface on top.
+  if (!map_.waterTiles.empty() && waterRenderer_.valid()) {
+    viewport3dFbo_->resolve();      // pre-water colour snapshot for refraction
+    viewport3dFbo_->resolveDepth(); // pre-water depth snapshot for foam
+
+    viewport3dFbo_->bind();
+    glViewport(0, 0, viewport3dW_, viewport3dH_);
+
+    // Update per-frame lighting/view state before rendering.
+    waterUniforms_.sunDir    = sunDir;
+    waterUniforms_.cameraPos = camera_.cameraPosition();
+
+    waterRenderer_.render(
+        static_cast<float>(glfwGetTime()),
+        viewProj,
+        viewport3dFbo_->resolveColorTexture(),
+        viewport3dFbo_->resolveDepthTexture(),
+        waterUniforms_);
   }
 
   // ---- Wireframe overlay — AFTER water so it composites on top ----------

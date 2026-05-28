@@ -149,18 +149,15 @@ void WaterRenderer::render(float time,
                             const WaterUniforms& u) {
   if (!shader_.isValid() || mesh_.empty()) return;
 
-  // Water is semi-transparent — enable blending for the duration of this pass.
+  // Water composites over the opaque scene that is already in the framebuffer
+  // (including any submerged meshes such as fishing spots).  Depth TEST stays on
+  // — so trees/obstacles in front correctly occlude the water — but depth WRITE
+  // is off.  The shader's "see-through" is an in-shader refraction sample of the
+  // scene below, so it outputs (near-)opaque colour; GL blending only softens the
+  // very shoreline edge.
   glEnable(GL_BLEND);
   glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
   glDepthMask(GL_FALSE);  // water doesn't write into the depth buffer
-
-  // Write stencil = 1 on every pixel where water passes the depth test.
-  // Pixels blocked by trees/obstacles (depth fail) keep stencil = 0.
-  // The fish pass later uses GL_EQUAL/1 to draw only through water pixels.
-  glEnable(GL_STENCIL_TEST);
-  glStencilMask(0xFF);
-  glStencilFunc(GL_ALWAYS, 1, 0xFF);
-  glStencilOp(GL_KEEP, GL_KEEP, GL_REPLACE);  // replace on depth-pass only
 
   shader_.use();
 
@@ -205,10 +202,6 @@ void WaterRenderer::render(float time,
   glBindTextureUnit(3, causticTex_);
 
   mesh_.draw();
-
-  // Stop writing stencil; disable stencil test so subsequent passes are unaffected.
-  glStencilMask(0x00);
-  glDisable(GL_STENCIL_TEST);
 
   // Restore depth writes; blend is left enabled (caller owns subsequent state).
   glDepthMask(GL_TRUE);
