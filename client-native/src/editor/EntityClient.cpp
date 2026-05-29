@@ -58,8 +58,16 @@ std::string entityHttpRequest(const std::wstring& method,
     WinHttpCloseHandle(req);
     WinHttpCloseHandle(conn);
     WinHttpCloseHandle(session);
-    throw std::runtime_error("HTTP request failed");
+    throw std::runtime_error("HTTP request failed (could not reach localhost:8080)");
   }
+
+  // Query the HTTP status code so server-side errors (4xx/5xx) are not
+  // silently treated as success.
+  DWORD statusCode = 0;
+  DWORD scSize = sizeof(statusCode);
+  WinHttpQueryHeaders(req,
+      WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+      WINHTTP_HEADER_NAME_BY_INDEX, &statusCode, &scSize, WINHTTP_NO_HEADER_INDEX);
 
   std::string result;
   DWORD avail = 0;
@@ -73,6 +81,12 @@ std::string entityHttpRequest(const std::wstring& method,
   WinHttpCloseHandle(req);
   WinHttpCloseHandle(conn);
   WinHttpCloseHandle(session);
+
+  if (statusCode >= 400) {
+    std::string msg = "HTTP " + std::to_string(statusCode);
+    if (!result.empty()) msg += ": " + result;
+    throw std::runtime_error(msg);
+  }
   return result;
 }
 

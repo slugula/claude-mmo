@@ -123,8 +123,8 @@ void EditorApp::dbDestroyPreviewFbo() {
   if (dbPreviewRbo_) { glDeleteRenderbuffers(1, &dbPreviewRbo_);  dbPreviewRbo_ = 0; }
 }
 
-void EditorApp::dbLoadPreviewModel(const std::string& modelPath) {
-  if (modelPath == dbPreviewLoadedPath_) return;
+void EditorApp::dbLoadPreviewModel(const std::string& modelPath, bool forceReload) {
+  if (!forceReload && modelPath == dbPreviewLoadedPath_) return;
 
   // Release old primitive GPU resources
   for (auto& p : dbPreviewPrims_) {
@@ -257,6 +257,14 @@ void EditorApp::dbRenderPreview(float dt) {
                                            camDist * 0.01f, camDist * 4.0f);
     glm::mat4 viewProj = proj * view;
 
+    // Orientation: apply the edited object's rotation (degrees → radians),
+    // rotating about the model centre so it spins in place.
+    glm::mat4 model = glm::translate(glm::mat4(1.f), dbPreviewCenter_);
+    model = glm::rotate(model, glm::radians(dbPreviewRot_.y), glm::vec3(0, 1, 0));
+    model = glm::rotate(model, glm::radians(dbPreviewRot_.x), glm::vec3(1, 0, 0));
+    model = glm::rotate(model, glm::radians(dbPreviewRot_.z), glm::vec3(0, 0, 1));
+    model = glm::translate(model, -dbPreviewCenter_);
+
     if (dbPreviewHasAnim_ && skinnedShader_.isValid()) {
       // Animated preview via SkinnedMesh
       dbPreviewSkinned_.update(dt);
@@ -277,11 +285,11 @@ void EditorApp::dbRenderPreview(float dt) {
       skinnedShader_.setVec3 ("u_fogColor",        glm::vec3(0.f));
       skinnedShader_.setFloat("u_fogDensity",      0.f);
       skinnedShader_.setFloat("u_fogStart",        0.f);
-      dbPreviewSkinned_.render(skinnedShader_, glm::mat4(1.f), /*useMaterialColors=*/true);
+      dbPreviewSkinned_.render(skinnedShader_, model, /*useMaterialColors=*/true);
     } else if (dbPreviewShader_.isValid()) {
       // Static primitive preview
       dbPreviewShader_.use();
-      dbPreviewShader_.setMat4("u_model",    glm::mat4(1.0f));
+      dbPreviewShader_.setMat4("u_model",    model);
       dbPreviewShader_.setMat4("u_viewProj", viewProj);
       for (const auto& prim : dbPreviewPrims_) {
         dbPreviewShader_.setVec4("u_color", prim.color);
@@ -2466,14 +2474,14 @@ void EditorApp::dbDrawItemsTab() {
         // Re-select by id
         for (int i = 0; i < (int)dbItems_.size(); ++i)
           if (dbItems_[i].id == d.id) { dbSelItem_ = i; dbEditIsNew_ = false; break; }
-      } else { dbStatus_ = "Save failed — is the server running?"; }
+      } else { dbStatus_ = "Save failed: " + dbClient_.lastError; }
     }
     ImGui::SameLine();
     if (!dbEditIsNew_ && ImGui::Button("Delete##item")) {
       if (dbClient_.deleteItem(d.id)) {
         dbStatus_ = "Deleted.";
         dbSelItem_ = -1; dbLoadAll();
-      } else { dbStatus_ = "Delete failed."; }
+      } else { dbStatus_ = "Delete failed: " + dbClient_.lastError; }
     }
     ImGui::SameLine();
     if (ImGui::Button("Revert##item")) {
@@ -2511,6 +2519,7 @@ void EditorApp::dbDrawNPCsTab() {
   ImGui::BeginChild("##npc_edit", ImVec2(0, 0), false);
   if (dbSelNPC_ >= 0 || dbEditIsNew_) {
     NpcDef& d = dbEditNPC_;
+    dbPreviewRot_ = glm::vec3(0.f);  // NPCs have no rotation field
 
     // 3D model preview
     if (dbPreviewTex_) {
@@ -2598,12 +2607,12 @@ void EditorApp::dbDrawNPCsTab() {
         dbStatus_ = "Saved."; dbLoadAll();
         for (int i = 0; i < (int)dbNPCs_.size(); ++i)
           if (dbNPCs_[i].id == d.id) { dbSelNPC_ = i; dbEditIsNew_ = false; break; }
-      } else { dbStatus_ = "Save failed."; }
+      } else { dbStatus_ = "Save failed: " + dbClient_.lastError; }
     }
     ImGui::SameLine();
     if (!dbEditIsNew_ && ImGui::Button("Delete##npc")) {
       if (dbClient_.deleteNPC(d.id)) { dbStatus_ = "Deleted."; dbSelNPC_ = -1; dbLoadAll(); }
-      else dbStatus_ = "Delete failed.";
+      else dbStatus_ = "Delete failed: " + dbClient_.lastError;
     }
     ImGui::SameLine();
     if (ImGui::Button("Revert##npc")) { if (dbSelNPC_ >= 0) dbEditNPC_ = dbNPCs_[dbSelNPC_]; }
@@ -2639,6 +2648,8 @@ void EditorApp::dbDrawObjectsTab() {
   ImGui::BeginChild("##obj_edit", ImVec2(0, 0), false);
   if (dbSelObject_ >= 0 || dbEditIsNew_) {
     ObjectDef& d = dbEditObject_;
+    // Feed the edited rotation to the live 3D preview each frame.
+    dbPreviewRot_ = glm::vec3(d.rotationX, d.rotationY, d.rotationZ);
 
     // 3D model preview
     if (dbPreviewTex_) {
@@ -2667,14 +2678,30 @@ void EditorApp::dbDrawObjectsTab() {
       ofn.lpstrFile   = buf; ofn.nMaxFile = MAX_PATH;
       ofn.Flags       = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
       if (GetOpenFileNameW(&ofn)) {
-        wchar_t exeDir[MAX_PATH] = {};
-        GetModuleFileNameW(nullptr, exeDir, MAX_PATH);
-        std::filesystem::path rel = std::filesystem::relative(buf, std::filesystem::path(exeDir).parent_path());
-        d.modelPath = rel.string();
-        dbLoadPreviewModel(d.modelPath);
+        // Convert the chosen path to UTF-8.
+        const int sz = WideCharToMultiByte(CP_UTF8, 0, buf, -1, nullptr, 0, nullptr, nullptr);
+        std::string srcPath(static_cast<std::size_t>(sz), '\0');
+        WideCharToMultiByte(CP_UTF8, 0, buf, -1, srcPath.data(), sz, nullptr, nullptr);
+        if (!srcPath.empty() && srcPath.back() == '\0') srcPath.pop_back();
+
+        // Copy the model into assets/models/<filename> so both the editor and
+        // the game client (same Release dir) can load it, then store the
+        // relative path. Force-reload the preview even if the path is unchanged.
+        const std::filesystem::path src(srcPath);
+        const std::string fname   = src.filename().string();
+        const std::string relPath = "assets/models/" + fname;
+        const auto destPath = resolveFromExe(relPath.c_str());
+        std::error_code ec;
+        std::filesystem::create_directories(destPath.parent_path(), ec);
+        std::filesystem::copy_file(src, destPath,
+            std::filesystem::copy_options::overwrite_existing, ec);
+        d.modelPath = ec ? srcPath : relPath;
+        dbLoadPreviewModel(d.modelPath, /*forceReload=*/true);
       }
     }
     if (d.modelPath != dbPreviewLoadedPath_) dbLoadPreviewModel(d.modelPath);
+    if (ImGui::Button("Reload Model##obj_model", ImVec2(-1, 0)))
+      dbLoadPreviewModel(d.modelPath, /*forceReload=*/true);
 
     // ---- Animation section (only shown when the loaded model has clips) ----
     if (dbPreviewHasAnim_ && !dbPreviewClips_.empty()) {
@@ -2778,12 +2805,12 @@ void EditorApp::dbDrawObjectsTab() {
         dbStatus_ = "Saved."; dbLoadAll();
         for (int i = 0; i < (int)dbObjects_.size(); ++i)
           if (dbObjects_[i].id == d.id) { dbSelObject_ = i; dbEditIsNew_ = false; break; }
-      } else { dbStatus_ = "Save failed."; }
+      } else { dbStatus_ = "Save failed: " + dbClient_.lastError; }
     }
     ImGui::SameLine();
     if (!dbEditIsNew_ && ImGui::Button("Delete##obj")) {
       if (dbClient_.deleteObject(d.id)) { dbStatus_ = "Deleted."; dbSelObject_ = -1; dbLoadAll(); }
-      else dbStatus_ = "Delete failed.";
+      else dbStatus_ = "Delete failed: " + dbClient_.lastError;
     }
     ImGui::SameLine();
     if (ImGui::Button("Revert##obj")) { if (dbSelObject_ >= 0) dbEditObject_ = dbObjects_[dbSelObject_]; }
@@ -2839,12 +2866,12 @@ void EditorApp::dbDrawActionsTab() {
         dbStatus_ = "Saved."; dbLoadAll();
         for (int i = 0; i < (int)dbActions_.size(); ++i)
           if (dbActions_[i].id == d.id) { dbSelAction_ = i; dbEditIsNew_ = false; break; }
-      } else { dbStatus_ = "Save failed."; }
+      } else { dbStatus_ = "Save failed: " + dbClient_.lastError; }
     }
     ImGui::SameLine();
     if (!dbEditIsNew_ && ImGui::Button("Delete##act")) {
       if (dbClient_.deleteAction(d.id)) { dbStatus_ = "Deleted."; dbSelAction_ = -1; dbLoadAll(); }
-      else dbStatus_ = "Delete failed.";
+      else dbStatus_ = "Delete failed: " + dbClient_.lastError;
     }
     ImGui::SameLine();
     if (ImGui::Button("Revert##act")) { if (dbSelAction_ >= 0) dbEditAction_ = dbActions_[dbSelAction_]; }

@@ -264,7 +264,7 @@ private:
   void   dbInitPreviewFbo();
   void   dbDestroyPreviewFbo();
   void   dbRenderPreview(float dt);   // renders into dbPreviewFbo_, angle auto-spins
-  void   dbLoadPreviewModel(const std::string& modelPath);  // load model for preview
+  void   dbLoadPreviewModel(const std::string& modelPath, bool forceReload = false);
 
   // Per-primitive GPU resources for the preview model.
   struct DbPreviewPrim {
@@ -284,6 +284,7 @@ private:
   world::SkinnedMesh          dbPreviewSkinned_;
   bool                        dbPreviewHasAnim_  = false;
   std::vector<std::string>    dbPreviewClips_;    // clip names from the loaded model
+  glm::vec3                   dbPreviewRot_ = glm::vec3(0.f);  // euler degrees applied in preview
 
   EntityClient         dbClient_;
   bool                 showDbWindow_  = false;
