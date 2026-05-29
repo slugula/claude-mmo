@@ -1,6 +1,9 @@
 #include "world/ObstacleSystem.hpp"
 
+#include "world/GltfLoader.hpp"
+
 #include <cgltf.h>
+#include <glm/gtc/matrix_transform.hpp>
 
 #include <cmath>
 #include <cstdio>
@@ -190,6 +193,7 @@ void ObstacleSystem::destroy() {
   delBuf(outlineInstanceVbo_);
   delBuf(treeGltfInstanceVbo_);
   delBuf(outlineTreeGltfInstanceVbo_);
+  destroyCustomModels();
   treeModelLoaded_ = false;
   treeCount_ = rockCount_ = fenceCount_ = 0;
 }
@@ -297,6 +301,9 @@ void ObstacleSystem::rebuildFromMap(const shared::WorldMapFile& map) {
   const auto& vh = map.vertexHeights;
   if (static_cast<int>(vh.size()) != (W + 1) * (H + 1)) return;
 
+  // Reset custom-object instance lists (rebuilt below).
+  for (auto& [id, e] : customEntries_) e.instances.clear();
+
   for (int ty = 0; ty < H; ++ty) {
     for (int tx = 0; tx < W; ++tx) {
       const auto& tile = map.tiles[ty][tx];
@@ -309,7 +316,26 @@ void ObstacleSystem::rebuildFromMap(const shared::WorldMapFile& map) {
       if      (tile.obstacle == "tree")  trees.push_back(inst);
       else if (tile.obstacle == "rock")  rocks.push_back(inst);
       else if (tile.obstacle == "fence") fences.push_back(inst);
+      else {
+        auto it = customEntries_.find(tile.obstacle);
+        if (it != customEntries_.end())
+          it->second.instances.push_back(glm::vec3(static_cast<float>(tx), y,
+                                                   static_cast<float>(ty)));
+      }
     }
+  }
+
+  // Upload per-instance data for STATIC custom kits (rotY=0 — orientation is
+  // baked into the mesh). Animated entries draw per-instance and don't need it.
+  for (auto& [id, e] : customEntries_) {
+    if (e.animated || e.instanceVbo == 0 || e.instances.empty()) continue;
+    std::vector<Instance> inst;
+    inst.reserve(e.instances.size());
+    for (const glm::vec3& p : e.instances)
+      inst.push_back(Instance{ p.x, p.y, p.z, 0.0f });
+    if (inst.size() > 4096) inst.resize(4096);
+    glNamedBufferSubData(e.instanceVbo, 0,
+        static_cast<GLsizeiptr>(inst.size() * sizeof(Instance)), inst.data());
   }
 
   if (trees.size()  > 4096) trees.resize(4096);
@@ -361,6 +387,129 @@ void ObstacleSystem::rebuildFromDefinitions(const std::vector<ObjectDefCache>& d
   seedBuiltinDefinitions();
   for (const auto& d : defs) {
     if (!d.id.empty()) defs_[d.id] = d;
+  }
+  // (Re)load custom-object models now that definitions changed.
+  loadCustomModels();
+}
+
+// ---- Custom (data-driven) object models ------------------------------------
+
+static bool isBuiltinObstacle(const std::string& id) {
+  return id == "tree" || id == "rock" || id == "chest" ||
+         id == "fence" || id == "fishing_spot";
+}
+
+void ObstacleSystem::destroyCustomModels() {
+  for (auto& [id, e] : customEntries_) {
+    for (Kit& k : e.staticKits) {
+      if (k.vao)          glDeleteVertexArrays(1, &k.vao);
+      if (k.ebo)          glDeleteBuffers(1, &k.ebo);
+      if (k.vboNormals)   glDeleteBuffers(1, &k.vboNormals);
+      if (k.vboPositions) glDeleteBuffers(1, &k.vboPositions);
+    }
+    if (e.instanceVbo) glDeleteBuffers(1, &e.instanceVbo);
+    // e.skinned (unique_ptr) frees its own GL resources in its destructor.
+  }
+  customEntries_.clear();
+}
+
+void ObstacleSystem::loadCustomModels() {
+  destroyCustomModels();
+  if (!modelResolver_) return;
+
+  for (const auto& [id, def] : defs_) {
+    if (isBuiltinObstacle(id)) continue;       // built-ins render via their own kits
+    if (def.modelPath.empty()) continue;       // nothing to draw
+
+    const auto path = modelResolver_(def.modelPath);
+    if (!std::filesystem::exists(path)) {
+      std::fprintf(stderr, "[ObstacleSystem] custom model missing for '%s': %s\n",
+                   id.c_str(), path.string().c_str());
+      continue;
+    }
+
+    CustomEntry e;
+    e.rotationDeg = glm::vec3(def.rotationX, def.rotationY, def.rotationZ);
+    e.clip        = def.defaultClip;
+
+    // Decide animated vs static by inspecting the glTF for animation clips.
+    auto sk = std::make_unique<world::SkinnedMesh>();
+    if (sk->load(path) && sk->animationCount() > 0) {
+      e.animated = true;
+      sk->setClip(def.defaultClip);   // "" → first clip
+      e.skinned  = std::move(sk);
+      customEntries_.emplace(id, std::move(e));
+      continue;
+    }
+    sk.reset();   // not animated — reload as static primitives
+
+    // ---- Static: bake the definition rotation into vertices, one Kit per
+    //      primitive (preserving per-material colour), all sharing one
+    //      per-instance VBO so the obstacle shader can draw them instanced.
+    auto model = world::loadGlb(path);
+    if (!model || model->primitives.empty()) continue;
+
+    glm::mat4 R(1.0f);
+    R = glm::rotate(R, glm::radians(e.rotationDeg.y), glm::vec3(0, 1, 0));
+    R = glm::rotate(R, glm::radians(e.rotationDeg.x), glm::vec3(1, 0, 0));
+    R = glm::rotate(R, glm::radians(e.rotationDeg.z), glm::vec3(0, 0, 1));
+    const glm::mat3 Rn = glm::mat3(R);
+
+    glCreateBuffers(1, &e.instanceVbo);
+    glNamedBufferStorage(e.instanceVbo, sizeof(Instance) * 4096, nullptr, GL_DYNAMIC_STORAGE_BIT);
+
+    for (const auto& prim : model->primitives) {
+      if (prim.positions.empty() || prim.indices.empty()) continue;
+      std::vector<float> pos = prim.positions;
+      std::vector<float> nrm = prim.normals;
+      if (nrm.size() < pos.size()) nrm.assign(pos.size(), 0.f);
+      for (std::size_t i = 0; i + 2 < pos.size(); i += 3) {
+        glm::vec3 p = R  * glm::vec4(pos[i], pos[i+1], pos[i+2], 1.0f);
+        glm::vec3 n = Rn * glm::vec3(nrm[i], nrm[i+1], nrm[i+2]);
+        pos[i]=p.x; pos[i+1]=p.y; pos[i+2]=p.z;
+        nrm[i]=n.x; nrm[i+1]=n.y; nrm[i+2]=n.z;
+      }
+      Kit kit;
+      uploadKitMesh(kit, pos, nrm, prim.indices, e.instanceVbo);
+      kit.color = (prim.materialIndex >= 0 &&
+                   prim.materialIndex < (int)model->materials.size())
+                  ? glm::vec3(model->materials[prim.materialIndex].baseColor)
+                  : glm::vec3(0.7f);
+      e.staticKits.push_back(kit);
+    }
+    if (!e.staticKits.empty())
+      customEntries_.emplace(id, std::move(e));
+    else if (e.instanceVbo)
+      glDeleteBuffers(1, &e.instanceVbo);
+  }
+}
+
+void ObstacleSystem::renderCustomStatic(render::Shader& obstacleShader) {
+  for (auto& [id, e] : customEntries_) {
+    if (e.animated || e.instances.empty()) continue;
+    for (const Kit& kit : e.staticKits) {
+      if (!kit.vao) continue;
+      obstacleShader.setVec3("u_color", kit.color);
+      glBindVertexArray(kit.vao);
+      glDrawElementsInstanced(GL_TRIANGLES, kit.indexCount, GL_UNSIGNED_INT,
+                              nullptr, static_cast<GLsizei>(e.instances.size()));
+    }
+  }
+  glBindVertexArray(0);
+}
+
+void ObstacleSystem::renderCustomAnimated(render::Shader& skinnedShader, float dt) {
+  for (auto& [id, e] : customEntries_) {
+    if (!e.animated || !e.skinned || e.instances.empty()) continue;
+    e.skinned->update(dt);
+    glm::mat4 rot(1.0f);
+    rot = glm::rotate(rot, glm::radians(e.rotationDeg.y), glm::vec3(0, 1, 0));
+    rot = glm::rotate(rot, glm::radians(e.rotationDeg.x), glm::vec3(1, 0, 0));
+    rot = glm::rotate(rot, glm::radians(e.rotationDeg.z), glm::vec3(0, 0, 1));
+    for (const glm::vec3& p : e.instances) {
+      glm::mat4 m = glm::translate(glm::mat4(1.0f), p) * rot;
+      e.skinned->render(skinnedShader, m, /*useMaterialColors=*/true);
+    }
   }
 }
 

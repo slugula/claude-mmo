@@ -366,6 +366,9 @@ bool EditorApp::init() {
   if (!obstacles_.loadTreeModel(resolveFromExe(kTreeModelPath))) {
     std::fprintf(stderr, "[Editor] tree model not found — using procedural trees\n");
   }
+  obstacles_.setModelResolver([](const std::string& rel) {
+    return resolveFromExe(rel.c_str());
+  });
   entities_.initGL();
 
   // Fishing spot animated model (non-fatal).
@@ -739,6 +742,7 @@ void EditorApp::render3DViewport(float dt) {
   obstacleShader_.setFloat("u_fogDensity", fogDensity_);
   obstacleShader_.setFloat("u_fogStart",   fogStart_);
   obstacles_.render(obstacleShader_);
+  obstacles_.renderCustomStatic(obstacleShader_);  // data-driven static props
 
   // NPC stand-ins
   {
@@ -755,9 +759,7 @@ void EditorApp::render3DViewport(float dt) {
   // ---- Fishing spot animated model — OPAQUE pass -----------------------------
   // Rendered with the opaque scene BEFORE the SSR snapshot so the water shader
   // captures it in sceneColor and draws it as a refracted underwater object.
-  if (fishingSpotMesh_.isLoaded()) {
-    fishingSpotMesh_.update(dt);
-
+  if (fishingSpotMesh_.isLoaded() || obstacles_.hasCustomModels()) {
     skinnedShader_.use();
     skinnedShader_.setMat4 ("u_viewProj",       viewProj);
     skinnedShader_.setMat4 ("u_lightViewProj",  lightVP);
@@ -778,27 +780,33 @@ void EditorApp::render3DViewport(float dt) {
     skinnedShader_.setFloat("u_fogDensity",      fogDensity_);
     skinnedShader_.setFloat("u_fogStart",        fogStart_);
 
-    const int   fsW    = map_.width;
-    const int   fsH    = map_.height;
-    const auto& fsVh   = map_.vertexHeights;
-    const bool  fsVhOk = (static_cast<int>(fsVh.size()) == (fsW + 1) * (fsH + 1));
-    for (int fty = 0; fty < fsH; ++fty) {
-      for (int ftx = 0; ftx < fsW; ++ftx) {
-        if (map_.tiles[fty][ftx].obstacle != "fishing_spot") continue;
-        float cy = 0.0f;
-        if (fsVhOk) {
-          const float SW = fsVh[(fsH - fty)     * (fsW + 1) + ftx    ] * shared::kMaxTerrainH;
-          const float SE = fsVh[(fsH - fty)     * (fsW + 1) + ftx + 1] * shared::kMaxTerrainH;
-          const float NW = fsVh[(fsH - fty - 1) * (fsW + 1) + ftx    ] * shared::kMaxTerrainH;
-          const float NE = fsVh[(fsH - fty - 1) * (fsW + 1) + ftx + 1] * shared::kMaxTerrainH;
-          cy = (SW + SE + NW + NE) * 0.25f;
+    if (fishingSpotMesh_.isLoaded()) {
+      fishingSpotMesh_.update(dt);
+      const int   fsW    = map_.width;
+      const int   fsH    = map_.height;
+      const auto& fsVh   = map_.vertexHeights;
+      const bool  fsVhOk = (static_cast<int>(fsVh.size()) == (fsW + 1) * (fsH + 1));
+      for (int fty = 0; fty < fsH; ++fty) {
+        for (int ftx = 0; ftx < fsW; ++ftx) {
+          if (map_.tiles[fty][ftx].obstacle != "fishing_spot") continue;
+          float cy = 0.0f;
+          if (fsVhOk) {
+            const float SW = fsVh[(fsH - fty)     * (fsW + 1) + ftx    ] * shared::kMaxTerrainH;
+            const float SE = fsVh[(fsH - fty)     * (fsW + 1) + ftx + 1] * shared::kMaxTerrainH;
+            const float NW = fsVh[(fsH - fty - 1) * (fsW + 1) + ftx    ] * shared::kMaxTerrainH;
+            const float NE = fsVh[(fsH - fty - 1) * (fsW + 1) + ftx + 1] * shared::kMaxTerrainH;
+            cy = (SW + SE + NW + NE) * 0.25f;
+          }
+          glm::mat4 fsModel = glm::translate(glm::mat4(1.0f),
+              glm::vec3(static_cast<float>(ftx), cy, static_cast<float>(fty)));
+          fsModel = glm::scale(fsModel, glm::vec3(1.0f));
+          fishingSpotMesh_.render(skinnedShader_, fsModel, /*useMaterialColors=*/true);
         }
-        glm::mat4 fsModel = glm::translate(glm::mat4(1.0f),
-            glm::vec3(static_cast<float>(ftx), cy, static_cast<float>(fty)));
-        fsModel = glm::scale(fsModel, glm::vec3(1.0f));
-        fishingSpotMesh_.render(skinnedShader_, fsModel, /*useMaterialColors=*/true);
       }
     }
+
+    // Data-driven animated custom objects (same skinned shader state).
+    obstacles_.renderCustomAnimated(skinnedShader_, dt);
   }
 
   // ---- Water pass -------------------------------------------------------

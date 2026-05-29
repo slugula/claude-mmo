@@ -2,12 +2,15 @@
 
 #include "render/Shader.hpp"
 #include "shared/SharedTypes.hpp"
+#include "world/SkinnedMesh.hpp"
 
 #include <glad/glad.h>
 #include <glm/glm.hpp>
 
 #include <cstdint>
 #include <filesystem>
+#include <functional>
+#include <memory>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -86,6 +89,23 @@ public:
   // set by the caller; this method sets u_color per draw.
   void render(render::Shader& obstacleShader);
 
+  // Resolver maps a definition's relative model_path → absolute filesystem
+  // path (the host knows the exe directory). Set once after initGL().
+  void setModelResolver(std::function<std::filesystem::path(const std::string&)> r) {
+    modelResolver_ = std::move(r);
+  }
+
+  // Draw STATIC custom-object models (instanced, definition rotation baked in).
+  // Uses the obstacle shader — call alongside render(). u_color set per draw.
+  void renderCustomStatic(render::Shader& obstacleShader);
+
+  // Draw ANIMATED custom-object models via SkinnedMesh, one draw per instance.
+  // `skinnedShader` must already have its lighting uniforms set by the caller
+  // (same setup as the fishing-spot pass). Advances each clip by dt once.
+  void renderCustomAnimated(render::Shader& skinnedShader, float dt);
+
+  bool hasCustomModels() const { return !customEntries_.empty(); }
+
   // Depth-only pass for shadow casting.
   void renderDepth(render::Shader& depthShader);
 
@@ -157,6 +177,30 @@ private:
 
   // Object definitions cache (keyed by id string)
   std::unordered_map<std::string, ObjectDefCache> defs_;
+
+  // ---- Data-driven custom object models ----------------------------------
+  // Any DB object whose id is not a built-in (tree/rock/chest/fence) and that
+  // has a model_path is rendered here. Static models go through the obstacle
+  // shader (instanced, baked rotation); animated models (glTF with animations)
+  // go through the skinned shader, one draw per instance.
+  struct CustomEntry {
+    bool                          animated = false;
+    // Static path (obstacle shader): one sub-kit per glTF primitive, with the
+    // definition rotation baked into vertices; all share one instance VBO.
+    std::vector<Kit>              staticKits;
+    GLuint                        instanceVbo = 0;
+    // Animated path (skinned shader).
+    std::unique_ptr<world::SkinnedMesh> skinned;
+    std::string                   clip;
+    glm::vec3                     rotationDeg = glm::vec3(0.f);
+    // Tile-centre world positions where this object is placed.
+    std::vector<glm::vec3>        instances;
+  };
+  std::unordered_map<std::string, CustomEntry> customEntries_;
+  std::function<std::filesystem::path(const std::string&)> modelResolver_;
+
+  void loadCustomModels();      // (re)load models for all custom defs
+  void destroyCustomModels();   // free GL resources for custom entries
 };
 
 }  // namespace world
