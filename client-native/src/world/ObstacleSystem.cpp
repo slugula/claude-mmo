@@ -5,7 +5,6 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
-#include <unordered_set>
 
 namespace world {
 
@@ -175,10 +174,8 @@ ObstacleSystem::~ObstacleSystem() {
 
 void ObstacleSystem::destroy() {
   for (Kit* k : {&trunk_, &canopy_, &rock_, &fence_,
-                 &trunkSub_, &canopySub_, &rockSub_, &fenceSub_,
                  &outlineTrunk_, &outlineCanopy_, &outlineRock_, &outlineFence_,
                  &treeTrunkGltf_, &treeCanopyGltf_,
-                 &treeTrunkGltfSub_, &treeCanopyGltfSub_,
                  &outlineTreeTrunkGltf_, &outlineTreeCanopyGltf_}) {
     if (k->vao)          glDeleteVertexArrays(1, &k->vao);
     if (k->ebo)          glDeleteBuffers(1, &k->ebo);
@@ -187,15 +184,14 @@ void ObstacleSystem::destroy() {
     *k = {};
   }
   auto delBuf = [](GLuint& b) { if (b) { glDeleteBuffers(1, &b); b = 0; } };
-  delBuf(treeInstanceVbo_);   delBuf(treeInstanceVboSub_);
-  delBuf(rockInstanceVbo_);   delBuf(rockInstanceVboSub_);
-  delBuf(fenceInstanceVbo_);  delBuf(fenceInstanceVboSub_);
+  delBuf(treeInstanceVbo_);
+  delBuf(rockInstanceVbo_);
+  delBuf(fenceInstanceVbo_);
   delBuf(outlineInstanceVbo_);
-  delBuf(treeGltfInstanceVbo_);    delBuf(treeGltfInstanceVboSub_);
+  delBuf(treeGltfInstanceVbo_);
   delBuf(outlineTreeGltfInstanceVbo_);
   treeModelLoaded_ = false;
   treeCount_ = rockCount_ = fenceCount_ = 0;
-  treeSubCount_ = rockSubCount_ = fenceSubCount_ = 0;
 }
 
 void ObstacleSystem::uploadKitMesh(Kit& kit,
@@ -252,41 +248,31 @@ void ObstacleSystem::initGL() {
   glCreateBuffers(1, &treeInstanceVbo_);
   glCreateBuffers(1, &rockInstanceVbo_);
   glCreateBuffers(1, &fenceInstanceVbo_);
-  glCreateBuffers(1, &treeInstanceVboSub_);
-  glCreateBuffers(1, &rockInstanceVboSub_);
-  glCreateBuffers(1, &fenceInstanceVboSub_);
-  // 4096-instance upper-bound per kind, separate VBOs for above/submerged.
-  glNamedBufferStorage(treeInstanceVbo_,     sizeof(Instance) * 4096, nullptr, GL_DYNAMIC_STORAGE_BIT);
-  glNamedBufferStorage(rockInstanceVbo_,     sizeof(Instance) * 4096, nullptr, GL_DYNAMIC_STORAGE_BIT);
-  glNamedBufferStorage(fenceInstanceVbo_,    sizeof(Instance) * 4096, nullptr, GL_DYNAMIC_STORAGE_BIT);
-  glNamedBufferStorage(treeInstanceVboSub_,  sizeof(Instance) * 4096, nullptr, GL_DYNAMIC_STORAGE_BIT);
-  glNamedBufferStorage(rockInstanceVboSub_,  sizeof(Instance) * 4096, nullptr, GL_DYNAMIC_STORAGE_BIT);
-  glNamedBufferStorage(fenceInstanceVboSub_, sizeof(Instance) * 4096, nullptr, GL_DYNAMIC_STORAGE_BIT);
+  // 4096-instance upper-bound per kind.
+  glNamedBufferStorage(treeInstanceVbo_,  sizeof(Instance) * 4096, nullptr, GL_DYNAMIC_STORAGE_BIT);
+  glNamedBufferStorage(rockInstanceVbo_,  sizeof(Instance) * 4096, nullptr, GL_DYNAMIC_STORAGE_BIT);
+  glNamedBufferStorage(fenceInstanceVbo_, sizeof(Instance) * 4096, nullptr, GL_DYNAMIC_STORAGE_BIT);
 
   // ---- Kit meshes -----------------------------------------------------
   // Tree trunk — slim cylinder, 6 sides, 1.0 unit tall.
   const Mesh trunkMesh  = makeCylinder(0.10f, 1.0f, 6);
-  uploadKitMesh(trunk_,    trunkMesh.positions, trunkMesh.normals, trunkMesh.indices, treeInstanceVbo_);
-  uploadKitMesh(trunkSub_, trunkMesh.positions, trunkMesh.normals, trunkMesh.indices, treeInstanceVboSub_);
-  trunk_.color = trunkSub_.color = glm::vec3(0.24f, 0.18f, 0.06f);  // dark earth-brown
+  uploadKitMesh(trunk_, trunkMesh.positions, trunkMesh.normals, trunkMesh.indices, treeInstanceVbo_);
+  trunk_.color = glm::vec3(0.24f, 0.18f, 0.06f);  // dark earth-brown
 
   // Canopy — UV sphere centered above the trunk top.
   const Mesh canopyMesh = makeUvSphere(/*radius*/0.45f, /*centerY*/1.15f, /*lat*/4, /*lon*/8);
-  uploadKitMesh(canopy_,    canopyMesh.positions, canopyMesh.normals, canopyMesh.indices, treeInstanceVbo_);
-  uploadKitMesh(canopySub_, canopyMesh.positions, canopyMesh.normals, canopyMesh.indices, treeInstanceVboSub_);
-  canopy_.color = canopySub_.color = glm::vec3(0.12f, 0.32f, 0.06f);  // forest green
+  uploadKitMesh(canopy_, canopyMesh.positions, canopyMesh.normals, canopyMesh.indices, treeInstanceVbo_);
+  canopy_.color = glm::vec3(0.12f, 0.32f, 0.06f);  // forest green
 
   // Rock — wide low box.
-  const Mesh rockMesh   = makeBox(0.28f, 0.18f, 0.24f);
-  uploadKitMesh(rock_,    rockMesh.positions, rockMesh.normals, rockMesh.indices, rockInstanceVbo_);
-  uploadKitMesh(rockSub_, rockMesh.positions, rockMesh.normals, rockMesh.indices, rockInstanceVboSub_);
-  rock_.color = rockSub_.color = glm::vec3(0.39f, 0.27f, 0.15f);  // medium brown
+  const Mesh rockMesh = makeBox(0.28f, 0.18f, 0.24f);
+  uploadKitMesh(rock_, rockMesh.positions, rockMesh.normals, rockMesh.indices, rockInstanceVbo_);
+  rock_.color = glm::vec3(0.39f, 0.27f, 0.15f);  // medium brown
 
   // Fence — thin horizontal plank.
-  const Mesh fenceMesh  = makeBox(0.48f, 0.125f, 0.05f);
-  uploadKitMesh(fence_,    fenceMesh.positions, fenceMesh.normals, fenceMesh.indices, fenceInstanceVbo_);
-  uploadKitMesh(fenceSub_, fenceMesh.positions, fenceMesh.normals, fenceMesh.indices, fenceInstanceVboSub_);
-  fence_.color = fenceSub_.color = glm::vec3(0.36f, 0.22f, 0.08f);  // warm wood-brown
+  const Mesh fenceMesh = makeBox(0.48f, 0.125f, 0.05f);
+  uploadKitMesh(fence_, fenceMesh.positions, fenceMesh.normals, fenceMesh.indices, fenceInstanceVbo_);
+  fence_.color = glm::vec3(0.36f, 0.22f, 0.08f);  // warm wood-brown
 
   // ---- Outline single-instance resources ----------------------------------
   // A separate instance VBO holding exactly 1 instance, used to draw outline
@@ -301,20 +287,10 @@ void ObstacleSystem::initGL() {
 }
 
 void ObstacleSystem::rebuildFromMap(const shared::WorldMapFile& map) {
-  // Build a fast water-tile lookup set.
-  std::unordered_set<int> waterSet;
-  waterSet.reserve(map.waterTiles.size());
-  for (const auto& wt : map.waterTiles)
-    waterSet.insert(wt.tileY * map.width + wt.tileX);
-  auto isWater = [&](int tx, int ty) {
-    return waterSet.count(ty * map.width + tx) > 0;
-  };
-
-  // Two separate lists per type: above-water and submerged.
-  // Each goes into its own VBO so no BaseInstance tricks are needed.
-  std::vector<Instance> treesAbove,  treesSub;
-  std::vector<Instance> rocksAbove,  rocksSub;
-  std::vector<Instance> fencesAbove, fencesSub;
+  std::vector<Instance> trees, rocks, fences;
+  trees.reserve(256);
+  rocks.reserve(256);
+  fences.reserve(64);
 
   const int W = map.width;
   const int H = map.height;
@@ -327,52 +303,34 @@ void ObstacleSystem::rebuildFromMap(const shared::WorldMapFile& map) {
       if (tile.obstacle.empty() || tile.obstacle == "none") continue;
 
       const float y = tileCenterY(vh, W, H, tx, ty);
-      const bool  submerged = isWater(tx, ty);
       const Instance inst{ static_cast<float>(tx), y,
                            static_cast<float>(ty), hashRotation(tx, ty) };
 
-      if (tile.obstacle == "tree") {
-        (submerged ? treesSub  : treesAbove).push_back(inst);
-      } else if (tile.obstacle == "rock") {
-        (submerged ? rocksSub  : rocksAbove).push_back(inst);
-      } else if (tile.obstacle == "fence") {
-        (submerged ? fencesSub : fencesAbove).push_back(inst);
-      }
+      if      (tile.obstacle == "tree")  trees.push_back(inst);
+      else if (tile.obstacle == "rock")  rocks.push_back(inst);
+      else if (tile.obstacle == "fence") fences.push_back(inst);
     }
   }
 
-  // Clamp to buffer capacity.
-  if (treesAbove.size()  > 4096) treesAbove.resize(4096);
-  if (treesSub.size()    > 4096) treesSub.resize(4096);
-  if (rocksAbove.size()  > 4096) rocksAbove.resize(4096);
-  if (rocksSub.size()    > 4096) rocksSub.resize(4096);
-  if (fencesAbove.size() > 4096) fencesAbove.resize(4096);
-  if (fencesSub.size()   > 4096) fencesSub.resize(4096);
+  if (trees.size()  > 4096) trees.resize(4096);
+  if (rocks.size()  > 4096) rocks.resize(4096);
+  if (fences.size() > 4096) fences.resize(4096);
 
   auto upload = [](GLuint vbo, const std::vector<Instance>& v) {
     if (!v.empty())
       glNamedBufferSubData(vbo, 0, static_cast<GLsizeiptr>(v.size() * sizeof(Instance)), v.data());
   };
 
-  upload(treeInstanceVbo_,     treesAbove);
-  upload(treeInstanceVboSub_,  treesSub);
-  upload(rockInstanceVbo_,     rocksAbove);
-  upload(rockInstanceVboSub_,  rocksSub);
-  upload(fenceInstanceVbo_,    fencesAbove);
-  upload(fenceInstanceVboSub_, fencesSub);
+  upload(treeInstanceVbo_,  trees);
+  upload(rockInstanceVbo_,  rocks);
+  upload(fenceInstanceVbo_, fences);
 
-  // Keep gltf tree VBOs in sync with the above-water list.
-  if (treeModelLoaded_ && treeGltfInstanceVbo_ && !treesAbove.empty())
-    upload(treeGltfInstanceVbo_, treesAbove);
-  if (treeModelLoaded_ && treeGltfInstanceVboSub_ && !treesSub.empty())
-    upload(treeGltfInstanceVboSub_, treesSub);
+  if (treeModelLoaded_ && treeGltfInstanceVbo_ && !trees.empty())
+    upload(treeGltfInstanceVbo_, trees);
 
-  treeCount_    = treesAbove.size();
-  rockCount_    = rocksAbove.size();
-  fenceCount_   = fencesAbove.size();
-  treeSubCount_ = treesSub.size();
-  rockSubCount_ = rocksSub.size();
-  fenceSubCount_= fencesSub.size();
+  treeCount_  = trees.size();
+  rockCount_  = rocks.size();
+  fenceCount_ = fences.size();
 }
 
 // ---- Data-driven definitions cache -----------------------------------------
@@ -416,11 +374,7 @@ std::pair<int,int> ObstacleSystem::footprint(const std::string& id) const {
   return d ? std::make_pair(d->sizeX, d->sizeY) : std::make_pair(1, 1);
 }
 
-void ObstacleSystem::render(render::Shader& obstacleShader, bool submergedPass) {
-  // submergedPass=false: draw from the above-water VBOs (trunk_, rock_, fence_).
-  // submergedPass=true : draw from the submerged VBOs (trunkSub_, rockSub_, fenceSub_).
-  // Each VBO was independently populated in rebuildFromMap() — no BaseInstance needed.
-
+void ObstacleSystem::render(render::Shader& obstacleShader) {
   auto draw = [&](const Kit& kit, std::size_t count) {
     if (count == 0 || !kit.vao) return;
     glBindVertexArray(kit.vao);
@@ -428,39 +382,17 @@ void ObstacleSystem::render(render::Shader& obstacleShader, bool submergedPass) 
                             nullptr, static_cast<GLsizei>(count));
   };
 
-  if (!submergedPass) {
-    // Above-water pass
-    const std::size_t trees  = treeCount_;
-    const std::size_t rocks  = rockCount_;
-    const std::size_t fences = fenceCount_;
-    if (trees > 0) {
-      if (treeModelLoaded_) {
-        obstacleShader.setVec3("u_color", treeTrunkGltf_.color);  draw(treeTrunkGltf_,  trees);
-        obstacleShader.setVec3("u_color", treeCanopyGltf_.color);  draw(treeCanopyGltf_, trees);
-      } else {
-        obstacleShader.setVec3("u_color", trunk_.color);  draw(trunk_,  trees);
-        obstacleShader.setVec3("u_color", canopy_.color); draw(canopy_, trees);
-      }
+  if (treeCount_ > 0) {
+    if (treeModelLoaded_) {
+      obstacleShader.setVec3("u_color", treeTrunkGltf_.color);  draw(treeTrunkGltf_,  treeCount_);
+      obstacleShader.setVec3("u_color", treeCanopyGltf_.color); draw(treeCanopyGltf_, treeCount_);
+    } else {
+      obstacleShader.setVec3("u_color", trunk_.color);  draw(trunk_,  treeCount_);
+      obstacleShader.setVec3("u_color", canopy_.color); draw(canopy_, treeCount_);
     }
-    if (rocks  > 0) { obstacleShader.setVec3("u_color", rock_.color);  draw(rock_,  rocks);  }
-    if (fences > 0) { obstacleShader.setVec3("u_color", fence_.color); draw(fence_, fences); }
-  } else {
-    // Submerged pass — same geometry kits, different instance VBOs
-    const std::size_t trees  = treeSubCount_;
-    const std::size_t rocks  = rockSubCount_;
-    const std::size_t fences = fenceSubCount_;
-    if (trees > 0) {
-      if (treeModelLoaded_) {
-        obstacleShader.setVec3("u_color", treeTrunkGltfSub_.color);  draw(treeTrunkGltfSub_,  trees);
-        obstacleShader.setVec3("u_color", treeCanopyGltfSub_.color);  draw(treeCanopyGltfSub_, trees);
-      } else {
-        obstacleShader.setVec3("u_color", trunkSub_.color);  draw(trunkSub_,  trees);
-        obstacleShader.setVec3("u_color", canopySub_.color); draw(canopySub_, trees);
-      }
-    }
-    if (rocks  > 0) { obstacleShader.setVec3("u_color", rockSub_.color);  draw(rockSub_,  rocks);  }
-    if (fences > 0) { obstacleShader.setVec3("u_color", fenceSub_.color); draw(fenceSub_, fences); }
   }
+  if (rockCount_  > 0) { obstacleShader.setVec3("u_color", rock_.color);  draw(rock_,  rockCount_);  }
+  if (fenceCount_ > 0) { obstacleShader.setVec3("u_color", fence_.color); draw(fence_, fenceCount_); }
   glBindVertexArray(0);
 }
 
@@ -772,11 +704,6 @@ bool ObstacleSystem::loadTreeModel(const std::filesystem::path& path) {
     glNamedBufferStorage(treeGltfInstanceVbo_, sizeof(Instance) * 4096,
                          nullptr, GL_DYNAMIC_STORAGE_BIT);
   }
-  if (!treeGltfInstanceVboSub_) {
-    glCreateBuffers(1, &treeGltfInstanceVboSub_);
-    glNamedBufferStorage(treeGltfInstanceVboSub_, sizeof(Instance) * 4096,
-                         nullptr, GL_DYNAMIC_STORAGE_BIT);
-  }
   if (!outlineTreeGltfInstanceVbo_) {
     glCreateBuffers(1, &outlineTreeGltfInstanceVbo_);
     glNamedBufferStorage(outlineTreeGltfInstanceVbo_, sizeof(Instance),
@@ -787,9 +714,6 @@ bool ObstacleSystem::loadTreeModel(const std::filesystem::path& path) {
     uploadKitMesh(treeTrunkGltf_, trunkMesh.positions, trunkMesh.normals,
                   trunkMesh.indices, treeGltfInstanceVbo_);
     treeTrunkGltf_.color = glm::vec3(0.24f, 0.18f, 0.06f);
-    uploadKitMesh(treeTrunkGltfSub_, trunkMesh.positions, trunkMesh.normals,
-                  trunkMesh.indices, treeGltfInstanceVboSub_);
-    treeTrunkGltfSub_.color = treeTrunkGltf_.color;
     uploadKitMesh(outlineTreeTrunkGltf_, trunkMesh.positions, trunkMesh.normals,
                   trunkMesh.indices, outlineTreeGltfInstanceVbo_);
   }
@@ -797,9 +721,6 @@ bool ObstacleSystem::loadTreeModel(const std::filesystem::path& path) {
     uploadKitMesh(treeCanopyGltf_, canopyMesh.positions, canopyMesh.normals,
                   canopyMesh.indices, treeGltfInstanceVbo_);
     treeCanopyGltf_.color = glm::vec3(0.12f, 0.32f, 0.06f);
-    uploadKitMesh(treeCanopyGltfSub_, canopyMesh.positions, canopyMesh.normals,
-                  canopyMesh.indices, treeGltfInstanceVboSub_);
-    treeCanopyGltfSub_.color = treeCanopyGltf_.color;
     uploadKitMesh(outlineTreeCanopyGltf_, canopyMesh.positions, canopyMesh.normals,
                   canopyMesh.indices, outlineTreeGltfInstanceVbo_);
   }

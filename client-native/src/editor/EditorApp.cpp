@@ -739,99 +739,75 @@ void EditorApp::render3DViewport(float dt) {
     entities_.render(obstacleShader_);
   }
 
-  // ---- Fishing spot — advance animation only; render in submerged pass -------
-  if (fishingSpotMesh_.isLoaded()) fishingSpotMesh_.update(dt);
+  // ---- Fishing spot animated model — OPAQUE pass -----------------------------
+  // Rendered with the opaque scene BEFORE the SSR snapshot so the water shader
+  // captures it in sceneColor and draws it as a refracted underwater object.
+  if (fishingSpotMesh_.isLoaded()) {
+    fishingSpotMesh_.update(dt);
+
+    skinnedShader_.use();
+    skinnedShader_.setMat4 ("u_viewProj",       viewProj);
+    skinnedShader_.setMat4 ("u_lightViewProj",  lightVP);
+    skinnedShader_.setVec3 ("u_lightDir",       sunDir);
+    skinnedShader_.setVec3 ("u_paletteLevels",  glm::vec3(static_cast<float>(paletteHues_),
+                                                           static_cast<float>(paletteSats_),
+                                                           static_cast<float>(paletteLums_)));
+    skinnedShader_.setFloat("u_paletteEnabled",  palette_ ? 1.0f : 0.0f);
+    skinnedShader_.setFloat("u_ambient",         ambient_);
+    skinnedShader_.setFloat("u_diffuse",         diffuse_);
+    skinnedShader_.setFloat("u_lightingEnabled", lightingEnabled_ ? 1.0f : 0.0f);
+    skinnedShader_.setInt  ("u_shadowMap",       1);
+    skinnedShader_.setFloat("u_shadowsEnabled",  0.0f);
+    skinnedShader_.setFloat("u_shadowDarkness",  0.0f);
+    skinnedShader_.setFloat("u_shadowBias",      0.0f);
+    skinnedShader_.setFloat("u_fogEnabled",      fogEnabled_ ? 1.0f : 0.0f);
+    skinnedShader_.setVec3 ("u_fogColor",        fogColor_);
+    skinnedShader_.setFloat("u_fogDensity",      fogDensity_);
+    skinnedShader_.setFloat("u_fogStart",        fogStart_);
+
+    const int   fsW    = map_.width;
+    const int   fsH    = map_.height;
+    const auto& fsVh   = map_.vertexHeights;
+    const bool  fsVhOk = (static_cast<int>(fsVh.size()) == (fsW + 1) * (fsH + 1));
+    for (int fty = 0; fty < fsH; ++fty) {
+      for (int ftx = 0; ftx < fsW; ++ftx) {
+        if (map_.tiles[fty][ftx].obstacle != "fishing_spot") continue;
+        float cy = 0.0f;
+        if (fsVhOk) {
+          const float SW = fsVh[(fsH - fty)     * (fsW + 1) + ftx    ] * shared::kMaxTerrainH;
+          const float SE = fsVh[(fsH - fty)     * (fsW + 1) + ftx + 1] * shared::kMaxTerrainH;
+          const float NW = fsVh[(fsH - fty - 1) * (fsW + 1) + ftx    ] * shared::kMaxTerrainH;
+          const float NE = fsVh[(fsH - fty - 1) * (fsW + 1) + ftx + 1] * shared::kMaxTerrainH;
+          cy = (SW + SE + NW + NE) * 0.25f;
+        }
+        glm::mat4 fsModel = glm::translate(glm::mat4(1.0f),
+            glm::vec3(static_cast<float>(ftx), cy, static_cast<float>(fty)));
+        fsModel = glm::scale(fsModel, glm::vec3(1.0f));
+        fishingSpotMesh_.render(skinnedShader_, fsModel, /*useMaterialColors=*/true);
+      }
+    }
+  }
 
   // ---- Water pass -------------------------------------------------------
-  // Resolve colour (for SSR) and depth (for foam intersection) before drawing
-  // water.  Then re-bind the MSAA FBO, draw water on top, and resolve again.
+  // Resolve colour + depth (full opaque scene incl. submerged fish), then draw
+  // depth-based refraction water on top.
   if (!map_.waterTiles.empty() && waterRenderer_.valid()) {
-    viewport3dFbo_->resolve();      // pre-water colour snapshot for SSR
-    viewport3dFbo_->resolveDepth(); // pre-water depth snapshot for foam
+    viewport3dFbo_->resolve();
+    viewport3dFbo_->resolveDepth();
 
     viewport3dFbo_->bind();
     glViewport(0, 0, viewport3dW_, viewport3dH_);
 
+    waterUniforms_.cameraPos = camera_.cameraPosition();
+    waterUniforms_.sunDir    = sunDir;
+    waterUniforms_.nearPlane = 0.1f;    // matches GameCamera::viewProjection
+    waterUniforms_.farPlane  = 500.0f;
     waterRenderer_.render(
         static_cast<float>(glfwGetTime()),
         viewProj,
         viewport3dFbo_->resolveColorTexture(),
         viewport3dFbo_->resolveDepthTexture(),
         waterUniforms_);
-  }
-
-  // ---- Submerged objects + fish — post-water stencil pass ------------------
-  if (!map_.waterTiles.empty() && waterRenderer_.valid()) {
-    glEnable(GL_STENCIL_TEST);
-    glStencilFunc(GL_EQUAL, 1, 0xFF);
-    glStencilMask(0x00);
-    // Depth test OFF: submerged geometry sits at terrain-floor Y, which matches
-    // what's already in the depth buffer → GL_LESS would fail.  The stencil mask
-    // (written by water's own depth test) already handles foreground occlusion.
-    glDisable(GL_DEPTH_TEST);
-    glDepthMask(GL_FALSE);
-
-    obstacleShader_.use();
-    obstacleShader_.setMat4("u_viewProj",      viewProj);
-    obstacleShader_.setMat4("u_lightViewProj", lightVP);
-    obstacleShader_.setVec3("u_lightDir",      sunDir);
-    obstacleShader_.setVec3("u_paletteLevels", glm::vec3(static_cast<float>(paletteHues_),
-                                                          static_cast<float>(paletteSats_),
-                                                          static_cast<float>(paletteLums_)));
-    obstacleShader_.setFloat("u_paletteEnabled",  palette_ ? 1.0f : 0.0f);
-    obstacleShader_.setFloat("u_ambient",         ambient_);
-    obstacleShader_.setFloat("u_diffuse",         diffuse_);
-    obstacleShader_.setFloat("u_lightingEnabled", lightingEnabled_ ? 1.0f : 0.0f);
-    obstacleShader_.setFloat("u_shadowsEnabled",  0.0f);
-    obstacles_.render(obstacleShader_, /*submergedPass=*/true);
-
-    if (fishingSpotMesh_.isLoaded()) {
-      const int   fsW    = map_.width;
-      const int   fsH    = map_.height;
-      const auto& fsVh   = map_.vertexHeights;
-      const bool  fsVhOk = (static_cast<int>(fsVh.size()) == (fsW + 1) * (fsH + 1));
-      skinnedShader_.use();
-      skinnedShader_.setMat4 ("u_viewProj",       viewProj);
-      skinnedShader_.setMat4 ("u_lightViewProj",  lightVP);
-      skinnedShader_.setVec3 ("u_lightDir",       sunDir);
-      skinnedShader_.setVec3 ("u_paletteLevels",  glm::vec3(static_cast<float>(paletteHues_),
-                                                             static_cast<float>(paletteSats_),
-                                                             static_cast<float>(paletteLums_)));
-      skinnedShader_.setFloat("u_paletteEnabled",  palette_ ? 1.0f : 0.0f);
-      skinnedShader_.setFloat("u_ambient",         ambient_);
-      skinnedShader_.setFloat("u_diffuse",         diffuse_);
-      skinnedShader_.setFloat("u_lightingEnabled", lightingEnabled_ ? 1.0f : 0.0f);
-      skinnedShader_.setInt  ("u_shadowMap",       1);
-      skinnedShader_.setFloat("u_shadowsEnabled",  0.0f);
-      skinnedShader_.setFloat("u_shadowDarkness",  0.0f);
-      skinnedShader_.setFloat("u_shadowBias",      0.0f);
-      skinnedShader_.setFloat("u_fogEnabled",      fogEnabled_ ? 1.0f : 0.0f);
-      skinnedShader_.setVec3 ("u_fogColor",        fogColor_);
-      skinnedShader_.setFloat("u_fogDensity",      fogDensity_);
-      skinnedShader_.setFloat("u_fogStart",        fogStart_);
-      for (int fty = 0; fty < fsH; ++fty) {
-        for (int ftx = 0; ftx < fsW; ++ftx) {
-          if (map_.tiles[fty][ftx].obstacle != "fishing_spot") continue;
-          float cy = 0.0f;
-          if (fsVhOk) {
-            const float SW = fsVh[(fsH - fty)     * (fsW + 1) + ftx    ] * shared::kMaxTerrainH;
-            const float SE = fsVh[(fsH - fty)     * (fsW + 1) + ftx + 1] * shared::kMaxTerrainH;
-            const float NW = fsVh[(fsH - fty - 1) * (fsW + 1) + ftx    ] * shared::kMaxTerrainH;
-            const float NE = fsVh[(fsH - fty - 1) * (fsW + 1) + ftx + 1] * shared::kMaxTerrainH;
-            cy = (SW + SE + NW + NE) * 0.25f;
-          }
-          glm::mat4 fsModel = glm::translate(glm::mat4(1.0f),
-              glm::vec3(static_cast<float>(ftx), cy, static_cast<float>(fty)));
-          fsModel = glm::scale(fsModel, glm::vec3(1.0f));
-          fishingSpotMesh_.render(skinnedShader_, fsModel, /*useMaterialColors=*/true);
-        }
-      }
-    }
-
-    glEnable(GL_DEPTH_TEST);  // restore depth test for subsequent passes
-    glDepthMask(GL_TRUE);
-    glStencilMask(0xFF);      // restore so glClear(GL_STENCIL_BUFFER_BIT) works next frame
-    glDisable(GL_STENCIL_TEST);
   }
 
   // ---- Wireframe overlay — AFTER water so it composites on top ----------
@@ -1021,9 +997,14 @@ void EditorApp::drawWaterSettings() {
     ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##wsp",  &u.waveSpeed,       0.0f, 2.0f,  "WaveSpd:%.2f");
     ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##wht",  &u.waveHeight,      0.0f, 0.5f,  "WaveH:%.3f");
     ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##nstr", &u.normalStrength,  0.0f, 2.0f,  "NrmStr:%.2f");
-    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##rfl",  &u.reflectStrength, 0.0f, 1.0f,  "Reflect:%.2f");
+    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##rfl",  &u.reflectStrength, 0.0f, 1.0f,  "Clarity:%.2f");
     ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##caus", &u.causticIntensity,0.0f, 1.0f,  "Caustic:%.2f");
     ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##fwid", &u.foamWidth,        0.0f, 1.0f,  "FoamWidth:%.2f");
+  }
+  if (ImGui::CollapsingHeader("Water — Depth & Refraction", ImGuiTreeNodeFlags_DefaultOpen)) {
+    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##refr", &u.refractionStrength, 0.0f, 0.15f, "Refraction:%.3f");
+    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##dfade",&u.depthFade,          0.5f, 20.0f, "DepthFade:%.1f");
+    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##cfoam",&u.foamContactWidth,   0.0f, 2.0f,  "ContactFoam:%.2f");
   }
   if (ImGui::CollapsingHeader("Water — Advanced")) {
     ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##wsc",  &u.waveScale,       0.5f, 8.0f,  "WaveSc:%.2f");

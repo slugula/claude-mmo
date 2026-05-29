@@ -81,30 +81,20 @@ public:
   // Returns {1,1} for unknown ids.
   std::pair<int,int> footprint(const std::string& id) const;
 
-  // Issue instanced draws for obstacles.
-  // submergedPass=false (default): draws only obstacles on non-water tiles.
-  // submergedPass=true: draws only obstacles on water tiles (post-water pass).
-  // The shader must have all uniforms except u_color set by the caller.
-  void render(render::Shader& obstacleShader, bool submergedPass = false);
+  // Issue instanced draws for all obstacles (single pass — all tiles,
+  // above and below water). The shader must have all uniforms except u_color
+  // set by the caller; this method sets u_color per draw.
+  void render(render::Shader& obstacleShader);
 
-  // Depth-only pass for shadow casting. The supplied shader is expected to
-  // have its u_lightViewProj already bound; we just issue the instanced
-  // draws against the same VAOs used for the regular pass. No u_color or
-  // lighting uniforms are touched.
+  // Depth-only pass for shadow casting.
   void renderDepth(render::Shader& depthShader);
 
-  // Render an outline around a single obstacle at the given tile. Uses
-  // front-face culling + normal inflation for the "shell" outline effect.
-  // The caller must have bound `outlineShader` and set u_viewProj already.
-  // Returns false if the tile doesn't have a tree or rock.
+  // Render an outline around a single obstacle at the given tile.
   bool renderOutlineAt(render::Shader& outlineShader,
                        const shared::WorldMapFile& map,
                        int tileX, int tileY);
 
   // Render just the geometry for a single obstacle (no stencil / inflation).
-  // Used by the screen-space outline mask pass to build a silhouette texture.
-  // u_viewProj must already be set on the shader. Returns false if the tile
-  // has no renderable obstacle.
   bool renderGeometryAt(render::Shader& maskShader,
                         const shared::WorldMapFile& map,
                         int tileX, int tileY);
@@ -112,24 +102,17 @@ public:
   std::size_t treeCount()  const { return treeCount_;  }
   std::size_t rockCount()  const { return rockCount_;  }
   std::size_t fenceCount() const { return fenceCount_; }
-  std::size_t treeSubCount()  const { return treeSubCount_;  }
-  std::size_t rockSubCount()  const { return rockSubCount_;  }
-  std::size_t fenceSubCount() const { return fenceSubCount_; }
 
-  // Axis-aligned bounding box of the gltf tree model in world space (after
-  // applying kScaleXZ/kScaleY). Valid only when treeModelLoaded() is true.
   bool        treeModelLoaded()   const { return treeModelLoaded_; }
   glm::vec3   treeGltfAABBMin()   const { return treeGltfAABBMin_; }
   glm::vec3   treeGltfAABBMax()   const { return treeGltfAABBMax_; }
 
 private:
-  // Per-kit static-geometry handles + per-kit instance VAO that combines
-  // them with the shared instance buffer for that obstacle kind.
   struct Kit {
-    GLuint  vboPositions = 0;  // 3 floats per vertex
-    GLuint  vboNormals   = 0;  // 3 floats per vertex
-    GLuint  ebo          = 0;  // uint32 indices
-    GLuint  vao          = 0;  // attribute layout (mesh + instance binding)
+    GLuint  vboPositions = 0;
+    GLuint  vboNormals   = 0;
+    GLuint  ebo          = 0;
+    GLuint  vao          = 0;
     GLsizei indexCount   = 0;
     glm::vec3 color      = glm::vec3(1.0f);
   };
@@ -146,31 +129,18 @@ private:
   Kit rock_;
   Kit fence_;
 
-  GLuint treeInstanceVbo_  = 0;  // above-water instances (shared trunk+canopy)
+  GLuint treeInstanceVbo_  = 0;
   GLuint rockInstanceVbo_  = 0;
   GLuint fenceInstanceVbo_ = 0;
 
-  // Submerged (below-water) variants — separate VBOs so no BaseInstance needed.
-  Kit    trunkSub_;
-  Kit    canopySub_;
-  Kit    rockSub_;
-  Kit    fenceSub_;
-  GLuint treeInstanceVboSub_  = 0;
-  GLuint rockInstanceVboSub_  = 0;
-  GLuint fenceInstanceVboSub_ = 0;
-  // glTF submerged variant
-  Kit    treeTrunkGltfSub_;
-  Kit    treeCanopyGltfSub_;
-  GLuint treeGltfInstanceVboSub_ = 0;
   // Single-instance VBO for outline rendering of one obstacle at a time.
   GLuint outlineInstanceVbo_ = 0;
-  Kit    outlineTrunk_;   // VAOs bound to outlineInstanceVbo_
+  Kit    outlineTrunk_;
   Kit    outlineCanopy_;
   Kit    outlineRock_;
   Kit    outlineFence_;
 
   // Optional glTF tree model (replaces procedural trunk+canopy when loaded).
-  // Each instance sits at the centre of a 2×2 tile block.
   Kit    treeTrunkGltf_;
   Kit    treeCanopyGltf_;
   GLuint treeGltfInstanceVbo_    = 0;
@@ -178,15 +148,12 @@ private:
   Kit    outlineTreeCanopyGltf_;
   GLuint outlineTreeGltfInstanceVbo_ = 0;
   bool      treeModelLoaded_    = false;
-  glm::vec3 treeGltfAABBMin_   = glm::vec3(-0.45f, 0.0f, -0.45f);  // fallback = procedural bounds
+  glm::vec3 treeGltfAABBMin_   = glm::vec3(-0.45f, 0.0f, -0.45f);
   glm::vec3 treeGltfAABBMax_   = glm::vec3( 0.45f, 1.6f,  0.45f);
 
-  std::size_t treeCount_    = 0;  // above-water count
-  std::size_t rockCount_    = 0;
-  std::size_t fenceCount_   = 0;
-  std::size_t treeSubCount_ = 0;  // submerged count
-  std::size_t rockSubCount_ = 0;
-  std::size_t fenceSubCount_= 0;
+  std::size_t treeCount_  = 0;
+  std::size_t rockCount_  = 0;
+  std::size_t fenceCount_ = 0;
 
   // Object definitions cache (keyed by id string)
   std::unordered_map<std::string, ObjectDefCache> defs_;
