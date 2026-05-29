@@ -26,6 +26,16 @@ function err(res: Response, e: unknown, status = 500) {
   res.status(status).json({ error: String(e) });
 }
 
+// Coerce empty strings (and undefined/null) to SQL NULL. The native editor
+// serializes optional text fields as "" rather than omitting them; for columns
+// with a foreign key (action_id, craft_action_id, drop_item_id, etc.) an empty
+// string violates the FK, so it must become NULL.
+function nullIfEmpty(v: unknown): string | null {
+  if (v === undefined || v === null) return null;
+  const s = String(v);
+  return s.length === 0 ? null : s;
+}
+
 // ---- Actions ----------------------------------------------------------------
 
 entityRouter.get('/actions', async (_req, res) => {
@@ -113,10 +123,10 @@ entityRouter.post('/objects', async (req, res) => {
          required_level,drop_item_id,drop_quantity,respawn_ticks,craft_action_id,examine_text,
          default_clip,looping,rotation_x,rotation_y,rotation_z)
       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`,
-      [b.id,b.name,b.model_path??null,b.object_type??'Decoration',b.collision??'full_blocking',
-       b.size_x??1,b.size_y??1,b.action_id??null,b.required_skill??null,b.required_level??null,
-       b.drop_item_id??null,b.drop_quantity??1,b.respawn_ticks??25,b.craft_action_id??null,b.examine_text??null,
-       b.default_clip??null,b.looping??true,b.rotation_x??0,b.rotation_y??0,b.rotation_z??0]);
+      [b.id,b.name,nullIfEmpty(b.model_path),b.object_type??'Decoration',b.collision??'full_blocking',
+       b.size_x??1,b.size_y??1,nullIfEmpty(b.action_id),nullIfEmpty(b.required_skill),b.required_level??null,
+       nullIfEmpty(b.drop_item_id),b.drop_quantity??1,b.respawn_ticks??25,nullIfEmpty(b.craft_action_id),nullIfEmpty(b.examine_text),
+       nullIfEmpty(b.default_clip),b.looping??true,b.rotation_x??0,b.rotation_y??0,b.rotation_z??0]);
     ok(res, { ok: true });
   } catch (e) { err(res, e); }
 });
@@ -131,10 +141,10 @@ entityRouter.put('/objects/:id', async (req, res) => {
         drop_quantity=$11,respawn_ticks=$12,craft_action_id=$13,examine_text=$14,
         default_clip=$15,looping=$16,rotation_x=$17,rotation_y=$18,rotation_z=$19
       WHERE id=$20`,
-      [b.name,b.model_path??null,b.object_type,b.collision,b.size_x??1,b.size_y??1,
-       b.action_id??null,b.required_skill??null,b.required_level??null,b.drop_item_id??null,
-       b.drop_quantity??1,b.respawn_ticks??25,b.craft_action_id??null,b.examine_text??null,
-       b.default_clip??null,b.looping??true,b.rotation_x??0,b.rotation_y??0,b.rotation_z??0,
+      [b.name,nullIfEmpty(b.model_path),b.object_type,b.collision,b.size_x??1,b.size_y??1,
+       nullIfEmpty(b.action_id),nullIfEmpty(b.required_skill),b.required_level??null,nullIfEmpty(b.drop_item_id),
+       b.drop_quantity??1,b.respawn_ticks??25,nullIfEmpty(b.craft_action_id),nullIfEmpty(b.examine_text),
+       nullIfEmpty(b.default_clip),b.looping??true,b.rotation_x??0,b.rotation_y??0,b.rotation_z??0,
        req.params.id]);
     ok(res, { ok: true });
   } catch (e) { err(res, e); }
