@@ -1,10 +1,17 @@
 #pragma once
 #include <cstdio>
+#include <cstring>
+#include <cstdlib>
 #include <filesystem>
+#include <string>
 
 // Persisted display/rendering settings. Saved as a simple key=value text
 // file ("settings.cfg") next to the executable. Both the client and the
-// level editor load/save the same file and the same subset of keys.
+// level editor load/save the same file (they share the build/Release dir).
+//
+// Format is line-based "key=value". Unknown keys are ignored; missing keys
+// keep their struct default. This makes the format forward/backward
+// compatible — new fields can be appended without breaking old files.
 struct AppSettings {
   // Fog
   bool      fogEnabled  = false;
@@ -43,28 +50,65 @@ struct AppSettings {
   float     hoverTileG       = 0.85f;
   float     hoverTileB       = 0.10f;
   float     hoverTileA       = 1.0f;
+
+  // ---- Water (shared by editor + client) ----
+  float       waterShallowR = 0.30f, waterShallowG = 0.70f, waterShallowB = 0.60f;
+  float       waterDeepR     = 0.05f, waterDeepG     = 0.20f, waterDeepB     = 0.35f;
+  float       waterFoamR     = 0.90f, waterFoamG     = 0.95f, waterFoamB     = 1.00f;
+  float       waterWaveSpeed       = 0.40f;
+  float       waterWaveHeight      = 0.08f;
+  float       waterWaveScale       = 2.00f;
+  float       waterNormalStrength  = 0.60f;
+  float       waterClarity         = 0.80f;   // reflectStrength
+  float       waterCausticIntensity= 0.00f;
+  float       waterCausticScale    = 4.00f;
+  float       waterCausticSpeed    = 0.30f;
+  float       waterFoamWidth       = 0.50f;
+  float       waterFoamSpeed       = 0.50f;
+  float       waterFoamScale       = 8.00f;
+  float       waterParallaxDepth   = 0.04f;
+  float       waterOffset          = 0.00f;
+  float       waterRefraction      = 0.04f;
+  float       waterDepthFade       = 5.00f;
+  float       waterFoamContact     = 0.30f;
+  float       waterSpecular        = 0.70f;
+  std::string waterCausticMap;                // relative path, e.g. "assets/water_caustic.png" ("" = none)
 };
 
 inline bool saveSettings(const AppSettings& s, const std::filesystem::path& path) {
   FILE* f = std::fopen(path.string().c_str(), "w");
   if (!f) return false;
-  std::fprintf(f,
-    "fogEnabled=%d fogDensity=%f fogStart=%f fogR=%f fogG=%f fogB=%f\n"
-    "aoEnabled=%d aoStrength=%f\n"
-    "lightingEnabled=%d sunYawDeg=%f sunPitchDeg=%f ambient=%f diffuse=%f\n"
-    "shadowsEnabled=%d shadowDarkness=%f shadowBias=%f shadowHalfExtent=%f\n"
-    "palette=%d paletteHues=%d paletteSats=%d paletteLums=%d\n"
-    "outlineRadius=%f outlineDepthBias=%f\n"
-    "outlineColorR=%f outlineColorG=%f outlineColorB=%f outlineColorA=%f\n"
-    "hoverTileR=%f hoverTileG=%f hoverTileB=%f hoverTileA=%f\n",
-    (int)s.fogEnabled, s.fogDensity, s.fogStart, s.fogR, s.fogG, s.fogB,
-    (int)s.aoEnabled, s.aoStrength,
-    (int)s.lightingEnabled, s.sunYawDeg, s.sunPitchDeg, s.ambient, s.diffuse,
-    (int)s.shadowsEnabled, s.shadowDarkness, s.shadowBias, s.shadowHalfExtent,
-    (int)s.palette, s.paletteHues, s.paletteSats, s.paletteLums,
-    s.outlineRadius, s.outlineDepthBias,
-    s.outlineColorR, s.outlineColorG, s.outlineColorB, s.outlineColorA,
-    s.hoverTileR, s.hoverTileG, s.hoverTileB, s.hoverTileA);
+  auto B = [](bool b){ return b ? 1 : 0; };
+  std::fprintf(f, "fogEnabled=%d\nfogDensity=%f\nfogStart=%f\nfogR=%f\nfogG=%f\nfogB=%f\n",
+               B(s.fogEnabled), s.fogDensity, s.fogStart, s.fogR, s.fogG, s.fogB);
+  std::fprintf(f, "aoEnabled=%d\naoStrength=%f\n", B(s.aoEnabled), s.aoStrength);
+  std::fprintf(f, "lightingEnabled=%d\nsunYawDeg=%f\nsunPitchDeg=%f\nambient=%f\ndiffuse=%f\n",
+               B(s.lightingEnabled), s.sunYawDeg, s.sunPitchDeg, s.ambient, s.diffuse);
+  std::fprintf(f, "shadowsEnabled=%d\nshadowDarkness=%f\nshadowBias=%f\nshadowHalfExtent=%f\n",
+               B(s.shadowsEnabled), s.shadowDarkness, s.shadowBias, s.shadowHalfExtent);
+  std::fprintf(f, "palette=%d\npaletteHues=%d\npaletteSats=%d\npaletteLums=%d\n",
+               B(s.palette), s.paletteHues, s.paletteSats, s.paletteLums);
+  std::fprintf(f, "outlineRadius=%f\noutlineDepthBias=%f\n", s.outlineRadius, s.outlineDepthBias);
+  std::fprintf(f, "outlineColorR=%f\noutlineColorG=%f\noutlineColorB=%f\noutlineColorA=%f\n",
+               s.outlineColorR, s.outlineColorG, s.outlineColorB, s.outlineColorA);
+  std::fprintf(f, "hoverTileR=%f\nhoverTileG=%f\nhoverTileB=%f\nhoverTileA=%f\n",
+               s.hoverTileR, s.hoverTileG, s.hoverTileB, s.hoverTileA);
+  // Water
+  std::fprintf(f, "waterShallowR=%f\nwaterShallowG=%f\nwaterShallowB=%f\n",
+               s.waterShallowR, s.waterShallowG, s.waterShallowB);
+  std::fprintf(f, "waterDeepR=%f\nwaterDeepG=%f\nwaterDeepB=%f\n",
+               s.waterDeepR, s.waterDeepG, s.waterDeepB);
+  std::fprintf(f, "waterFoamR=%f\nwaterFoamG=%f\nwaterFoamB=%f\n",
+               s.waterFoamR, s.waterFoamG, s.waterFoamB);
+  std::fprintf(f, "waterWaveSpeed=%f\nwaterWaveHeight=%f\nwaterWaveScale=%f\nwaterNormalStrength=%f\n",
+               s.waterWaveSpeed, s.waterWaveHeight, s.waterWaveScale, s.waterNormalStrength);
+  std::fprintf(f, "waterClarity=%f\nwaterCausticIntensity=%f\nwaterCausticScale=%f\nwaterCausticSpeed=%f\n",
+               s.waterClarity, s.waterCausticIntensity, s.waterCausticScale, s.waterCausticSpeed);
+  std::fprintf(f, "waterFoamWidth=%f\nwaterFoamSpeed=%f\nwaterFoamScale=%f\nwaterParallaxDepth=%f\n",
+               s.waterFoamWidth, s.waterFoamSpeed, s.waterFoamScale, s.waterParallaxDepth);
+  std::fprintf(f, "waterOffset=%f\nwaterRefraction=%f\nwaterDepthFade=%f\nwaterFoamContact=%f\nwaterSpecular=%f\n",
+               s.waterOffset, s.waterRefraction, s.waterDepthFade, s.waterFoamContact, s.waterSpecular);
+  std::fprintf(f, "waterCausticMap=%s\n", s.waterCausticMap.c_str());
   std::fclose(f);
   return true;
 }
@@ -72,29 +116,55 @@ inline bool saveSettings(const AppSettings& s, const std::filesystem::path& path
 inline bool loadSettings(AppSettings& s, const std::filesystem::path& path) {
   FILE* f = std::fopen(path.string().c_str(), "r");
   if (!f) return false;
-  int fogE=0, aoE=0, litE=0, shadE=0, palE=0;
-  std::fscanf(f,
-    "fogEnabled=%d fogDensity=%f fogStart=%f fogR=%f fogG=%f fogB=%f\n"
-    "aoEnabled=%d aoStrength=%f\n"
-    "lightingEnabled=%d sunYawDeg=%f sunPitchDeg=%f ambient=%f diffuse=%f\n"
-    "shadowsEnabled=%d shadowDarkness=%f shadowBias=%f shadowHalfExtent=%f\n"
-    "palette=%d paletteHues=%d paletteSats=%d paletteLums=%d\n"
-    "outlineRadius=%f outlineDepthBias=%f\n"
-    "outlineColorR=%f outlineColorG=%f outlineColorB=%f outlineColorA=%f\n"
-    "hoverTileR=%f hoverTileG=%f hoverTileB=%f hoverTileA=%f\n",
-    &fogE, &s.fogDensity, &s.fogStart, &s.fogR, &s.fogG, &s.fogB,
-    &aoE, &s.aoStrength,
-    &litE, &s.sunYawDeg, &s.sunPitchDeg, &s.ambient, &s.diffuse,
-    &shadE, &s.shadowDarkness, &s.shadowBias, &s.shadowHalfExtent,
-    &palE, &s.paletteHues, &s.paletteSats, &s.paletteLums,
-    &s.outlineRadius, &s.outlineDepthBias,
-    &s.outlineColorR, &s.outlineColorG, &s.outlineColorB, &s.outlineColorA,
-    &s.hoverTileR, &s.hoverTileG, &s.hoverTileB, &s.hoverTileA);
-  s.fogEnabled      = (fogE  != 0);
-  s.aoEnabled       = (aoE   != 0);
-  s.lightingEnabled = (litE  != 0);
-  s.shadowsEnabled  = (shadE != 0);
-  s.palette         = (palE  != 0);
+
+  char line[1024];
+  while (std::fgets(line, sizeof(line), f)) {
+    // Split on the first '='.
+    char* eq = std::strchr(line, '=');
+    if (!eq) continue;
+    *eq = '\0';
+    const char* key = line;
+    char* val = eq + 1;
+    // Trim trailing newline/CR/space from value.
+    std::size_t vlen = std::strlen(val);
+    while (vlen > 0 && (val[vlen-1] == '\n' || val[vlen-1] == '\r' || val[vlen-1] == ' '))
+      val[--vlen] = '\0';
+
+    auto fF = [&](const char* k, float& dst) { if (std::strcmp(key, k) == 0) { dst = std::strtof(val, nullptr); return true; } return false; };
+    auto fI = [&](const char* k, int& dst)   { if (std::strcmp(key, k) == 0) { dst = std::atoi(val); return true; } return false; };
+    auto fB = [&](const char* k, bool& dst)  { if (std::strcmp(key, k) == 0) { dst = (std::atoi(val) != 0); return true; } return false; };
+
+    // Try each field in turn (short-circuits on first match).
+    if (fB("fogEnabled", s.fogEnabled) || fF("fogDensity", s.fogDensity) ||
+        fF("fogStart", s.fogStart) || fF("fogR", s.fogR) || fF("fogG", s.fogG) || fF("fogB", s.fogB) ||
+        fB("aoEnabled", s.aoEnabled) || fF("aoStrength", s.aoStrength) ||
+        fB("lightingEnabled", s.lightingEnabled) || fF("sunYawDeg", s.sunYawDeg) ||
+        fF("sunPitchDeg", s.sunPitchDeg) || fF("ambient", s.ambient) || fF("diffuse", s.diffuse) ||
+        fB("shadowsEnabled", s.shadowsEnabled) || fF("shadowDarkness", s.shadowDarkness) ||
+        fF("shadowBias", s.shadowBias) || fF("shadowHalfExtent", s.shadowHalfExtent) ||
+        fB("palette", s.palette) || fI("paletteHues", s.paletteHues) ||
+        fI("paletteSats", s.paletteSats) || fI("paletteLums", s.paletteLums) ||
+        fF("outlineRadius", s.outlineRadius) || fF("outlineDepthBias", s.outlineDepthBias) ||
+        fF("outlineColorR", s.outlineColorR) || fF("outlineColorG", s.outlineColorG) ||
+        fF("outlineColorB", s.outlineColorB) || fF("outlineColorA", s.outlineColorA) ||
+        fF("hoverTileR", s.hoverTileR) || fF("hoverTileG", s.hoverTileG) ||
+        fF("hoverTileB", s.hoverTileB) || fF("hoverTileA", s.hoverTileA) ||
+        fF("waterShallowR", s.waterShallowR) || fF("waterShallowG", s.waterShallowG) || fF("waterShallowB", s.waterShallowB) ||
+        fF("waterDeepR", s.waterDeepR) || fF("waterDeepG", s.waterDeepG) || fF("waterDeepB", s.waterDeepB) ||
+        fF("waterFoamR", s.waterFoamR) || fF("waterFoamG", s.waterFoamG) || fF("waterFoamB", s.waterFoamB) ||
+        fF("waterWaveSpeed", s.waterWaveSpeed) || fF("waterWaveHeight", s.waterWaveHeight) ||
+        fF("waterWaveScale", s.waterWaveScale) || fF("waterNormalStrength", s.waterNormalStrength) ||
+        fF("waterClarity", s.waterClarity) || fF("waterCausticIntensity", s.waterCausticIntensity) ||
+        fF("waterCausticScale", s.waterCausticScale) || fF("waterCausticSpeed", s.waterCausticSpeed) ||
+        fF("waterFoamWidth", s.waterFoamWidth) || fF("waterFoamSpeed", s.waterFoamSpeed) ||
+        fF("waterFoamScale", s.waterFoamScale) || fF("waterParallaxDepth", s.waterParallaxDepth) ||
+        fF("waterOffset", s.waterOffset) || fF("waterRefraction", s.waterRefraction) ||
+        fF("waterDepthFade", s.waterDepthFade) || fF("waterFoamContact", s.waterFoamContact) ||
+        fF("waterSpecular", s.waterSpecular)) {
+      continue;
+    }
+    if (std::strcmp(key, "waterCausticMap") == 0) { s.waterCausticMap = val; continue; }
+  }
   std::fclose(f);
   return true;
 }

@@ -1,5 +1,6 @@
 #include "editor/EditorApp.hpp"
 
+#include "app/WaterSettings.hpp"
 #include "editor/EditorPalette.hpp"
 #include "input/Picker.hpp"
 #include "render/GlDebug.hpp"
@@ -395,6 +396,10 @@ bool EditorApp::init() {
       paletteHues_ = s.paletteHues;
       paletteSats_ = s.paletteSats;
       paletteLums_ = s.paletteLums;
+      // Water settings (shared with the game client).
+      applyWaterSettings(s, waterUniforms_);
+      if (!waterUniforms_.causticMapPath.empty())
+        waterRenderer_.loadCausticMap(resolveFromExe(waterUniforms_.causticMapPath.c_str()).string());
     }
   }
 
@@ -991,52 +996,87 @@ void EditorApp::drawToolbar() {
 // -----------------------------------------------------------------------
 void EditorApp::drawWaterSettings() {
   auto& u = waterUniforms_;
-  if (ImGui::CollapsingHeader("Water — Basic", ImGuiTreeNodeFlags_DefaultOpen)) {
-    ImGui::SetNextItemWidth(-1); ImGui::ColorEdit3("Shallow##w",  &u.shallowColor.x);
-    ImGui::SetNextItemWidth(-1); ImGui::ColorEdit3("Deep##w",     &u.deepColor.x);
-    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##wsp",  &u.waveSpeed,       0.0f, 2.0f,  "WaveSpd:%.2f");
-    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##wht",  &u.waveHeight,      0.0f, 0.5f,  "WaveH:%.3f");
-    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##nstr", &u.normalStrength,  0.0f, 2.0f,  "NrmStr:%.2f");
-    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##rfl",  &u.reflectStrength, 0.0f, 1.0f,  "Clarity:%.2f");
-    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##caus", &u.causticIntensity,0.0f, 1.0f,  "Caustic:%.2f");
-    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##fwid", &u.foamWidth,        0.0f, 1.0f,  "FoamWidth:%.2f");
-  }
-  if (ImGui::CollapsingHeader("Water — Depth & Refraction", ImGuiTreeNodeFlags_DefaultOpen)) {
-    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##refr", &u.refractionStrength, 0.0f, 0.15f, "Refraction:%.3f");
-    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##dfade",&u.depthFade,          0.5f, 20.0f, "DepthFade:%.1f");
-    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##cfoam",&u.foamContactWidth,   0.0f, 2.0f,  "ContactFoam:%.2f");
-  }
-  if (ImGui::CollapsingHeader("Water — Advanced")) {
-    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##wsc",  &u.waveScale,       0.5f, 8.0f,  "WaveSc:%.2f");
-    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##csc",  &u.causticScale,    1.0f, 12.0f, "CausSc:%.2f");
-    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##cspd", &u.causticSpeed,    0.0f, 1.0f,  "CausSpd:%.2f");
-    ImGui::SetNextItemWidth(-1); ImGui::ColorEdit3("Foam##w", &u.foamColor.x);
-    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##fspd", &u.foamSpeed,       0.0f, 2.0f,  "FoamSpd:%.2f");
-    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##fsc",  &u.foamScale,       1.0f, 20.0f, "FoamSc:%.1f");
-    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##prlx", &u.parallaxDepth,   0.0f, 0.15f, "Parallax:%.3f");
-    float prevOff = u.waterOffset;
-    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##woff", &u.waterOffset,     0.0f, 0.5f,  "WaterOff:%.3f");
-    // When waterOffset changes, rebuild water mesh (water Y changes)
-    if (u.waterOffset != prevOff)
-      waterRenderer_.rebuild(map_, u.waterOffset);
 
-    ImGui::Separator();
-    ImGui::TextDisabled("Caustic texture");
+  // ---- Waves -------------------------------------------------------------
+  if (ImGui::CollapsingHeader("Waves", ImGuiTreeNodeFlags_DefaultOpen)) {
+    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##wsp",  &u.waveSpeed,      0.0f, 2.0f,  "Speed:%.2f");
+    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##wht",  &u.waveHeight,     0.0f, 0.5f,  "Height:%.3f");
+    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##wsc",  &u.waveScale,      0.5f, 8.0f,  "Scale:%.2f");
+    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##nstr", &u.normalStrength, 0.0f, 2.0f,  "NormalStr:%.2f");
+  }
+
+  // ---- Colour & Depth ----------------------------------------------------
+  if (ImGui::CollapsingHeader("Colour & Depth", ImGuiTreeNodeFlags_DefaultOpen)) {
+    ImGui::SetNextItemWidth(-1); ImGui::ColorEdit3("Shallow##w", &u.shallowColor.x);
+    ImGui::SetNextItemWidth(-1); ImGui::ColorEdit3("Deep##w",    &u.deepColor.x);
+    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##dfade", &u.depthFade,   0.5f, 20.0f, "DepthFade:%.1f");
+    float prevOff = u.waterOffset;
+    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##woff",  &u.waterOffset, 0.0f, 0.5f,  "WaterLevel:%.3f");
+    if (u.waterOffset != prevOff)  // rebuild mesh — water Y changed
+      waterRenderer_.rebuild(map_, u.waterOffset);
+  }
+
+  // ---- Refraction (underwater view) --------------------------------------
+  if (ImGui::CollapsingHeader("Refraction", ImGuiTreeNodeFlags_DefaultOpen)) {
+    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##rfl",  &u.reflectStrength,    0.0f, 1.0f,  "Clarity:%.2f");
+    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##refr", &u.refractionStrength, 0.0f, 0.15f, "Distortion:%.3f");
+    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##prlx", &u.parallaxDepth,      0.0f, 0.15f, "Parallax:%.3f");
+    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##spec", &u.specularStrength,   0.0f, 2.0f,  "Sparkle:%.2f");
+  }
+
+  // ---- Foam --------------------------------------------------------------
+  if (ImGui::CollapsingHeader("Foam", ImGuiTreeNodeFlags_DefaultOpen)) {
+    ImGui::SetNextItemWidth(-1); ImGui::ColorEdit3("Colour##foam", &u.foamColor.x);
+    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##cfoam",&u.foamContactWidth, 0.0f, 2.0f,  "ContactWidth:%.2f");
+    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##fwid", &u.foamWidth,        0.0f, 1.0f,  "Amount:%.2f");
+    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##fspd", &u.foamSpeed,        0.0f, 2.0f,  "Speed:%.2f");
+    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##fsc",  &u.foamScale,        1.0f, 20.0f, "Scale:%.1f");
+  }
+
+  // ---- Caustics ----------------------------------------------------------
+  if (ImGui::CollapsingHeader("Caustics")) {
+    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##caus", &u.causticIntensity, 0.0f, 1.0f,  "Intensity:%.2f");
+    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##csc",  &u.causticScale,     0.0f, 12.0f, "Scale:%.2f");
+    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##cspd", &u.causticSpeed,     0.0f, 1.0f,  "Speed:%.2f");
+
+    ImGui::Spacing();
     if (ImGui::Button("Load Caustic Map...", ImVec2(-1, 0))) {
       const std::wstring wpath = winOpenDialog();
       if (!wpath.empty()) {
-        // Convert wide path to narrow UTF-8 string for stbi_load
+        // Convert wide path to narrow UTF-8 string.
         const int sz = WideCharToMultiByte(CP_UTF8, 0, wpath.c_str(), -1,
                                            nullptr, 0, nullptr, nullptr);
-        std::string path(static_cast<std::size_t>(sz), '\0');
+        std::string srcPath(static_cast<std::size_t>(sz), '\0');
         WideCharToMultiByte(CP_UTF8, 0, wpath.c_str(), -1,
-                            path.data(), sz, nullptr, nullptr);
-        waterRenderer_.loadCausticMap(path);
+                            srcPath.data(), sz, nullptr, nullptr);
+        if (!srcPath.empty() && srcPath.back() == '\0') srcPath.pop_back();
+
+        // Copy into the shared assets folder under a fixed name so both the
+        // editor and the game client (same Release dir) can reload it, and
+        // record the relative path so it persists in settings.cfg.
+        const std::string relPath = "assets/water_caustic.png";
+        const auto destPath = resolveFromExe(relPath.c_str());
+        std::error_code ec;
+        std::filesystem::create_directories(destPath.parent_path(), ec);
+        std::filesystem::copy_file(srcPath, destPath,
+            std::filesystem::copy_options::overwrite_existing, ec);
+        const std::string loadFrom = ec ? srcPath : destPath.string();
+        if (waterRenderer_.loadCausticMap(loadFrom))
+          waterUniforms_.causticMapPath = ec ? srcPath : relPath;
       }
     }
-    ImGui::TextDisabled("(PNG, scrolls in two");
-    ImGui::TextDisabled(" directions for anim)");
+    if (!waterUniforms_.causticMapPath.empty()) {
+      ImGui::TextDisabled("Loaded: %s", waterUniforms_.causticMapPath.c_str());
+      if (ImGui::Button("Clear Caustic Map", ImVec2(-1, 0)))
+        waterUniforms_.causticMapPath.clear();  // procedural fallback resumes next launch
+    } else {
+      ImGui::TextDisabled("(none — using procedural)");
+    }
   }
+
+  ImGui::Spacing();
+  ImGui::Separator();
+  ImGui::TextDisabled("Save via 'Save as Default'");
 }
 
 // -----------------------------------------------------------------------
@@ -2173,6 +2213,8 @@ void EditorApp::saveSettings() {
   s.shadowHalfExtent = shadowHalfExtent_;
   s.palette     = palette_;
   s.paletteHues = paletteHues_; s.paletteSats = paletteSats_; s.paletteLums = paletteLums_;
+  // Water settings (shared with the game client).
+  storeWaterSettings(waterUniforms_, s);
   // Outline fields are client-only; write defaults so the file is valid.
   ::saveSettings(s, resolveFromExe("settings.cfg"));
 }

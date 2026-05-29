@@ -1,5 +1,6 @@
 #include "app/App.hpp"
 
+#include "app/WaterSettings.hpp"
 #include "editor/EntityClient.hpp"
 #include "editor/EntityDefs.hpp"
 #include "render/GlDebug.hpp"
@@ -577,6 +578,10 @@ bool App::init() {
       outlineDepthBias_ = s.outlineDepthBias;
       outlineColor_   = {s.outlineColorR, s.outlineColorG, s.outlineColorB, s.outlineColorA};
       hoverTileColor_ = {s.hoverTileR,    s.hoverTileG,    s.hoverTileB,    s.hoverTileA};
+      // Water settings authored in the level editor (shared settings.cfg).
+      applyWaterSettings(s, waterUniforms_);
+      if (!waterUniforms_.causticMapPath.empty())
+        waterRenderer_.loadCausticMap(resolveFromExe(waterUniforms_.causticMapPath.c_str()).string());
     }
   }
 
@@ -3042,6 +3047,7 @@ void App::saveSettings() {
   s.outlineColorB    = outlineColor_.b;   s.outlineColorA = outlineColor_.a;
   s.hoverTileR = hoverTileColor_.r; s.hoverTileG = hoverTileColor_.g;
   s.hoverTileB = hoverTileColor_.b; s.hoverTileA = hoverTileColor_.a;
+  storeWaterSettings(waterUniforms_, s);
   ::saveSettings(s, resolveFromExe("settings.cfg"));
 }
 

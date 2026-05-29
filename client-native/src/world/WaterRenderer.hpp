@@ -47,6 +47,10 @@ struct WaterUniforms {
   float     parallaxDepth      = 0.04f;
   // waterOffset is in world units; also used by EditorApp banking.
   float     waterOffset        = 0.00f;
+
+  // Relative path to the user-loaded caustic PNG ("" = procedural fallback).
+  // Persisted in settings.cfg so the editor and client share the same caustic.
+  std::string causticMapPath;
 };
 
 // Owns the water shader, normal-map GL texture, and WaterMesh.
