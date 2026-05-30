@@ -2439,6 +2439,32 @@ static bool dbInputText(const char* label, std::string& s, float width = -1.0f) 
   return false;
 }
 
+// Open a Windows file dialog, copy the chosen file into <destSubdir> next to the
+// exe (so editor + game share it), and return the relative path
+// ("assets/.../<file>"). Returns empty on cancel. destSubdir must end in '/'.
+static std::string dbBrowseCopyAsset(const wchar_t* filter, const std::string& destSubdir) {
+  OPENFILENAMEW ofn = {};
+  wchar_t buf[MAX_PATH] = {};
+  ofn.lStructSize = sizeof(ofn);
+  ofn.lpstrFilter = filter;
+  ofn.lpstrFile   = buf;  ofn.nMaxFile = MAX_PATH;
+  ofn.Flags       = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
+  if (!GetOpenFileNameW(&ofn)) return {};
+
+  const int sz = WideCharToMultiByte(CP_UTF8, 0, buf, -1, nullptr, 0, nullptr, nullptr);
+  std::string src(static_cast<std::size_t>(sz), '\0');
+  WideCharToMultiByte(CP_UTF8, 0, buf, -1, src.data(), sz, nullptr, nullptr);
+  if (!src.empty() && src.back() == '\0') src.pop_back();
+
+  const std::filesystem::path s(src);
+  const std::string rel = destSubdir + s.filename().string();
+  const auto dest = resolveFromExe(rel.c_str());
+  std::error_code ec;
+  std::filesystem::create_directories(dest.parent_path(), ec);
+  std::filesystem::copy_file(s, dest, std::filesystem::copy_options::overwrite_existing, ec);
+  return ec ? src : rel;   // fall back to absolute source if the copy failed
+}
+
 static bool dbCombo(const char* label, std::string& val, std::initializer_list<const char*> opts) {
   bool changed = false;
   if (ImGui::BeginCombo(label, val.c_str())) {
@@ -2523,10 +2549,25 @@ void EditorApp::dbDrawItemsTab() {
     ImGui::TextColored({1.f,0.55f,0.f,1.f}, "Assets");
     ImGui::TextUnformatted("Sprite Path");
     ImGui::SetNextItemWidth(-1); dbInputText("##item_sprite", d.spritePath);
+    if (ImGui::Button("Browse Sprite...##item_sprite", ImVec2(-1, 0))) {
+      std::string rel = dbBrowseCopyAsset(L"PNG Image (*.png)\0*.png\0All Files\0*.*\0",
+                                          "assets/sprites/items/");
+      if (!rel.empty()) d.spritePath = rel;
+    }
     ImGui::TextUnformatted("Dropped Model");
     ImGui::SetNextItemWidth(-1); dbInputText("##item_dropped", d.modelDropped);
+    if (ImGui::Button("Browse Dropped Model...##item_dropped", ImVec2(-1, 0))) {
+      std::string rel = dbBrowseCopyAsset(L"3D Model (*.glb;*.gltf)\0*.glb;*.gltf\0All Files\0*.*\0",
+                                          "assets/models/");
+      if (!rel.empty()) d.modelDropped = rel;
+    }
     ImGui::TextUnformatted("Equipped Model");
     ImGui::SetNextItemWidth(-1); dbInputText("##item_equipped", d.modelEquipped);
+    if (ImGui::Button("Browse Equipped Model...##item_equipped", ImVec2(-1, 0))) {
+      std::string rel = dbBrowseCopyAsset(L"3D Model (*.glb;*.gltf)\0*.glb;*.gltf\0All Files\0*.*\0",
+                                          "assets/models/");
+      if (!rel.empty()) d.modelEquipped = rel;
+    }
     ImGui::TextUnformatted("Examine Text");
     ImGui::SetNextItemWidth(-1); dbInputText("##item_examine", d.examineText);
 
@@ -2588,7 +2629,10 @@ void EditorApp::dbDrawNPCsTab() {
 
     // 3D model preview
     if (dbPreviewTex_) {
-      ImGui::Image((ImTextureID)(intptr_t)dbPreviewTex_, ImVec2(128, 128));
+      // Flip V — the FBO texture is bottom-up (OpenGL origin), same as the
+      // main 3D viewport which uses (0,1)-(1,0).
+      ImGui::Image((ImTextureID)(intptr_t)dbPreviewTex_, ImVec2(128, 128),
+                   ImVec2(0, 1), ImVec2(1, 0));
       ImGui::SameLine();
     }
     ImGui::BeginGroup();
@@ -2716,7 +2760,10 @@ void EditorApp::dbDrawObjectsTab() {
 
     // 3D model preview
     if (dbPreviewTex_) {
-      ImGui::Image((ImTextureID)(intptr_t)dbPreviewTex_, ImVec2(128, 128));
+      // Flip V — the FBO texture is bottom-up (OpenGL origin), same as the
+      // main 3D viewport which uses (0,1)-(1,0).
+      ImGui::Image((ImTextureID)(intptr_t)dbPreviewTex_, ImVec2(128, 128),
+                   ImVec2(0, 1), ImVec2(1, 0));
       ImGui::SameLine();
     }
     ImGui::BeginGroup();
