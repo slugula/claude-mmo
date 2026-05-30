@@ -502,22 +502,17 @@ bool App::init() {
   // One-time synchronous call at startup (server is always localhost).
   {
     editor::EntityClient dbClient;
-    // NPC definitions — names, attackable flag, custom models.
+    // NPC definitions — names, attackable flag, data-driven models (placeholder
+    // when a kind has no model).
+    entities_.setNpcModelResolver([](const std::string& rel) {
+      return resolveFromExe(rel.c_str());
+    });
     try {
       const auto npcDefs = dbClient.getNPCs();
       for (const auto& def : npcDefs) {
         if (!def.name.empty())  ui::g_npcNames[def.id]     = def.name;
         ui::g_npcAttackable[def.id] = def.isAttackable;
-        if (def.modelPath.empty()) continue;
-        // Resolve the model path (try as-is, then with assets/ prefix) and let
-        // EntityRenderer decide static vs animated (skinned) by inspecting it.
-        auto p = resolveFromExe(def.modelPath.c_str());
-        if (!std::filesystem::exists(p))
-          p = resolveFromExe(("assets/" + def.modelPath).c_str());
-        if (std::filesystem::exists(p)) {
-          entities_.loadNpcKindModel(def.id, p);
-          std::fprintf(stdout, "[App] Loaded custom model for NPC '%s'\n", def.id.c_str());
-        }
+        entities_.ensureNpcModel(def.id, def.modelPath, def.sizeX, def.sizeY);
       }
     } catch (const std::exception& e) {
       std::fprintf(stderr, "[App] DB NPC fetch failed (server offline?): %s\n", e.what());
@@ -859,10 +854,15 @@ void App::renderFrame() {
       for (const auto& npc : npcs_) {
         if (npc.dying) continue;
         const float baseY = tileWorldY(map_, npc.tileX, npc.tileY);
-        // Humanoid AABB: ±0.18 XZ, 0..1.0 Y (body + head).
+        // AABB from the NPC kind's model + footprint; fall back to a humanoid
+        // box if no model is registered for the kind.
+        glm::vec3 lMin, lMax;
+        if (!entities_.npcAabb(npc.kind, lMin, lMax)) {
+          lMin = glm::vec3(-0.18f, 0.0f, -0.18f);
+          lMax = glm::vec3( 0.18f, 1.0f,  0.18f);
+        }
         glm::vec3 wMin, wMax;
-        worldAABB(glm::vec3(-0.18f, 0.0f, -0.18f),
-                  glm::vec3( 0.18f, 1.0f,  0.18f), 1.2f,
+        worldAABB(lMin, lMax, 1.0f,
                   static_cast<float>(npc.tileX), baseY,
                   static_cast<float>(npc.tileY), wMin, wMax);
 
@@ -1014,10 +1014,11 @@ void App::renderFrame() {
       }
     }
 
-    // Animated custom objects cast shadows via the skinned depth shader too.
+    // Animated custom objects + NPCs cast shadows via the skinned depth shader.
     shadowSkinnedShader_.use();
     shadowSkinnedShader_.setMat4("u_lightViewProj", lightVP);
     obstacles_.renderAnimatedShadows(shadowSkinnedShader_);
+    entities_.renderNpcAnimatedShadows(shadowSkinnedShader_);
 
     shadowMap_.endPass();
   }

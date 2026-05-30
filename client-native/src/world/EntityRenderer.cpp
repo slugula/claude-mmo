@@ -151,148 +151,18 @@ EntityRenderer::~EntityRenderer() {
   destroy();
 }
 
-void EntityRenderer::clearNpcKindModels() {
-  for (auto& [kind, kit] : npcKindKits_) {
-    for (auto& p : kit.prims) {
-      if (p.outlineVao) glDeleteVertexArrays(1, &p.outlineVao);
-      if (p.vao)        glDeleteVertexArrays(1, &p.vao);
-      if (p.vboPos)     glDeleteBuffers(1, &p.vboPos);
-      if (p.vboNrm)     glDeleteBuffers(1, &p.vboNrm);
-      if (p.ebo)        glDeleteBuffers(1, &p.ebo);
-    }
-  }
-  npcKindKits_.clear();
-  npcKindSkinned_.clear();  // unique_ptrs free their own GL resources
-}
-
-void EntityRenderer::loadNpcKindModel(const std::string& kind,
-                                      const std::filesystem::path& path) {
-  // Animated if the glTF has clips → SkinnedMesh; else static instanced kit.
-  auto sk = std::make_unique<world::SkinnedMesh>();
-  if (sk->load(path) && sk->animationCount() > 0) {
-    sk->setClip("");  // first clip, looping
-    npcKindSkinned_[kind] = std::move(sk);
-    std::fprintf(stdout, "[EntityRenderer] NPC '%s' loaded as ANIMATED model\n",
-                 kind.c_str());
-    return;
-  }
-  sk.reset();
-  auto model = world::loadGlb(path);
-  if (model && !model->primitives.empty())
-    loadNpcKindModel(kind, model->primitives, model->materials);
-}
-
-void EntityRenderer::loadNpcKindModel(const std::string&                kind,
-                                      const std::vector<GltfPrimitive>& primitives,
-                                      const std::vector<GltfMaterial>&  materials)
-{
-  // Remove any existing kit for this kind.
-  auto it = npcKindKits_.find(kind);
-  if (it != npcKindKits_.end()) {
-    for (auto& p : it->second.prims) {
-      if (p.vao)    glDeleteVertexArrays(1, &p.vao);
-      if (p.vboPos) glDeleteBuffers(1, &p.vboPos);
-      if (p.vboNrm) glDeleteBuffers(1, &p.vboNrm);
-      if (p.ebo)    glDeleteBuffers(1, &p.ebo);
-    }
-    npcKindKits_.erase(it);
-  }
-
-  CustomKit kit;
-  for (const auto& prim : primitives) {
-    if (prim.positions.empty() || prim.indices.empty()) continue;
-
-    CustomPrim cp;
-    cp.indexCount = static_cast<GLsizei>(prim.indices.size());
-    if (prim.materialIndex >= 0 && prim.materialIndex < (int)materials.size())
-      cp.color = materials[prim.materialIndex].baseColor;
-
-    glCreateBuffers(1, &cp.vboPos);
-    glNamedBufferStorage(cp.vboPos,
-      prim.positions.size() * sizeof(float), prim.positions.data(), 0);
-
-    std::vector<float> norms = prim.normals;
-    if (norms.size() < prim.positions.size())
-      norms.assign(prim.positions.size(), 0.0f);
-    glCreateBuffers(1, &cp.vboNrm);
-    glNamedBufferStorage(cp.vboNrm, norms.size() * sizeof(float), norms.data(), 0);
-
-    glCreateBuffers(1, &cp.ebo);
-    glNamedBufferStorage(cp.ebo,
-      prim.indices.size() * sizeof(uint32_t), prim.indices.data(), 0);
-
-    // VAO — same layout as Kit: positions@0, normals@1, instance@2+3.
-    // Uses customNpcInstanceVbo_ so the same shader / draw call works.
-    glCreateVertexArrays(1, &cp.vao);
-    glVertexArrayVertexBuffer(cp.vao, 0, cp.vboPos, 0, sizeof(float) * 3);
-    glEnableVertexArrayAttrib(cp.vao, 0);
-    glVertexArrayAttribFormat(cp.vao, 0, 3, GL_FLOAT, GL_FALSE, 0);
-    glVertexArrayAttribBinding(cp.vao, 0, 0);
-
-    glVertexArrayVertexBuffer(cp.vao, 1, cp.vboNrm, 0, sizeof(float) * 3);
-    glEnableVertexArrayAttrib(cp.vao, 1);
-    glVertexArrayAttribFormat(cp.vao, 1, 3, GL_FLOAT, GL_FALSE, 0);
-    glVertexArrayAttribBinding(cp.vao, 1, 1);
-
-    glVertexArrayVertexBuffer(cp.vao, 2, customNpcInstanceVbo_, 0, sizeof(Instance));
-    glVertexArrayBindingDivisor(cp.vao, 2, 1);
-    glEnableVertexArrayAttrib(cp.vao, 2);
-    glVertexArrayAttribFormat(cp.vao, 2, 3, GL_FLOAT, GL_FALSE, offsetof(Instance, x));
-    glVertexArrayAttribBinding(cp.vao, 2, 2);
-    glEnableVertexArrayAttrib(cp.vao, 3);
-    glVertexArrayAttribFormat(cp.vao, 3, 1, GL_FLOAT, GL_FALSE, offsetof(Instance, rotY));
-    glVertexArrayAttribBinding(cp.vao, 3, 2);
-
-    glVertexArrayElementBuffer(cp.vao, cp.ebo);
-
-    // Outline VAO: same geometry buffers, but driven by outlineInstanceVbo_
-    // (the single-instance scratch VBO used by the mask/geometry pass).
-    glCreateVertexArrays(1, &cp.outlineVao);
-    glVertexArrayVertexBuffer(cp.outlineVao, 0, cp.vboPos, 0, sizeof(float) * 3);
-    glEnableVertexArrayAttrib(cp.outlineVao, 0);
-    glVertexArrayAttribFormat(cp.outlineVao, 0, 3, GL_FLOAT, GL_FALSE, 0);
-    glVertexArrayAttribBinding(cp.outlineVao, 0, 0);
-
-    glVertexArrayVertexBuffer(cp.outlineVao, 1, cp.vboNrm, 0, sizeof(float) * 3);
-    glEnableVertexArrayAttrib(cp.outlineVao, 1);
-    glVertexArrayAttribFormat(cp.outlineVao, 1, 3, GL_FLOAT, GL_FALSE, 0);
-    glVertexArrayAttribBinding(cp.outlineVao, 1, 1);
-
-    glVertexArrayVertexBuffer(cp.outlineVao, 2, outlineInstanceVbo_, 0, sizeof(Instance));
-    glVertexArrayBindingDivisor(cp.outlineVao, 2, 1);
-    glEnableVertexArrayAttrib(cp.outlineVao, 2);
-    glVertexArrayAttribFormat(cp.outlineVao, 2, 3, GL_FLOAT, GL_FALSE, offsetof(Instance, x));
-    glVertexArrayAttribBinding(cp.outlineVao, 2, 2);
-    glEnableVertexArrayAttrib(cp.outlineVao, 3);
-    glVertexArrayAttribFormat(cp.outlineVao, 3, 1, GL_FLOAT, GL_FALSE, offsetof(Instance, rotY));
-    glVertexArrayAttribBinding(cp.outlineVao, 3, 2);
-
-    glVertexArrayElementBuffer(cp.outlineVao, cp.ebo);
-
-    kit.prims.push_back(cp);
-  }
-
-  if (!kit.prims.empty())
-    npcKindKits_[kind] = std::move(kit);
-}
-
 void EntityRenderer::destroy() {
-  clearNpcKindModels();
-  if (npcOutlineVao_)      glDeleteVertexArrays(1, &npcOutlineVao_);
+  npcModels_.destroy();
   if (itemOutlineVao_)     glDeleteVertexArrays(1, &itemOutlineVao_);
   if (outlineInstanceVbo_) glDeleteBuffers(1, &outlineInstanceVbo_);
-  npcOutlineVao_ = itemOutlineVao_ = outlineInstanceVbo_ = 0;
-  for (Kit* k : {&humanoid_, &itemBox_}) {
-    if (k->vao)    glDeleteVertexArrays(1, &k->vao);
-    if (k->ebo)    glDeleteBuffers(1, &k->ebo);
-    if (k->vboNrm) glDeleteBuffers(1, &k->vboNrm);
-    if (k->vboPos) glDeleteBuffers(1, &k->vboPos);
-    *k = {};
-  }
-  if (npcInstanceVbo_)       glDeleteBuffers(1, &npcInstanceVbo_);
-  if (itemInstanceVbo_)      glDeleteBuffers(1, &itemInstanceVbo_);
-  if (customNpcInstanceVbo_) glDeleteBuffers(1, &customNpcInstanceVbo_);
-  npcInstanceVbo_ = itemInstanceVbo_ = customNpcInstanceVbo_ = 0;
+  itemOutlineVao_ = outlineInstanceVbo_ = 0;
+  if (itemBox_.vao)    glDeleteVertexArrays(1, &itemBox_.vao);
+  if (itemBox_.ebo)    glDeleteBuffers(1, &itemBox_.ebo);
+  if (itemBox_.vboNrm) glDeleteBuffers(1, &itemBox_.vboNrm);
+  if (itemBox_.vboPos) glDeleteBuffers(1, &itemBox_.vboPos);
+  itemBox_ = {};
+  if (itemInstanceVbo_) glDeleteBuffers(1, &itemInstanceVbo_);
+  itemInstanceVbo_ = 0;
   npcCount_ = itemCount_ = 0;
 }
 
@@ -342,30 +212,18 @@ void EntityRenderer::uploadKit(Kit& kit,
 void EntityRenderer::initGL() {
   destroy();
 
-  glCreateBuffers(1, &npcInstanceVbo_);
   glCreateBuffers(1, &itemInstanceVbo_);
-  glCreateBuffers(1, &customNpcInstanceVbo_);
-  glNamedBufferStorage(npcInstanceVbo_,        sizeof(Instance) * kInstanceCap, nullptr, GL_DYNAMIC_STORAGE_BIT);
-  glNamedBufferStorage(itemInstanceVbo_,       sizeof(Instance) * kInstanceCap, nullptr, GL_DYNAMIC_STORAGE_BIT);
-  glNamedBufferStorage(customNpcInstanceVbo_,  sizeof(Instance) * kInstanceCap, nullptr, GL_DYNAMIC_STORAGE_BIT);
+  glNamedBufferStorage(itemInstanceVbo_, sizeof(Instance) * kInstanceCap, nullptr, GL_DYNAMIC_STORAGE_BIT);
 
-  // Humanoid for NPCs: cylinder body + sphere head
-  Mesh humanoid;
-  appendCylinder(humanoid, /*radius*/0.18f, /*height*/0.70f, /*segs*/6, /*yOff*/0.0f);
-  appendSphere  (humanoid, /*radius*/0.15f, 0.0f, 0.85f, 0.0f, /*lat*/4, /*lon*/8);
-  uploadKit(humanoid_, humanoid.positions, humanoid.normals, humanoid.indices, npcInstanceVbo_);
-  humanoid_.color = glm::vec3(0.51f, 0.49f, 0.20f);  // muted olive — palette-adjacent
-
-  // Box for dropped items
+  // Box for dropped items (NPCs are data-driven models via npcModels_).
   Mesh box;
   appendBox(box, /*hx*/0.15f, /*hy*/0.12f, /*hz*/0.15f, /*yOff*/0.05f);
   uploadKit(itemBox_, box.positions, box.normals, box.indices, itemInstanceVbo_);
   itemBox_.color = glm::vec3(0.66f, 0.58f, 0.24f);  // warm gold
 
-  // Single-instance VBO + per-kit outline VAOs for the 2-pass stencil outline.
+  // Single-instance VBO + outline VAO for the dropped-item stencil outline.
   glCreateBuffers(1, &outlineInstanceVbo_);
   glNamedBufferStorage(outlineInstanceVbo_, sizeof(Instance), nullptr, GL_DYNAMIC_STORAGE_BIT);
-  npcOutlineVao_  = buildOutlineVao(humanoid_);
   itemOutlineVao_ = buildOutlineVao(itemBox_);
 }
 
@@ -385,9 +243,10 @@ void EntityRenderer::rebuildNpcs(const std::vector<shared::NPCState>& npcs,
     });
   }
   if (insts.size() > kInstanceCap) insts.resize(kInstanceCap);
-  glNamedBufferSubData(npcInstanceVbo_, 0,
-                       static_cast<GLsizeiptr>(insts.size() * sizeof(Instance)),
-                       insts.data());
+  // Legacy snap-on-tick path: store CPU copies; render() draws per-kind via
+  // npcModels_. Kinds aren't supplied here, so prefer setNpcInstances().
+  npcInstCpu_ = insts;
+  npcKinds_.assign(insts.size(), std::string());
   npcCount_ = insts.size();
 }
 
@@ -416,16 +275,10 @@ void EntityRenderer::setNpcInstances(const std::vector<Instance>& insts,
                                       const std::vector<std::string>& kinds)
 {
   const std::size_t n = std::min(insts.size(), kInstanceCap);
-  // Store CPU copies for kind-based grouping in render().
+  // Store CPU copies; NPCs draw per-kind through npcModels_ (its own VBO).
   npcInstCpu_.assign(insts.begin(), insts.begin() + static_cast<ptrdiff_t>(n));
   npcKinds_   = kinds;
   if (npcKinds_.size() > n) npcKinds_.resize(n);
-  // Upload everything to the default VBO (used for the humanoid fallback group).
-  if (n > 0) {
-    glNamedBufferSubData(npcInstanceVbo_, 0,
-                         static_cast<GLsizeiptr>(n * sizeof(Instance)),
-                         insts.data());
-  }
   npcCount_ = n;
 }
 
@@ -439,46 +292,25 @@ void EntityRenderer::setItemInstances(const std::vector<Instance>& insts) {
   itemCount_ = n;
 }
 
+// Group static-NPC instances by kind (animated kinds excluded).
+static void groupStaticNpcs(
+    const std::vector<EntityRenderer::Instance>& insts,
+    const std::vector<std::string>& kinds, ModelLibrary& models,
+    std::unordered_map<std::string, std::vector<ModelLibrary::Instance>>& out) {
+  for (std::size_t i = 0; i < insts.size(); ++i) {
+    const std::string& k = (i < kinds.size()) ? kinds[i] : "";
+    if (k.empty() || models.isAnimated(k)) continue;
+    const auto& in = insts[i];
+    out[k].push_back(ModelLibrary::Instance{ in.x, in.y, in.z, in.rotY });
+  }
+}
+
 void EntityRenderer::render(render::Shader& shader) {
   if (npcCount_ > 0) {
-    // Partition instances: custom-model kinds get their own per-kind draw;
-    // everything else falls back to the humanoid procedural geometry.
-    std::unordered_map<std::string, std::vector<Instance>> kindGroups;
-    std::vector<Instance> humanoidGroup;
-    humanoidGroup.reserve(npcCount_);
-
-    for (std::size_t i = 0; i < npcCount_; ++i) {
-      const std::string& k = (i < npcKinds_.size()) ? npcKinds_[i] : "";
-      if (isAnimatedKind(k))            continue;  // drawn in renderAnimatedNpcs()
-      else if (!k.empty() && npcKindKits_.count(k))
-        kindGroups[k].push_back(npcInstCpu_[i]);
-      else
-        humanoidGroup.push_back(npcInstCpu_[i]);
-    }
-
-    // Humanoid fallback group.
-    if (!humanoidGroup.empty()) {
-      glNamedBufferSubData(npcInstanceVbo_, 0,
-        humanoidGroup.size() * sizeof(Instance), humanoidGroup.data());
-      shader.setVec3("u_color", humanoid_.color);
-      glBindVertexArray(humanoid_.vao);
-      glDrawElementsInstanced(GL_TRIANGLES, humanoid_.indexCount, GL_UNSIGNED_INT,
-                              nullptr, static_cast<GLsizei>(humanoidGroup.size()));
-    }
-
-    // Custom-model groups.
-    for (auto& [kind, insts] : kindGroups) {
-      const std::size_t cnt = std::min(insts.size(), kInstanceCap);
-      glNamedBufferSubData(customNpcInstanceVbo_, 0,
-        cnt * sizeof(Instance), insts.data());
-      const CustomKit& ckit = npcKindKits_.at(kind);
-      for (const auto& cp : ckit.prims) {
-        shader.setVec3("u_color", glm::vec3(cp.color));
-        glBindVertexArray(cp.vao);
-        glDrawElementsInstanced(GL_TRIANGLES, cp.indexCount, GL_UNSIGNED_INT,
-                                nullptr, static_cast<GLsizei>(cnt));
-      }
-    }
+    std::unordered_map<std::string, std::vector<ModelLibrary::Instance>> groups;
+    groupStaticNpcs(npcInstCpu_, npcKinds_, npcModels_, groups);
+    for (auto& [kind, insts] : groups)
+      npcModels_.drawStaticInstanced(shader, kind, insts);
   }
   if (itemCount_ > 0) {
     shader.setVec3("u_color", itemBox_.color);
@@ -490,68 +322,39 @@ void EntityRenderer::render(render::Shader& shader) {
 }
 
 void EntityRenderer::renderAnimatedNpcs(render::Shader& skinnedShader, float dt) {
-  if (npcKindSkinned_.empty() || npcCount_ == 0) return;
-
-  // Group instance indices by animated kind so each clip advances once.
-  std::unordered_map<std::string, std::vector<const Instance*>> groups;
+  if (!anyNpcAnimated_ || npcCount_ == 0) { npcModels_.update(dt); return; }
+  npcModels_.update(dt);  // advance all animated clips once per frame
   for (std::size_t i = 0; i < npcCount_; ++i) {
     const std::string& k = (i < npcKinds_.size()) ? npcKinds_[i] : "";
-    if (isAnimatedKind(k)) groups[k].push_back(&npcInstCpu_[i]);
-  }
-
-  for (auto& [kind, insts] : groups) {
-    auto it = npcKindSkinned_.find(kind);
-    if (it == npcKindSkinned_.end() || !it->second) continue;
-    world::SkinnedMesh& mesh = *it->second;
-    mesh.update(dt);                       // advance this kind's clip once
-    for (const Instance* in : insts) {
-      glm::mat4 m = glm::translate(glm::mat4(1.0f), glm::vec3(in->x, in->y, in->z));
-      m = glm::rotate(m, in->rotY, glm::vec3(0.0f, 1.0f, 0.0f));
-      mesh.render(skinnedShader, m, /*useMaterialColors=*/true);
-    }
+    if (k.empty() || !npcModels_.isAnimated(k)) continue;
+    const auto& in = npcInstCpu_[i];
+    glm::mat4 m = glm::translate(glm::mat4(1.0f), glm::vec3(in.x, in.y, in.z));
+    m = glm::rotate(m, in.rotY, glm::vec3(0.0f, 1.0f, 0.0f));
+    npcModels_.drawAnimatedAt(skinnedShader, k, m);
   }
 }
 
-void EntityRenderer::renderDepth(render::Shader& /*shader*/) {
-  // Render NPC geometry into the shadow depth buffer using the same VAOs as
-  // render(). The caller has already set u_lightViewProj; no color uniforms
-  // are needed for a depth-only pass.
-  if (npcCount_ == 0) return;
-
-  std::vector<Instance> humanoidGroup;
-  std::unordered_map<std::string, std::vector<Instance>> kindGroups;
-  humanoidGroup.reserve(npcCount_);
-
+void EntityRenderer::renderNpcAnimatedShadows(render::Shader& skinnedDepthShader) {
+  if (!anyNpcAnimated_ || npcCount_ == 0) return;
   for (std::size_t i = 0; i < npcCount_; ++i) {
     const std::string& k = (i < npcKinds_.size()) ? npcKinds_[i] : "";
-    if (isAnimatedKind(k))            continue;  // animated NPCs skip the shadow pass for now
-    else if (!k.empty() && npcKindKits_.count(k))
-      kindGroups[k].push_back(npcInstCpu_[i]);
-    else
-      humanoidGroup.push_back(npcInstCpu_[i]);
+    if (k.empty() || !npcModels_.isAnimated(k)) continue;
+    const auto& in = npcInstCpu_[i];
+    glm::mat4 m = glm::translate(glm::mat4(1.0f), glm::vec3(in.x, in.y, in.z));
+    m = glm::rotate(m, in.rotY, glm::vec3(0.0f, 1.0f, 0.0f));
+    npcModels_.drawAnimatedAt(skinnedDepthShader, k, m);
   }
+}
 
-  if (!humanoidGroup.empty()) {
-    glNamedBufferSubData(npcInstanceVbo_, 0,
-      humanoidGroup.size() * sizeof(Instance), humanoidGroup.data());
-    glBindVertexArray(humanoid_.vao);
-    glDrawElementsInstanced(GL_TRIANGLES, humanoid_.indexCount, GL_UNSIGNED_INT,
-                            nullptr, static_cast<GLsizei>(humanoidGroup.size()));
+void EntityRenderer::renderDepth(render::Shader& shader) {
+  // Static NPCs cast shadows via the instanced depth shader; animated NPCs go
+  // through renderNpcAnimatedShadows().
+  if (npcCount_ > 0) {
+    std::unordered_map<std::string, std::vector<ModelLibrary::Instance>> groups;
+    groupStaticNpcs(npcInstCpu_, npcKinds_, npcModels_, groups);
+    for (auto& [kind, insts] : groups)
+      npcModels_.drawStaticInstanced(shader, kind, insts);
   }
-
-  for (auto& [kind, insts] : kindGroups) {
-    const std::size_t cnt = std::min(insts.size(), kInstanceCap);
-    glNamedBufferSubData(customNpcInstanceVbo_, 0,
-      cnt * sizeof(Instance), insts.data());
-    const CustomKit& ckit = npcKindKits_.at(kind);
-    for (const auto& cp : ckit.prims) {
-      glBindVertexArray(cp.vao);
-      glDrawElementsInstanced(GL_TRIANGLES, cp.indexCount, GL_UNSIGNED_INT,
-                              nullptr, static_cast<GLsizei>(cnt));
-    }
-  }
-
-  glBindVertexArray(0);
 }
 
 // ---------------------------------------------------------------------------
@@ -642,13 +445,12 @@ void EntityRenderer::doOutline2Pass(render::Shader& shader,
   glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
 }
 
-void EntityRenderer::renderNpcOutline(render::Shader& outlineShader,
-                                      const glm::mat4& viewProj,
-                                      const Instance&  inst,
-                                      const glm::vec4& color) const {
-  if (!npcOutlineVao_ || !outlineInstanceVbo_) return;
-  doOutline2Pass(outlineShader, npcOutlineVao_, humanoid_.indexCount,
-                 viewProj, inst, color, 0.07f);
+void EntityRenderer::renderNpcOutline(render::Shader& /*outlineShader*/,
+                                      const glm::mat4& /*viewProj*/,
+                                      const Instance&  /*inst*/,
+                                      const glm::vec4& /*color*/) const {
+  // NPCs use the screen-space outline (renderNpcGeometry → mask); the legacy
+  // stencil-inflation path is no longer used.
 }
 
 void EntityRenderer::renderItemOutline(render::Shader& outlineShader,
@@ -660,29 +462,18 @@ void EntityRenderer::renderItemOutline(render::Shader& outlineShader,
                  viewProj, inst, color, 0.12f);
 }
 
-void EntityRenderer::renderNpcGeometry(render::Shader& /*maskShader*/,
+void EntityRenderer::renderNpcGeometry(render::Shader& maskShader,
                                        const Instance& inst,
                                        const std::string& kind) const {
-  if (!outlineInstanceVbo_) return;
-  glNamedBufferSubData(outlineInstanceVbo_, 0, sizeof(Instance), &inst);
+  if (kind.empty()) return;
+  auto& models = const_cast<ModelLibrary&>(npcModels_);
+  if (!models.has(kind) || models.isAnimated(kind)) return;  // no skinned mask yet
+
   glDisable(GL_STENCIL_TEST);
   glDepthFunc(GL_LEQUAL);
   glDepthMask(GL_FALSE);
-
-  // Use the custom model's outline VAOs if one is loaded for this kind.
-  auto it = npcKindKits_.find(kind);
-  if (it != npcKindKits_.end() && !it->second.prims.empty()) {
-    for (const auto& cp : it->second.prims) {
-      if (!cp.outlineVao) continue;
-      glBindVertexArray(cp.outlineVao);
-      glDrawElementsInstanced(GL_TRIANGLES, cp.indexCount, GL_UNSIGNED_INT, nullptr, 1);
-    }
-  } else if (npcOutlineVao_) {
-    glBindVertexArray(npcOutlineVao_);
-    glDrawElementsInstanced(GL_TRIANGLES, humanoid_.indexCount, GL_UNSIGNED_INT, nullptr, 1);
-  }
-
-  glBindVertexArray(0);
+  models.drawStaticInstanced(maskShader, kind,
+      { ModelLibrary::Instance{ inst.x, inst.y, inst.z, inst.rotY } });
   glDepthMask(GL_TRUE);
   glDepthFunc(GL_LESS);
 }
