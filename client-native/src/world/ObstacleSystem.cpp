@@ -582,7 +582,7 @@ bool ObstacleSystem::renderOutlineAt(render::Shader& outlineShader,
   return true;
 }
 
-bool ObstacleSystem::renderGeometryAt(render::Shader& /*maskShader*/,
+bool ObstacleSystem::renderGeometryAt(render::Shader& maskShader,
                                       const shared::WorldMapFile& map,
                                       int tileX, int tileY) {
   if (tileY < 0 || tileY >= map.height || tileX < 0 || tileX >= map.width) return false;
@@ -593,6 +593,23 @@ bool ObstacleSystem::renderGeometryAt(render::Shader& /*maskShader*/,
   if (static_cast<int>(vh.size()) != (map.width + 1) * (map.height + 1)) return false;
 
   const float cy      = tileCenterY(vh, map.width, map.height, tileX, tileY);
+
+  // Custom (data-driven) object → render its actual model into the mask.
+  // Static only — there's no skinned mask shader, so animated objects skip the
+  // silhouette outline for now.
+  if (models_.has(obs)) {
+    if (models_.isAnimated(obs)) return false;
+    glDisable(GL_STENCIL_TEST);
+    glDepthFunc(GL_LEQUAL);
+    glDepthMask(GL_FALSE);
+    models_.drawStaticInstanced(maskShader, obs,
+        { ModelLibrary::Instance{ static_cast<float>(tileX), cy,
+                                  static_cast<float>(tileY), 0.0f } });
+    glDepthMask(GL_TRUE);
+    glDepthFunc(GL_LESS);
+    return true;
+  }
+
   const bool  isTree  = (obs == "tree");
   const bool  isFence = (obs == "fence");
 

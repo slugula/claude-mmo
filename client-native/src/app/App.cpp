@@ -812,7 +812,9 @@ void App::renderFrame() {
 
           // Model-space AABB (centred on tile, base at Y=0).
           glm::vec3 lMin, lMax;
-          if (obs == "tree") {
+          if (obstacles_.customAabb(obs, lMin, lMax)) {
+            // Data-driven custom object — AABB from its loaded model + footprint.
+          } else if (obs == "tree") {
             if (obstacles_.treeModelLoaded()) {
               lMin = obstacles_.treeGltfAABBMin();
               lMax = obstacles_.treeGltfAABBMax();
@@ -823,7 +825,7 @@ void App::renderFrame() {
           } else if (obs == "rock") {
             lMin = glm::vec3(-0.28f,  0.00f, -0.24f);
             lMax = glm::vec3( 0.28f,  0.36f,  0.24f);
-          } else {  // chest
+          } else {  // chest / fence / other built-ins
             lMin = glm::vec3(-0.28f,  0.00f, -0.28f);
             lMax = glm::vec3( 0.28f,  0.56f,  0.28f);
           }
