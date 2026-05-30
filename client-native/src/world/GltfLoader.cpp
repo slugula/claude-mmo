@@ -93,17 +93,23 @@ void parseMeshPrimitives(
 
     const cgltf_accessor* aPos   = nullptr;
     const cgltf_accessor* aNorm  = nullptr;
-    const cgltf_accessor* aColor = nullptr;
     const cgltf_accessor* aJoint = nullptr;
     const cgltf_accessor* aWt    = nullptr;
+    // All COLOR_n sets, indexed by their set number (COLOR_0, COLOR_1, …).
+    std::vector<const cgltf_accessor*> colorSets;
     for (size_t a = 0; a < prim.attributes_count; ++a) {
       const cgltf_attribute& at = prim.attributes[a];
       switch (at.type) {
         case cgltf_attribute_type_position: aPos   = at.data; break;
         case cgltf_attribute_type_normal:   aNorm  = at.data; break;
-        case cgltf_attribute_type_color:    if (at.index == 0) aColor = at.data; break;  // COLOR_0
         case cgltf_attribute_type_joints:   if (at.index == 0) aJoint = at.data; break;
         case cgltf_attribute_type_weights:  if (at.index == 0) aWt    = at.data; break;
+        case cgltf_attribute_type_color: {
+          if (static_cast<int>(colorSets.size()) <= at.index)
+            colorSets.resize(at.index + 1, nullptr);
+          colorSets[at.index] = at.data;
+          break;
+        }
         default: break;
       }
     }
@@ -111,20 +117,30 @@ void parseMeshPrimitives(
     readAccessorFloats(aPos,  out.positions, 3);
     readAccessorFloats(aNorm, out.normals,   3);
 
-    // Vertex colors (COLOR_0). cgltf normalizes ubyte/ushort to float and
-    // converts VEC3/VEC4 transparently; we always store RGBA (alpha=1 for VEC3).
-    if (aColor) {
-      const int    ncomp = static_cast<int>(cgltf_num_components(aColor->type));
-      const size_t count = aColor->count;
-      out.colors.assign(count * 4, 1.0f);
+    // Vertex colors. glTF's primary set is COLOR_0, but Blender can export a
+    // stray all-white set as COLOR_0 while the painted colours land in COLOR_1.
+    // So read into RGBA, and if a set is uniformly white but a later set carries
+    // real paint, use that instead. cgltf normalizes ubyte/ushort and converts
+    // VEC3/VEC4 transparently.
+    auto readColorSet = [](const cgltf_accessor* acc, std::vector<float>& dst, bool& allWhite) {
+      const int    ncomp = static_cast<int>(cgltf_num_components(acc->type));
+      const size_t count = acc->count;
+      dst.assign(count * 4, 1.0f);
+      allWhite = true;
       for (size_t i = 0; i < count; ++i) {
         float tmp[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
-        cgltf_accessor_read_float(aColor, i, tmp, static_cast<cgltf_size>(ncomp));
-        out.colors[i * 4 + 0] = tmp[0];
-        out.colors[i * 4 + 1] = tmp[1];
-        out.colors[i * 4 + 2] = tmp[2];
-        out.colors[i * 4 + 3] = (ncomp >= 4) ? tmp[3] : 1.0f;
+        cgltf_accessor_read_float(acc, i, tmp, static_cast<cgltf_size>(ncomp));
+        dst[i*4+0]=tmp[0]; dst[i*4+1]=tmp[1]; dst[i*4+2]=tmp[2];
+        dst[i*4+3]=(ncomp>=4)?tmp[3]:1.0f;
+        if (tmp[0] < 0.996f || tmp[1] < 0.996f || tmp[2] < 0.996f) allWhite = false;
       }
+    };
+    for (const cgltf_accessor* acc : colorSets) {
+      if (!acc) continue;
+      std::vector<float> cand; bool allWhite = true;
+      readColorSet(acc, cand, allWhite);
+      out.colors = std::move(cand);     // keep the latest read as a baseline
+      if (!allWhite) break;             // found a painted set → use it
     }
 
     // Joints
