@@ -2,7 +2,7 @@
 
 #include "render/Shader.hpp"
 #include "shared/SharedTypes.hpp"
-#include "world/SkinnedMesh.hpp"
+#include "world/ModelLibrary.hpp"
 
 #include <glad/glad.h>
 #include <glm/glm.hpp>
@@ -92,7 +92,11 @@ public:
   // Resolver maps a definition's relative model_path → absolute filesystem
   // path (the host knows the exe directory). Set once after initGL().
   void setModelResolver(std::function<std::filesystem::path(const std::string&)> r) {
-    modelResolver_ = std::move(r);
+    modelResolver_ = r;
+    if (!modelsInited_) {
+      models_.init(r, "assets/models/_placeholder_object.gltf");
+      modelsInited_ = true;
+    }
   }
 
   // Draw STATIC custom-object models (instanced, definition rotation baked in).
@@ -104,7 +108,7 @@ public:
   // (same setup as the fishing-spot pass). Advances each clip by dt once.
   void renderCustomAnimated(render::Shader& skinnedShader, float dt);
 
-  bool hasCustomModels() const { return !customEntries_.empty(); }
+  bool hasCustomModels() const { return !customInstances_.empty(); }
 
   // Depth-only pass for shadow casting.
   void renderDepth(render::Shader& depthShader);
@@ -179,28 +183,23 @@ private:
   std::unordered_map<std::string, ObjectDefCache> defs_;
 
   // ---- Data-driven custom object models ----------------------------------
-  // Any DB object whose id is not a built-in (tree/rock/chest/fence) and that
-  // has a model_path is rendered here. Static models go through the obstacle
-  // shader (instanced, baked rotation); animated models (glTF with animations)
-  // go through the skinned shader, one draw per instance.
-  struct CustomEntry {
-    bool                          animated = false;
-    // Static path (obstacle shader): one sub-kit per glTF primitive, with the
-    // definition rotation baked into vertices; all share one instance VBO.
-    std::vector<Kit>              staticKits;
-    GLuint                        instanceVbo = 0;
-    // Animated path (skinned shader).
-    std::unique_ptr<world::SkinnedMesh> skinned;
-    std::string                   clip;
-    glm::vec3                     rotationDeg = glm::vec3(0.f);
-    // Tile-centre world positions where this object is placed.
-    std::vector<glm::vec3>        instances;
-  };
-  std::unordered_map<std::string, CustomEntry> customEntries_;
+  // Any DB object whose id is not a built-in (tree/rock/chest/fence/fishing_spot)
+  // is rendered via the shared ModelLibrary (model file or placeholder fallback,
+  // static instanced or animated skinned). Instances are gathered per id from
+  // the map tiles.
+  ModelLibrary models_;
+  std::unordered_map<std::string, std::vector<ModelLibrary::Instance>> customInstances_;
   std::function<std::filesystem::path(const std::string&)> modelResolver_;
+  bool modelsInited_ = false;
 
   void loadCustomModels();      // (re)load models for all custom defs
-  void destroyCustomModels();   // free GL resources for custom entries
+
+public:
+  // World-space AABB for a custom object id (from its loaded model + footprint).
+  // Returns false for built-ins / unknown ids. Used by the picking loop.
+  bool customAabb(const std::string& id, glm::vec3& outMin, glm::vec3& outMax) const {
+    return const_cast<ModelLibrary&>(models_).aabb(id, outMin, outMax);
+  }
 };
 
 }  // namespace world
