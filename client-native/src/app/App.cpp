@@ -509,6 +509,41 @@ bool App::init() {
     } catch (const std::exception& e) {
       std::fprintf(stderr, "[App] DB item fetch failed (server offline?): %s\n", e.what());
     }
+    // Object definitions — register with the obstacle system so custom objects
+    // (and their models) load and render in-game, not just in the editor.
+    try {
+      dbObjectDefs_ = dbClient.getObjects();
+      std::vector<world::ObstacleSystem::ObjectDefCache> caches;
+      caches.reserve(dbObjectDefs_.size());
+      for (const auto& obj : dbObjectDefs_) {
+        world::ObstacleSystem::ObjectDefCache c;
+        c.id           = obj.id;
+        c.objectType   = obj.objectType;
+        c.collision    = obj.collision;
+        c.sizeX        = obj.sizeX;
+        c.sizeY        = obj.sizeY;
+        c.modelPath    = obj.modelPath;
+        c.actionId     = obj.actionId;
+        c.dropItemId   = obj.dropItemId;
+        c.dropQuantity = obj.dropQuantity;
+        c.respawnTicks = obj.respawnTicks;
+        c.defaultClip  = obj.defaultClip;
+        c.looping      = obj.looping;
+        c.rotationX    = obj.rotationX;
+        c.rotationY    = obj.rotationY;
+        c.rotationZ    = obj.rotationZ;
+        caches.push_back(std::move(c));
+      }
+      obstacles_.rebuildFromDefinitions(caches);
+    } catch (const std::exception& e) {
+      std::fprintf(stderr, "[App] DB object fetch failed (server offline?): %s\n", e.what());
+    }
+    // Action definitions — for data-driven context-menu verbs.
+    try {
+      dbActionDefs_ = dbClient.getActions();
+    } catch (const std::exception& e) {
+      std::fprintf(stderr, "[App] DB action fetch failed (server offline?): %s\n", e.what());
+    }
   }
 
   generateAndBuildTerrain();

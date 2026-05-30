@@ -252,18 +252,17 @@ void EditorApp::dbRenderPreview(float dt) {
       camDist * std::cos(dbPreviewAngle_) * std::cos(elevRad),
       camDist * std::sin(elevRad),
       camDist * std::sin(dbPreviewAngle_) * std::cos(elevRad));
-    glm::mat4 view     = glm::lookAt(eye, dbPreviewCenter_, glm::vec3(0, 1, 0));
-    glm::mat4 proj     = glm::perspective(glm::radians(40.0f), 1.0f,
-                                           camDist * 0.01f, camDist * 4.0f);
+    // Left-handed view/projection to match the game (GameCamera::viewProjection
+    // uses lookAtLH + perspectiveLH). Using RH here flipped the model upside-down
+    // relative to how it renders in-world.
+    glm::mat4 view     = glm::lookAtLH(eye, dbPreviewCenter_, glm::vec3(0, 1, 0));
+    glm::mat4 proj     = glm::perspectiveLH(glm::radians(40.0f), 1.0f,
+                                            camDist * 0.01f, camDist * 4.0f);
     glm::mat4 viewProj = proj * view;
 
-    // Orientation: apply the edited object's rotation (degrees → radians),
-    // rotating about the model centre so it spins in place.
-    glm::mat4 model = glm::translate(glm::mat4(1.f), dbPreviewCenter_);
-    model = glm::rotate(model, glm::radians(dbPreviewRot_.y), glm::vec3(0, 1, 0));
-    model = glm::rotate(model, glm::radians(dbPreviewRot_.x), glm::vec3(1, 0, 0));
-    model = glm::rotate(model, glm::radians(dbPreviewRot_.z), glm::vec3(0, 0, 1));
-    model = glm::translate(model, -dbPreviewCenter_);
+    // Orientation is authored at model-build time now; the preview shows the
+    // model exactly as it will appear in-world (no editor rotation applied).
+    const glm::mat4 model = glm::mat4(1.0f);
 
     if (dbPreviewHasAnim_ && skinnedShader_.isValid()) {
       // Animated preview via SkinnedMesh
@@ -2527,7 +2526,6 @@ void EditorApp::dbDrawNPCsTab() {
   ImGui::BeginChild("##npc_edit", ImVec2(0, 0), false);
   if (dbSelNPC_ >= 0 || dbEditIsNew_) {
     NpcDef& d = dbEditNPC_;
-    dbPreviewRot_ = glm::vec3(0.f);  // NPCs have no rotation field
 
     // 3D model preview
     if (dbPreviewTex_) {
@@ -2656,8 +2654,6 @@ void EditorApp::dbDrawObjectsTab() {
   ImGui::BeginChild("##obj_edit", ImVec2(0, 0), false);
   if (dbSelObject_ >= 0 || dbEditIsNew_) {
     ObjectDef& d = dbEditObject_;
-    // Feed the edited rotation to the live 3D preview each frame.
-    dbPreviewRot_ = glm::vec3(d.rotationX, d.rotationY, d.rotationZ);
 
     // 3D model preview
     if (dbPreviewTex_) {
@@ -2735,28 +2731,8 @@ void EditorApp::dbDrawObjectsTab() {
       ImGui::Checkbox("Loop##obj_anim", &d.looping);
     }
 
-    // ---- Orientation section (always shown when a model is loaded) ---------
-    if (!d.modelPath.empty()) {
-      ImGui::Separator();
-      ImGui::TextColored({0.9f, 0.7f, 0.3f, 1.0f}, "Orientation");
-      ImGui::TextDisabled("Rotation snaps to 90 degree increments");
-
-      auto rotSlider = [&](const char* label, float& angle) {
-        float prev = angle;
-        ImGui::SetNextItemWidth(-1);
-        if (ImGui::SliderFloat(label, &angle, -180.f, 180.f, "%.0f deg")) {
-          // Snap to nearest 90 degrees on change
-          angle = std::round(angle / 90.f) * 90.f;
-        }
-        (void)prev;
-      };
-      rotSlider("Rot X##obj_rot", d.rotationX);
-      rotSlider("Rot Y##obj_rot", d.rotationY);
-      rotSlider("Rot Z##obj_rot", d.rotationZ);
-      if (ImGui::Button("Reset Rotation##obj_rot")) {
-        d.rotationX = d.rotationY = d.rotationZ = 0.f;
-      }
-    }
+    // Orientation is authored in the model file (true scale, base at Y=0,
+    // facing −Z). The preview shows it exactly as it renders in-world.
 
     ImGui::TextUnformatted("Examine Text");
     ImGui::SetNextItemWidth(-1); dbInputText("##obj_examine", d.examineText);

@@ -4,6 +4,7 @@
 #include "app/Window.hpp"
 #include "audio/AudioEngine.hpp"
 #include "camera/GameCamera.hpp"
+#include "editor/EntityDefs.hpp"
 #include "input/Picker.hpp"
 #include "net/NetworkClient.hpp"
 #include "render/Mesh.hpp"
@@ -89,6 +90,11 @@ private:
   world::SkinnedMesh                       fishingSpotMesh_;
   world::EntityRenderer                    entities_;
   camera::GameCamera                       camera_;
+
+  // DB entity definitions cached at startup (objects + actions) so picking,
+  // the context menu, and rendering are data-driven rather than hardcoded.
+  std::vector<editor::ObjectDef>           dbObjectDefs_;
+  std::vector<editor::ActionDef>           dbActionDefs_;
 
   // Hover indicator — a small dynamic VAO/VBO holding 4 vertices drawn as
   // GL_LINE_LOOP, repositioned each frame to outline the currently
