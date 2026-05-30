@@ -108,6 +108,10 @@ public:
   // (same setup as the fishing-spot pass). Advances each clip by dt once.
   void renderCustomAnimated(render::Shader& skinnedShader, float dt);
 
+  // Depth-only pass for animated custom objects (skinned shadow shader). Does
+  // NOT advance clips — call after renderCustomAnimated has for the frame.
+  void renderAnimatedShadows(render::Shader& skinnedDepthShader);
+
   bool hasCustomModels() const { return !customInstances_.empty(); }
 
   // Depth-only pass for shadow casting.

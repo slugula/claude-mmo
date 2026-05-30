@@ -416,6 +416,16 @@ void ObstacleSystem::renderCustomAnimated(render::Shader& skinnedShader, float d
   }
 }
 
+void ObstacleSystem::renderAnimatedShadows(render::Shader& skinnedDepthShader) {
+  for (auto& [id, insts] : customInstances_) {
+    if (!models_.isAnimated(id)) continue;
+    for (const ModelLibrary::Instance& in : insts) {
+      glm::mat4 m = glm::translate(glm::mat4(1.0f), glm::vec3(in.x, in.y, in.z));
+      models_.drawAnimatedAt(skinnedDepthShader, id, m);
+    }
+  }
+}
+
 const ObstacleSystem::ObjectDefCache* ObstacleSystem::getDefinition(const std::string& id) const {
   const auto it = defs_.find(id);
   return (it != defs_.end()) ? &it->second : nullptr;
@@ -448,7 +458,13 @@ void ObstacleSystem::render(render::Shader& obstacleShader) {
   glBindVertexArray(0);
 }
 
-void ObstacleSystem::renderDepth(render::Shader& /*depthShader*/) {
+void ObstacleSystem::renderDepth(render::Shader& depthShader) {
+  // Static custom objects cast shadows via the instanced depth shader (same
+  // VAO layout). Animated customs are handled by renderAnimatedShadows().
+  for (auto& [id, insts] : customInstances_) {
+    if (models_.isAnimated(id)) continue;
+    models_.drawStaticInstanced(depthShader, id, insts);
+  }
   if (treeCount_ > 0) {
     if (treeModelLoaded_) {
       if (treeTrunkGltf_.vao) {

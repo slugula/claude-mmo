@@ -352,12 +352,35 @@ bool App::init() {
           if (ey >= 0 && ey < static_cast<int>(map_.tiles.size()) &&
               ex >= 0 && ex < static_cast<int>(map_.tiles[ey].size())) {
             const auto obs = map_.tiles[ey][ex].obstacle;
-            if      (obs == "tree")
+            // Data-driven from the DB object + action definitions. Built-in
+            // action ids map to the verbs the dispatch understands; any other
+            // action shows its display name. Examine always appears.
+            const editor::ObjectDef* od = nullptr;
+            for (const auto& o : dbObjectDefs_) if (o.id == obs) { od = &o; break; }
+            if (od) {
+              const std::string subject = od->name.empty() ? obs : od->name;
+              if (!od->actionId.empty()) {
+                std::string verb;
+                if      (od->actionId == "chop") verb = "Chop down";
+                else if (od->actionId == "mine") verb = "Mine";
+                else if (od->actionId == "bank") verb = "Bank";
+                else {  // custom action — show its display name (dispatch is a no-op for now)
+                  verb = od->actionId;
+                  for (const auto& a : dbActionDefs_) if (a.id == od->actionId) { verb = a.displayName; break; }
+                }
+                if (!verb.empty()) cm.entries.push_back({ verb, subject });
+              }
+              cm.entries.push_back({ "Examine", subject });
+            } else if (obs == "tree") {
               cm.entries.push_back({ "Chop down", "Tree" });
-            else if (obs == "rock")
-              cm.entries.push_back({ "Mine", "Rock" });
-            else if (obs == "chest")
-              cm.entries.push_back({ "Bank", "Chest" });
+              cm.entries.push_back({ "Examine",   "Tree" });
+            } else if (obs == "rock") {
+              cm.entries.push_back({ "Mine",    "Rock" });
+              cm.entries.push_back({ "Examine", "Rock" });
+            } else if (obs == "chest") {
+              cm.entries.push_back({ "Bank",    "Chest" });
+              cm.entries.push_back({ "Examine", "Chest" });
+            }
           }
         } else if (hoveredEntity_.kind == HoveredEntity::Kind::Npc) {
           for (const auto& n : npcs_) {
@@ -1007,6 +1030,11 @@ void App::renderFrame() {
         }
       }
     }
+
+    // Animated custom objects cast shadows via the skinned depth shader too.
+    shadowSkinnedShader_.use();
+    shadowSkinnedShader_.setMat4("u_lightViewProj", lightVP);
+    obstacles_.renderAnimatedShadows(shadowSkinnedShader_);
 
     shadowMap_.endPass();
   }
@@ -1895,19 +1923,21 @@ void App::renderFrame() {
             ui::chatAppendSystem(txt);
             break;
           }
-        // Also handle obstacle examine
+        // Also handle obstacle examine — data-driven from the DB examine_text.
         if (ctxMenuTileY_ >= 0 && ctxMenuTileY_ < static_cast<int>(map_.tiles.size()) &&
             ctxMenuTileX_ >= 0 && ctxMenuTileX_ < static_cast<int>(map_.tiles[ctxMenuTileY_].size())) {
           const auto obs = map_.tiles[ctxMenuTileY_][ctxMenuTileX_].obstacle;
-          if (obs == "tree") {
-            chatLog_.appendSystem("A sturdy tree.");
-            ui::chatAppendSystem("A sturdy tree.");
-          } else if (obs == "rock") {
-            chatLog_.appendSystem("A rocky outcrop.");
-            ui::chatAppendSystem("A rocky outcrop.");
-          } else if (obs == "chest") {
-            chatLog_.appendSystem("A secure bank chest.");
-            ui::chatAppendSystem("A secure bank chest.");
+          std::string txt;
+          for (const auto& o : dbObjectDefs_)
+            if (o.id == obs) { txt = o.examineText; break; }
+          if (txt.empty()) {  // built-in fallbacks
+            if      (obs == "tree")  txt = "A sturdy tree.";
+            else if (obs == "rock")  txt = "A rocky outcrop.";
+            else if (obs == "chest") txt = "A secure bank chest.";
+          }
+          if (!txt.empty()) {
+            chatLog_.appendSystem(txt.c_str());
+            ui::chatAppendSystem(txt.c_str());
           }
         }
       } else if (e.verb == "Take") {
