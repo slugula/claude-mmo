@@ -1847,16 +1847,54 @@ void EditorApp::rebuildObstacles() {
 
 // -----------------------------------------------------------------------
 void EditorApp::setObstacleAtTile(int tx, int ty, const std::string& obs) {
-  if (ty < 0 || ty >= static_cast<int>(map_.tiles.size())) return;
-  if (tx < 0 || tx >= static_cast<int>(map_.tiles[ty].size())) return;
-  auto& tile = map_.tiles[ty][tx];
-  tile.obstacle = obs;
-  if (obs.empty() || obs == "none") {
-    tile.walkable = true; tile.blocksRanged = false;
-  } else if (obs == "fence") {
-    tile.walkable = false; tile.blocksRanged = false;
-  } else {
-    tile.walkable = false; tile.blocksRanged = true;
+  const int W = map_.width, H = map_.height;
+  if (ty < 0 || ty >= H || tx < 0 || tx >= W) return;
+  if (ty >= static_cast<int>(map_.tiles.size())) return;
+  auto& anchor = map_.tiles[ty][tx];
+
+  // Footprint + collision come from the definition. When clearing, use whatever
+  // is currently on the tile so the full NxM block is restored.
+  const std::string lookupId = obs.empty() ? anchor.obstacle : obs;
+  int sx = 1, sy = 1;
+  std::string collision = "full_blocking";
+  if (const auto* def = obstacles_.getDefinition(lookupId)) {
+    sx = std::max(1, def->sizeX);
+    sy = std::max(1, def->sizeY);
+    collision = def->collision;
+  } else if (lookupId == "fence") {
+    collision = "half_blocking";
+  }
+
+  // Resolve walkability for the whole footprint.
+  bool walkable = true, blocksRanged = false;
+  if (!obs.empty() && obs != "none") {
+    if      (collision == "none")          { walkable = true;  blocksRanged = false; }
+    else if (collision == "half_blocking") { walkable = false; blocksRanged = false; }
+    else                                    { walkable = false; blocksRanged = true; }
+  }
+
+  auto isWater = [&](int x, int y) {
+    for (const auto& w : map_.waterTiles) if (w.tileX == x && w.tileY == y) return true;
+    return false;
+  };
+
+  // The obstacle marker lives only on the anchor tile (one rendered instance).
+  anchor.obstacle = obs;
+
+  // Apply walkability across the footprint block (anchor + covered tiles).
+  for (int dy = 0; dy < sy; ++dy) {
+    for (int dx = 0; dx < sx; ++dx) {
+      const int cx = tx + dx, cy = ty + dy;
+      if (cx < 0 || cx >= W || cy < 0 || cy >= H) continue;
+      auto& t = map_.tiles[cy][cx];
+      const bool isAnchor = (cx == tx && cy == ty);
+      // When placing, don't stomp another object's anchor on a covered tile.
+      if (!isAnchor && !obs.empty() && !t.obstacle.empty()) continue;
+      // When clearing, never re-open a water tile.
+      if (obs.empty() && isWater(cx, cy)) continue;
+      t.walkable     = walkable;
+      t.blocksRanged = blocksRanged;
+    }
   }
 }
 
