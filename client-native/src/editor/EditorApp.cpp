@@ -362,9 +362,6 @@ bool EditorApp::init() {
   }
 
   obstacles_.initGL();
-  if (!obstacles_.loadTreeModel(resolveFromExe(kTreeModelPath))) {
-    std::fprintf(stderr, "[Editor] tree model not found — using procedural trees\n");
-  }
   obstacles_.setModelResolver([](const std::string& rel) {
     return resolveFromExe(rel.c_str());
   });
@@ -740,8 +737,7 @@ void EditorApp::render3DViewport(float dt) {
   obstacleShader_.setVec3 ("u_fogColor",   fogColor_);
   obstacleShader_.setFloat("u_fogDensity", fogDensity_);
   obstacleShader_.setFloat("u_fogStart",   fogStart_);
-  obstacles_.render(obstacleShader_);
-  obstacles_.renderCustomStatic(obstacleShader_);  // data-driven static props
+  obstacles_.render(obstacleShader_);  // all static objects (data-driven)
 
   // NPC stand-ins
   {

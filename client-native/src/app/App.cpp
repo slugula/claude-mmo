@@ -490,10 +490,8 @@ bool App::init() {
   }
 
   obstacles_.initGL();
-  if (!obstacles_.loadTreeModel(resolveFromExe(kTreeModelPath))) {
-    std::fprintf(stderr, "[App] tree model load failed — using procedural trees\n");
-  }
-  // Resolve custom-object model_path (relative) → absolute path next to the exe.
+  // Resolve object model_path (relative) → absolute path next to the exe. This
+  // also primes the ModelLibrary with the object placeholder.
   obstacles_.setModelResolver([](const std::string& rel) {
     return resolveFromExe(rel.c_str());
   });
@@ -833,25 +831,10 @@ void App::renderFrame() {
 
           const float baseY = tileWorldY(map_, otx, oty);
 
-          // Model-space AABB (centred on tile, base at Y=0).
+          // Model-space AABB (centred on tile, base at Y=0) from the object's
+          // loaded model + footprint. Unknown ids aren't pickable.
           glm::vec3 lMin, lMax;
-          if (obstacles_.customAabb(obs, lMin, lMax)) {
-            // Data-driven custom object — AABB from its loaded model + footprint.
-          } else if (obs == "tree") {
-            if (obstacles_.treeModelLoaded()) {
-              lMin = obstacles_.treeGltfAABBMin();
-              lMax = obstacles_.treeGltfAABBMax();
-            } else {
-              lMin = glm::vec3(-0.45f,  0.00f, -0.45f);
-              lMax = glm::vec3( 0.45f,  1.60f,  0.45f);
-            }
-          } else if (obs == "rock") {
-            lMin = glm::vec3(-0.28f,  0.00f, -0.24f);
-            lMax = glm::vec3( 0.28f,  0.36f,  0.24f);
-          } else {  // chest / fence / other built-ins
-            lMin = glm::vec3(-0.28f,  0.00f, -0.28f);
-            lMax = glm::vec3( 0.28f,  0.56f,  0.28f);
-          }
+          if (!obstacles_.customAabb(obs, lMin, lMax)) continue;
 
           glm::vec3 wMin, wMax;
           // Obstacles: AABB is derived from actual mesh vertices so no inflation
@@ -1108,8 +1091,7 @@ void App::renderFrame() {
   obstacleShader_.setVec3 ("u_fogColor",   fogColor_);
   obstacleShader_.setFloat("u_fogDensity", fogDensity_);
   obstacleShader_.setFloat("u_fogStart",   fogStart_);
-  obstacles_.render(obstacleShader_);
-  obstacles_.renderCustomStatic(obstacleShader_);  // data-driven static props
+  obstacles_.render(obstacleShader_);  // all static objects (data-driven)
 
   // ---- Detect connection-status transitions for chat-log + state reset -----
   {
@@ -2184,8 +2166,8 @@ void App::renderFrame() {
     ImGui::Separator();
     ImGui::Text("Map: %d x %d tiles  (seed %u)", terrainTileW_, terrainTileH_, mapSeed_);
     ImGui::Text("Tris/tile: 2   Indices: %d", terrainIndexCt_);
-    ImGui::Text("Obstacles: %zu trees, %zu rocks  (instanced)",
-                obstacles_.treeCount(), obstacles_.rockCount());
+    ImGui::Text("Objects: %s (data-driven models)",
+                obstacles_.hasCustomModels() ? "placed" : "none");
     ImGui::Text("Entities: %zu NPCs, %zu dropped items",
                 entities_.npcCount(), entities_.itemCount());
     if (ImGui::Button("Regenerate (next seed)")) {
