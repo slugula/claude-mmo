@@ -1,5 +1,9 @@
 #include "world/EntityRenderer.hpp"
 
+#include "world/GltfLoader.hpp"
+
+#include <glm/gtc/matrix_transform.hpp>
+
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -158,6 +162,24 @@ void EntityRenderer::clearNpcKindModels() {
     }
   }
   npcKindKits_.clear();
+  npcKindSkinned_.clear();  // unique_ptrs free their own GL resources
+}
+
+void EntityRenderer::loadNpcKindModel(const std::string& kind,
+                                      const std::filesystem::path& path) {
+  // Animated if the glTF has clips → SkinnedMesh; else static instanced kit.
+  auto sk = std::make_unique<world::SkinnedMesh>();
+  if (sk->load(path) && sk->animationCount() > 0) {
+    sk->setClip("");  // first clip, looping
+    npcKindSkinned_[kind] = std::move(sk);
+    std::fprintf(stdout, "[EntityRenderer] NPC '%s' loaded as ANIMATED model\n",
+                 kind.c_str());
+    return;
+  }
+  sk.reset();
+  auto model = world::loadGlb(path);
+  if (model && !model->primitives.empty())
+    loadNpcKindModel(kind, model->primitives, model->materials);
 }
 
 void EntityRenderer::loadNpcKindModel(const std::string&                kind,
@@ -427,7 +449,8 @@ void EntityRenderer::render(render::Shader& shader) {
 
     for (std::size_t i = 0; i < npcCount_; ++i) {
       const std::string& k = (i < npcKinds_.size()) ? npcKinds_[i] : "";
-      if (!k.empty() && npcKindKits_.count(k))
+      if (isAnimatedKind(k))            continue;  // drawn in renderAnimatedNpcs()
+      else if (!k.empty() && npcKindKits_.count(k))
         kindGroups[k].push_back(npcInstCpu_[i]);
       else
         humanoidGroup.push_back(npcInstCpu_[i]);
@@ -466,6 +489,29 @@ void EntityRenderer::render(render::Shader& shader) {
   glBindVertexArray(0);
 }
 
+void EntityRenderer::renderAnimatedNpcs(render::Shader& skinnedShader, float dt) {
+  if (npcKindSkinned_.empty() || npcCount_ == 0) return;
+
+  // Group instance indices by animated kind so each clip advances once.
+  std::unordered_map<std::string, std::vector<const Instance*>> groups;
+  for (std::size_t i = 0; i < npcCount_; ++i) {
+    const std::string& k = (i < npcKinds_.size()) ? npcKinds_[i] : "";
+    if (isAnimatedKind(k)) groups[k].push_back(&npcInstCpu_[i]);
+  }
+
+  for (auto& [kind, insts] : groups) {
+    auto it = npcKindSkinned_.find(kind);
+    if (it == npcKindSkinned_.end() || !it->second) continue;
+    world::SkinnedMesh& mesh = *it->second;
+    mesh.update(dt);                       // advance this kind's clip once
+    for (const Instance* in : insts) {
+      glm::mat4 m = glm::translate(glm::mat4(1.0f), glm::vec3(in->x, in->y, in->z));
+      m = glm::rotate(m, in->rotY, glm::vec3(0.0f, 1.0f, 0.0f));
+      mesh.render(skinnedShader, m, /*useMaterialColors=*/true);
+    }
+  }
+}
+
 void EntityRenderer::renderDepth(render::Shader& /*shader*/) {
   // Render NPC geometry into the shadow depth buffer using the same VAOs as
   // render(). The caller has already set u_lightViewProj; no color uniforms
@@ -478,7 +524,8 @@ void EntityRenderer::renderDepth(render::Shader& /*shader*/) {
 
   for (std::size_t i = 0; i < npcCount_; ++i) {
     const std::string& k = (i < npcKinds_.size()) ? npcKinds_[i] : "";
-    if (!k.empty() && npcKindKits_.count(k))
+    if (isAnimatedKind(k))            continue;  // animated NPCs skip the shadow pass for now
+    else if (!k.empty() && npcKindKits_.count(k))
       kindGroups[k].push_back(npcInstCpu_[i]);
     else
       humanoidGroup.push_back(npcInstCpu_[i]);

@@ -3,10 +3,13 @@
 #include "render/Shader.hpp"
 #include "shared/SharedTypes.hpp"
 #include "world/GltfModel.hpp"
+#include "world/SkinnedMesh.hpp"
 
 #include <glad/glad.h>
 #include <glm/glm.hpp>
 
+#include <filesystem>
+#include <memory>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -64,7 +67,24 @@ public:
   void loadNpcKindModel(const std::string&                kind,
                         const std::vector<GltfPrimitive>& primitives,
                         const std::vector<GltfMaterial>&  materials);
+
+  // Load a per-kind NPC model from a glTF file. If the model contains
+  // animation clips it is stored as a SkinnedMesh and drawn (animated, looping
+  // its first clip) via renderAnimatedNpcs(); otherwise it is uploaded as
+  // static instanced geometry (same as the primitives overload above).
+  void loadNpcKindModel(const std::string& kind, const std::filesystem::path& path);
+
   void clearNpcKindModels();
+
+  // True if any loaded NPC kind is animated (host gates the skinned pass on it).
+  bool hasAnimatedNpcs() const { return !npcKindSkinned_.empty(); }
+
+  // Draw animated NPC kinds via the skinned shader, one draw per instance.
+  // The caller has already set the skinned shader's lighting uniforms (same
+  // setup as the fishing-spot / custom-object pass). Advances each kind's clip
+  // once per frame. Instances + smoothed yaw come from the last
+  // setNpcInstances() call.
+  void renderAnimatedNpcs(render::Shader& skinnedShader, float dt);
 
   // One instanced draw per kind, in the order NPCs then items.
   // The caller has already set u_viewProj / u_lightDir / palette uniforms;
@@ -152,6 +172,12 @@ private:
   std::vector<std::string>  npcKinds_;
 
   std::unordered_map<std::string, CustomKit> npcKindKits_;
+
+  // Animated NPC kinds — rendered per-instance via the skinned shader.
+  std::unordered_map<std::string, std::unique_ptr<world::SkinnedMesh>> npcKindSkinned_;
+  bool isAnimatedKind(const std::string& k) const {
+    return !k.empty() && npcKindSkinned_.count(k) > 0;
+  }
 
   // Single-instance VBO + dedicated VAOs used for the 2-pass stencil outline.
   // Separate from the batched instance VBOs so we can upload one instance

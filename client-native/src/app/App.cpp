@@ -488,13 +488,14 @@ bool App::init() {
         if (!def.name.empty())  ui::g_npcNames[def.id]     = def.name;
         ui::g_npcAttackable[def.id] = def.isAttackable;
         if (def.modelPath.empty()) continue;
-        auto model = world::loadGlb(resolveFromExe(def.modelPath.c_str()));
-        if (!model)
-          model = world::loadGlb(resolveFromExe(("assets/" + def.modelPath).c_str()));
-        if (model && !model->primitives.empty()) {
-          entities_.loadNpcKindModel(def.id, model->primitives, model->materials);
-          std::fprintf(stdout, "[App] Loaded custom model for NPC '%s' (%zu prims)\n",
-                       def.id.c_str(), model->primitives.size());
+        // Resolve the model path (try as-is, then with assets/ prefix) and let
+        // EntityRenderer decide static vs animated (skinned) by inspecting it.
+        auto p = resolveFromExe(def.modelPath.c_str());
+        if (!std::filesystem::exists(p))
+          p = resolveFromExe(("assets/" + def.modelPath).c_str());
+        if (std::filesystem::exists(p)) {
+          entities_.loadNpcKindModel(def.id, p);
+          std::fprintf(stdout, "[App] Loaded custom model for NPC '%s'\n", def.id.c_str());
         }
       }
     } catch (const std::exception& e) {
@@ -1234,7 +1235,7 @@ void App::renderFrame() {
   // water shader captures it in sceneColor and renders it as a refracted,
   // depth-tinted underwater object. Normal depth test/write — trees, NPCs, and
   // terrain in front correctly occlude it.
-  if (fishingSpotMesh_.isLoaded() || obstacles_.hasCustomModels()) {
+  if (fishingSpotMesh_.isLoaded() || obstacles_.hasCustomModels() || entities_.hasAnimatedNpcs()) {
     skinnedShader_.use();
     skinnedShader_.setMat4 ("u_viewProj",       viewProj);
     skinnedShader_.setMat4 ("u_lightViewProj",  lightVP);
@@ -1255,6 +1256,9 @@ void App::renderFrame() {
     skinnedShader_.setVec3 ("u_fogColor",        fogColor_);
     skinnedShader_.setFloat("u_fogDensity",      fogDensity_);
     skinnedShader_.setFloat("u_fogStart",        fogStart_);
+
+    // Animated custom NPCs (uses the same skinned shader state).
+    entities_.renderAnimatedNpcs(skinnedShader_, dt);
 
     if (fishingSpotMesh_.isLoaded()) {
       fishingSpotMesh_.update(dt);
