@@ -16,6 +16,15 @@ namespace world {
 
 namespace {
 
+// glTF vertex colours are linear; this engine treats colours as sRGB/display
+// (terrain hex, material colours used directly), so convert on load to match —
+// otherwise painted colours render noticeably too dark.
+float linearToSrgb(float c) {
+  c = c < 0.0f ? 0.0f : (c > 1.0f ? 1.0f : c);
+  return (c <= 0.0031308f) ? c * 12.92f
+                           : 1.055f * std::pow(c, 1.0f / 2.4f) - 0.055f;
+}
+
 // Read N float values from an accessor into outVec. Handles cgltf's
 // stride-aware reads and pads with zeros for fewer-than-N component types.
 void readAccessorFloats(const cgltf_accessor* acc, std::vector<float>& out, int outComps) {
@@ -130,9 +139,10 @@ void parseMeshPrimitives(
       for (size_t i = 0; i < count; ++i) {
         float tmp[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
         cgltf_accessor_read_float(acc, i, tmp, static_cast<cgltf_size>(ncomp));
-        dst[i*4+0]=tmp[0]; dst[i*4+1]=tmp[1]; dst[i*4+2]=tmp[2];
-        dst[i*4+3]=(ncomp>=4)?tmp[3]:1.0f;
         if (tmp[0] < 0.996f || tmp[1] < 0.996f || tmp[2] < 0.996f) allWhite = false;
+        // glTF colours are linear → convert to sRGB to match the engine.
+        dst[i*4+0]=linearToSrgb(tmp[0]); dst[i*4+1]=linearToSrgb(tmp[1]); dst[i*4+2]=linearToSrgb(tmp[2]);
+        dst[i*4+3]=(ncomp>=4)?tmp[3]:1.0f;
       }
     };
     for (const cgltf_accessor* acc : colorSets) {
