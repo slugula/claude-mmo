@@ -93,6 +93,7 @@ void parseMeshPrimitives(
 
     const cgltf_accessor* aPos   = nullptr;
     const cgltf_accessor* aNorm  = nullptr;
+    const cgltf_accessor* aColor = nullptr;
     const cgltf_accessor* aJoint = nullptr;
     const cgltf_accessor* aWt    = nullptr;
     for (size_t a = 0; a < prim.attributes_count; ++a) {
@@ -100,6 +101,7 @@ void parseMeshPrimitives(
       switch (at.type) {
         case cgltf_attribute_type_position: aPos   = at.data; break;
         case cgltf_attribute_type_normal:   aNorm  = at.data; break;
+        case cgltf_attribute_type_color:    if (at.index == 0) aColor = at.data; break;  // COLOR_0
         case cgltf_attribute_type_joints:   if (at.index == 0) aJoint = at.data; break;
         case cgltf_attribute_type_weights:  if (at.index == 0) aWt    = at.data; break;
         default: break;
@@ -108,6 +110,22 @@ void parseMeshPrimitives(
 
     readAccessorFloats(aPos,  out.positions, 3);
     readAccessorFloats(aNorm, out.normals,   3);
+
+    // Vertex colors (COLOR_0). cgltf normalizes ubyte/ushort to float and
+    // converts VEC3/VEC4 transparently; we always store RGBA (alpha=1 for VEC3).
+    if (aColor) {
+      const int    ncomp = static_cast<int>(cgltf_num_components(aColor->type));
+      const size_t count = aColor->count;
+      out.colors.assign(count * 4, 1.0f);
+      for (size_t i = 0; i < count; ++i) {
+        float tmp[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
+        cgltf_accessor_read_float(aColor, i, tmp, static_cast<cgltf_size>(ncomp));
+        out.colors[i * 4 + 0] = tmp[0];
+        out.colors[i * 4 + 1] = tmp[1];
+        out.colors[i * 4 + 2] = tmp[2];
+        out.colors[i * 4 + 3] = (ncomp >= 4) ? tmp[3] : 1.0f;
+      }
+    }
 
     // Joints
     if (aJoint) {

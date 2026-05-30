@@ -78,6 +78,7 @@ private:
     GLuint    vao        = 0;
     GLuint    vboPos     = 0;
     GLuint    vboNrm     = 0;
+    GLuint    vboCol     = 0;   // per-vertex RGBA (location 4)
     GLuint    ebo        = 0;
     GLsizei   indexCount = 0;
     glm::vec3 color      = glm::vec3(0.7f);
@@ -94,6 +95,7 @@ private:
   // per-instance binding. Defined in the .cpp.
   void uploadKit(Kit& k, const std::vector<float>& pos,
                  const std::vector<float>& nrm,
+                 const std::vector<float>& col,   // RGBA per vertex; empty → white
                  const std::vector<uint32_t>& idx, glm::vec3 color);
   void destroyKit(Kit& k);
 

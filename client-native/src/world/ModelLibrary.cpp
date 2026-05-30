@@ -75,6 +75,7 @@ void ModelLibrary::init(std::function<std::filesystem::path(const std::string&)>
 void ModelLibrary::destroyKit(Kit& k) {
   if (k.vao)    glDeleteVertexArrays(1, &k.vao);
   if (k.ebo)    glDeleteBuffers(1, &k.ebo);
+  if (k.vboCol) glDeleteBuffers(1, &k.vboCol);
   if (k.vboNrm) glDeleteBuffers(1, &k.vboNrm);
   if (k.vboPos) glDeleteBuffers(1, &k.vboPos);
   k = {};
@@ -93,14 +94,28 @@ void ModelLibrary::destroy() {
 
 void ModelLibrary::uploadKit(Kit& k, const std::vector<float>& pos,
                              const std::vector<float>& nrm,
+                             const std::vector<float>& col,
                              const std::vector<uint32_t>& idx, glm::vec3 color) {
   k.color      = color;
   k.indexCount = static_cast<GLsizei>(idx.size());
+
+  // Per-vertex RGBA colors; default to white when the model has none so the
+  // shader's (u_color * vColor) leaves the material colour unchanged.
+  const std::size_t vcount = pos.size() / 3;
+  std::vector<float> colors;
+  if (col.size() == vcount * 4) {
+    colors = col;
+  } else {
+    colors.assign(vcount * 4, 1.0f);
+  }
+
   glCreateBuffers(1, &k.vboPos);
   glCreateBuffers(1, &k.vboNrm);
+  glCreateBuffers(1, &k.vboCol);
   glCreateBuffers(1, &k.ebo);
   glNamedBufferStorage(k.vboPos, static_cast<GLsizeiptr>(pos.size() * sizeof(float)), pos.data(), 0);
   glNamedBufferStorage(k.vboNrm, static_cast<GLsizeiptr>(nrm.size() * sizeof(float)), nrm.data(), 0);
+  glNamedBufferStorage(k.vboCol, static_cast<GLsizeiptr>(colors.size() * sizeof(float)), colors.data(), 0);
   glNamedBufferStorage(k.ebo,    static_cast<GLsizeiptr>(idx.size() * sizeof(uint32_t)), idx.data(), 0);
 
   glCreateVertexArrays(1, &k.vao);
@@ -114,6 +129,11 @@ void ModelLibrary::uploadKit(Kit& k, const std::vector<float>& pos,
   glEnableVertexArrayAttrib (k.vao, 1);
   glVertexArrayAttribFormat (k.vao, 1, 3, GL_FLOAT, GL_FALSE, 0);
   glVertexArrayAttribBinding(k.vao, 1, 1);
+  // location 4 = per-vertex RGBA colour (binding 4)
+  glVertexArrayVertexBuffer (k.vao, 4, k.vboCol, 0, sizeof(float) * 4);
+  glEnableVertexArrayAttrib (k.vao, 4);
+  glVertexArrayAttribFormat (k.vao, 4, 4, GL_FLOAT, GL_FALSE, 0);
+  glVertexArrayAttribBinding(k.vao, 4, 4);
   // locations 2,3 = per-instance pos + rotY (binding 2 = shared scratch VBO)
   glVertexArrayVertexBuffer  (k.vao, 2, scratchVbo_, 0, sizeof(Instance));
   glVertexArrayBindingDivisor(k.vao, 2, 1);
@@ -172,7 +192,7 @@ void ModelLibrary::ensure(const std::string& id, const std::string& modelPath,
                            prim.materialIndex < (int)model->materials.size())
                           ? glm::vec3(model->materials[prim.materialIndex].baseColor)
                           : glm::vec3(0.7f);
-          Kit k; uploadKit(k, prim.positions, n, prim.indices, col);
+          Kit k; uploadKit(k, prim.positions, n, prim.colors, prim.indices, col);
           e.staticKits.push_back(k);
         }
       }
@@ -182,7 +202,7 @@ void ModelLibrary::ensure(const std::string& id, const std::string& modelPath,
   // No file (or load failed) → placeholder static kit.
   if (!e.animated && e.staticKits.empty()) {
     accumulate(phPos_);
-    Kit k; uploadKit(k, phPos_, phNrm_, phIdx_, glm::vec3(0.85f, 0.20f, 0.85f)); // magenta = placeholder
+    Kit k; uploadKit(k, phPos_, phNrm_, {}, phIdx_, glm::vec3(0.85f, 0.20f, 0.85f)); // magenta placeholder
     e.staticKits.push_back(k);
   }
 

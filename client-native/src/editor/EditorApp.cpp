@@ -115,6 +115,7 @@ void EditorApp::dbDestroyPreviewFbo() {
     if (p.vao)    glDeleteVertexArrays(1, &p.vao);
     if (p.vboPos) glDeleteBuffers(1, &p.vboPos);
     if (p.vboNorm)glDeleteBuffers(1, &p.vboNorm);
+    if (p.vboCol) glDeleteBuffers(1, &p.vboCol);
     if (p.ebo)    glDeleteBuffers(1, &p.ebo);
   }
   dbPreviewPrims_.clear();
@@ -131,6 +132,7 @@ void EditorApp::dbLoadPreviewModel(const std::string& modelPath, bool forceReloa
     if (p.vao)    glDeleteVertexArrays(1, &p.vao);
     if (p.vboPos) glDeleteBuffers(1, &p.vboPos);
     if (p.vboNorm)glDeleteBuffers(1, &p.vboNorm);
+    if (p.vboCol) glDeleteBuffers(1, &p.vboCol);
     if (p.ebo)    glDeleteBuffers(1, &p.ebo);
   }
   dbPreviewPrims_.clear();
@@ -207,6 +209,13 @@ void EditorApp::dbLoadPreviewModel(const std::string& modelPath, bool forceReloa
     glCreateBuffers(1, &gp.vboNorm);
     glNamedBufferStorage(gp.vboNorm, norms.size() * sizeof(float), norms.data(), 0);
 
+    // Per-vertex RGBA colours (white when the model has none).
+    const std::size_t vcount = prim.positions.size() / 3;
+    std::vector<float> cols = prim.colors;
+    if (cols.size() != vcount * 4) cols.assign(vcount * 4, 1.0f);
+    glCreateBuffers(1, &gp.vboCol);
+    glNamedBufferStorage(gp.vboCol, cols.size() * sizeof(float), cols.data(), 0);
+
     glCreateBuffers(1, &gp.ebo);
     glNamedBufferStorage(gp.ebo,
       prim.indices.size() * sizeof(uint32_t), prim.indices.data(), 0);
@@ -222,6 +231,11 @@ void EditorApp::dbLoadPreviewModel(const std::string& modelPath, bool forceReloa
     glEnableVertexArrayAttrib(gp.vao, 1);
     glVertexArrayAttribFormat(gp.vao, 1, 3, GL_FLOAT, GL_FALSE, 0);
     glVertexArrayAttribBinding(gp.vao, 1, 1);
+    // colour — binding 4 (matches preview.vert / obstacle.vert location 4)
+    glVertexArrayVertexBuffer(gp.vao, 4, gp.vboCol, 0, 4 * sizeof(float));
+    glEnableVertexArrayAttrib(gp.vao, 4);
+    glVertexArrayAttribFormat(gp.vao, 4, 4, GL_FLOAT, GL_FALSE, 0);
+    glVertexArrayAttribBinding(gp.vao, 4, 4);
     // EBO
     glVertexArrayElementBuffer(gp.vao, gp.ebo);
     dbPreviewPrims_.push_back(gp);

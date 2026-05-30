@@ -28,6 +28,7 @@ namespace world {
 struct GltfPrimitive {
   std::vector<float>    positions;     // 3 floats per vertex
   std::vector<float>    normals;       // 3 floats per vertex
+  std::vector<float>    colors;        // 4 floats (RGBA) per vertex from COLOR_0; empty if none
   std::vector<uint8_t>  jointIndices;  // 4 u8 per vertex (zeros if mesh isn't skinned)
   std::vector<float>    jointWeights;  // 4 floats per vertex (zeros + one 1.0 if mesh isn't skinned)
   std::vector<uint32_t> indices;

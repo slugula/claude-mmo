@@ -271,6 +271,7 @@ private:
     GLuint  vao     = 0;
     GLuint  vboPos  = 0;
     GLuint  vboNorm = 0;
+    GLuint  vboCol  = 0;
     GLuint  ebo     = 0;
     GLsizei indexCount = 0;
     glm::vec4 color    = glm::vec4(0.7f, 0.7f, 0.7f, 1.0f);

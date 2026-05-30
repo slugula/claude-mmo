@@ -5,6 +5,7 @@
 in  vec3  v_normal;
 in  vec4  v_shadowPos;
 in  float vLinearDepth;
+in  vec4  v_color;        // per-vertex RGBA (white when model has none)
 out vec4  fragColor;
 
 uniform vec3      u_color;            // base RGB color for this obstacle type
@@ -112,7 +113,9 @@ void main() {
     vec3  N      = normalize(v_normal);
     float nDotL  = max(dot(N, -normalize(u_lightDir)), 0.0);
     float lit    = clamp(u_ambient + u_diffuse * nDotL, 0.0, 1.0);
-    vec3  rgb    = mix(u_color, u_color * lit, u_lightingEnabled);
+    // glTF convention: vertex colour modulates the material/base colour.
+    vec3  base   = u_color * v_color.rgb;
+    vec3  rgb    = mix(base, base * lit, u_lightingEnabled);
 
     float shadow    = sampleShadow(v_shadowPos, N);
     float shadowMul = 1.0 - u_shadowDarkness * shadow * u_shadowsEnabled;
