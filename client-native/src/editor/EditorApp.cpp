@@ -739,22 +739,25 @@ void EditorApp::render3DViewport(float dt) {
   obstacleShader_.setFloat("u_fogStart",   fogStart_);
   obstacles_.render(obstacleShader_);  // all static objects (data-driven)
 
-  // NPC stand-ins
+  // NPCs — same data-driven models as the game (placeholder when no model).
   {
     std::vector<world::EntityRenderer::Instance> insts;
+    std::vector<std::string> kinds;
     insts.reserve(npcSpawns_.size());
+    kinds.reserve(npcSpawns_.size());
     for (const auto& n : npcSpawns_) {
       const float wy = tileWorldY(n.tileX, n.tileY);
       insts.push_back({ static_cast<float>(n.tileX), wy, static_cast<float>(n.tileY), 0.0f });
+      kinds.push_back(n.kind);
     }
-    entities_.setNpcInstances(insts);
-    entities_.render(obstacleShader_);
+    entities_.setNpcInstances(insts, kinds);
+    entities_.render(obstacleShader_);  // static NPC models
   }
 
   // ---- Fishing spot animated model — OPAQUE pass -----------------------------
   // Rendered with the opaque scene BEFORE the SSR snapshot so the water shader
   // captures it in sceneColor and draws it as a refracted underwater object.
-  if (fishingSpotMesh_.isLoaded() || obstacles_.hasCustomModels()) {
+  if (fishingSpotMesh_.isLoaded() || obstacles_.hasCustomModels() || entities_.hasAnimatedNpcs()) {
     skinnedShader_.use();
     skinnedShader_.setMat4 ("u_viewProj",       viewProj);
     skinnedShader_.setMat4 ("u_lightViewProj",  lightVP);
@@ -802,6 +805,7 @@ void EditorApp::render3DViewport(float dt) {
 
     // Data-driven animated custom objects (same skinned shader state).
     obstacles_.renderCustomAnimated(skinnedShader_, dt);
+    entities_.renderAnimatedNpcs(skinnedShader_, dt);  // animated NPCs in editor
   }
 
   // ---- Water pass -------------------------------------------------------
@@ -2396,6 +2400,13 @@ void EditorApp::dbLoadAll() {
       caches.push_back(std::move(c));
     }
     obstacles_.rebuildFromDefinitions(caches);
+
+    // Load NPC models (or placeholder) so editor NPCs render like the game.
+    entities_.setNpcModelResolver([](const std::string& rel) {
+      return resolveFromExe(rel.c_str());
+    });
+    for (const auto& npc : dbNPCs_)
+      entities_.ensureNpcModel(npc.id, npc.modelPath, npc.sizeX, npc.sizeY);
 
   } catch (const std::exception& e) {
     dbStatus_  = std::string("Load failed: ") + e.what();
