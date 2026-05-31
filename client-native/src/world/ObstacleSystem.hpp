@@ -2,167 +2,121 @@
 
 #include "render/Shader.hpp"
 #include "shared/SharedTypes.hpp"
+#include "world/ModelLibrary.hpp"
 
 #include <glad/glad.h>
 #include <glm/glm.hpp>
 
-#include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace world {
 
-// Manages the GPU resources for rendering trees and rocks: three procedural
-// "kit" meshes (trunk cylinder, canopy sphere, rock box) plus two per-
-// instance VBOs (one for trees, one for rocks). One instanced draw per mesh
-// kit each frame. Rebuilt whenever the map regenerates.
+// Renders all placed objects from the map, fully data-driven. Every object id
+// is backed by the shared ModelLibrary (a model file, or a placeholder when the
+// definition has no model). One instanced static draw per id, plus a skinned
+// pass for animated ids. No procedural/built-in meshes — built-ins are just
+// pre-seeded definitions that render their model (or the placeholder).
 class ObstacleSystem {
 public:
   ObstacleSystem() = default;
-  ~ObstacleSystem();
+  ~ObstacleSystem() = default;
 
   ObstacleSystem(const ObstacleSystem&)            = delete;
   ObstacleSystem& operator=(const ObstacleSystem&) = delete;
 
-  // One-time GL setup — uploads the three static kit meshes. Call after the
-  // GL context is current.
-  void initGL();
+  void initGL() {}   // nothing to allocate up front; ModelLibrary owns GL
 
-  // Load a glTF tree model to replace the procedural trunk+canopy. The model
-  // geometry is pre-scaled to fill a 2×2-tile footprint. Non-fatal on failure
-  // (falls back to the procedural kit). Should be called after initGL().
-  bool loadTreeModel(const std::filesystem::path& path);
+  // Gather per-id instance lists from the map tiles (one instance per placed
+  // object, at its anchor tile). Cheap; runs each time the map changes.
+  // `depletedKeys` holds "x-y" keys of resource nodes the server reports as
+  // depleted; those tiles render the object's depleted-model variant (id +
+  // "#depleted") instead, or nothing if it has none.
+  void rebuildFromMap(const shared::WorldMapFile& map,
+                      const std::unordered_set<std::string>& depletedKeys = {});
 
-  // Walk the map's tiles, collect tree and rock instances (position +
-  // rotation), and re-upload the instance VBOs. Cheap — runs in microseconds
-  // for a 64x64 map.
-  void rebuildFromMap(const shared::WorldMapFile& map);
-
-  // Lightweight cache of database-authored object definitions. Stores
-  // collision, sizeX, sizeY (and model_path for future model loading) keyed by
-  // object id ("tree", "bookcase_oak", etc.). Built-in enum types are seeded
-  // automatically; custom ids can coexist. The collision and size values are
-  // available for picking, pathfinding, and future data-driven rendering.
+  // Database-authored object definition (collision, footprint, model, action…).
   struct ObjectDefCache {
-    std::string id;                           // "tree", "bookcase_oak", etc.
-    std::string objectType   = "Decoration";  // "Decoration"|"ResourceNode"|"ProductionFacility"
+    std::string id;
+    std::string objectType   = "Decoration";
     std::string collision    = "full_blocking";
     int         sizeX        = 1;
     int         sizeY        = 1;
     std::string modelPath;
     std::string actionId;
     std::string dropItemId;
-    int         dropQuantity = 1;
-    int         respawnTicks = 25;
+    int         dropQuantity  = 1;
+    int         respawnTicks  = 25;
+    std::string defaultClip;
+    bool        looping       = true;
+    float       rotationX     = 0.f;
+    float       rotationY     = 0.f;
+    float       rotationZ     = 0.f;
+    std::string depletedObjectId;
+    bool        pickable      = true;
   };
 
-  // Populate the definitions cache from the server DB. Each entry's `id` field
-  // is the map key. The five built-in types (tree, rock, chest, fishing_spot,
-  // fence) are seeded with hardcoded defaults before overlaying the supplied
-  // defs, so they always have a fallback. Safe to call every time the DB
-  // editor refreshes.
+  // Seed built-in defaults, overlay server definitions, then (re)load all
+  // models into the ModelLibrary.
   void rebuildFromDefinitions(const std::vector<ObjectDefCache>& defs);
-
-  // Seed built-in definitions so the cache works without a server connection.
   void seedBuiltinDefinitions();
-
-  // Look up a definition by object id. Returns nullptr if not found.
   const ObjectDefCache* getDefinition(const std::string& id) const;
-
-  // Convenience: return sizeX × sizeY footprint for the given id.
-  // Returns {1,1} for unknown ids.
   std::pair<int,int> footprint(const std::string& id) const;
 
-  // Issue three instanced draws (trunks, canopies, rocks). The shader is
-  // expected to have all uniforms except u_color set by the caller; this
-  // method sets u_color per draw to match the obstacle kit being drawn.
+  // Resolver maps a relative model_path → absolute path; sets up the
+  // ModelLibrary with the object placeholder. Call once after initGL().
+  void setModelResolver(std::function<std::filesystem::path(const std::string&)> r) {
+    modelResolver_ = r;
+    if (!modelsInited_) {
+      models_.init(r, "assets/models/_placeholder_object.gltf");
+      modelsInited_ = true;
+    }
+  }
+
+  // Static (non-animated) objects — instanced draw via the obstacle shader.
   void render(render::Shader& obstacleShader);
-
-  // Depth-only pass for shadow casting. The supplied shader is expected to
-  // have its u_lightViewProj already bound; we just issue the instanced
-  // draws against the same VAOs used for the regular pass. No u_color or
-  // lighting uniforms are touched.
+  // Animated objects — skinned draw, advances clips by dt once.
+  void renderCustomAnimated(render::Shader& skinnedShader, float dt);
+  // Static objects into the instanced shadow depth pass.
   void renderDepth(render::Shader& depthShader);
+  // Animated objects into the skinned shadow depth pass (no clip advance).
+  void renderAnimatedShadows(render::Shader& skinnedDepthShader);
 
-  // Render an outline around a single obstacle at the given tile. Uses
-  // front-face culling + normal inflation for the "shell" outline effect.
-  // The caller must have bound `outlineShader` and set u_viewProj already.
-  // Returns false if the tile doesn't have a tree or rock.
-  bool renderOutlineAt(render::Shader& outlineShader,
-                       const shared::WorldMapFile& map,
-                       int tileX, int tileY);
+  bool hasCustomModels() const { return !customInstances_.empty(); }
 
-  // Render just the geometry for a single obstacle (no stencil / inflation).
-  // Used by the screen-space outline mask pass to build a silhouette texture.
-  // u_viewProj must already be set on the shader. Returns false if the tile
-  // has no renderable obstacle.
+  // Render one tile's object into the outline mask. Resolves the depleted
+  // variant when the tile is depleted, and routes animated models through the
+  // skinned mask shader. Returns false (no outline) for empty/non-pickable tiles.
   bool renderGeometryAt(render::Shader& maskShader,
+                        render::Shader& maskSkinnedShader,
                         const shared::WorldMapFile& map,
-                        int tileX, int tileY);
+                        int tileX, int tileY,
+                        const std::unordered_set<std::string>& depletedKeys = {});
 
-  std::size_t treeCount()  const { return treeCount_;  }
-  std::size_t rockCount()  const { return rockCount_;  }
-  std::size_t fenceCount() const { return fenceCount_; }
+  // World-space AABB for an object id (model bounds ∪ footprint), in model
+  // space centred on its tile. Returns false for unknown ids.
+  bool customAabb(const std::string& id, glm::vec3& outMin, glm::vec3& outMax) const {
+    return const_cast<ModelLibrary&>(models_).aabb(id, outMin, outMax);
+  }
 
-  // Axis-aligned bounding box of the gltf tree model in world space (after
-  // applying kScaleXZ/kScaleY). Valid only when treeModelLoaded() is true.
-  bool        treeModelLoaded()   const { return treeModelLoaded_; }
-  glm::vec3   treeGltfAABBMin()   const { return treeGltfAABBMin_; }
-  glm::vec3   treeGltfAABBMax()   const { return treeGltfAABBMax_; }
+  // Resolve the object id a tile should render/pick: its depleted reference when
+  // `depleted`, else its own obstacle id. "" = render nothing while depleted.
+  std::string effectiveId(const std::string& obs, bool depleted) const;
+  // Whether an object id is pickable (hover outline + left-click). Default true.
+  bool isPickable(const std::string& id) const;
 
 private:
-  // Per-kit static-geometry handles + per-kit instance VAO that combines
-  // them with the shared instance buffer for that obstacle kind.
-  struct Kit {
-    GLuint  vboPositions = 0;  // 3 floats per vertex
-    GLuint  vboNormals   = 0;  // 3 floats per vertex
-    GLuint  ebo          = 0;  // uint32 indices
-    GLuint  vao          = 0;  // attribute layout (mesh + instance binding)
-    GLsizei indexCount   = 0;
-    glm::vec3 color      = glm::vec3(1.0f);
-  };
+  void loadCustomModels();   // ensure a ModelLibrary entry for every definition
 
-  void destroy();
-  void uploadKitMesh(Kit& kit,
-                     const std::vector<float>&    positions,
-                     const std::vector<float>&    normals,
-                     const std::vector<uint32_t>& indices,
-                     GLuint instanceVbo);
+  ModelLibrary models_;
+  std::unordered_map<std::string, std::vector<ModelLibrary::Instance>> customInstances_;
+  std::function<std::filesystem::path(const std::string&)> modelResolver_;
+  bool modelsInited_ = false;
 
-  Kit trunk_;
-  Kit canopy_;
-  Kit rock_;
-  Kit fence_;
-
-  GLuint treeInstanceVbo_  = 0;  // shared between trunk and canopy VAOs
-  GLuint rockInstanceVbo_  = 0;
-  GLuint fenceInstanceVbo_ = 0;
-  // Single-instance VBO for outline rendering of one obstacle at a time.
-  GLuint outlineInstanceVbo_ = 0;
-  Kit    outlineTrunk_;   // VAOs bound to outlineInstanceVbo_
-  Kit    outlineCanopy_;
-  Kit    outlineRock_;
-  Kit    outlineFence_;
-
-  // Optional glTF tree model (replaces procedural trunk+canopy when loaded).
-  // Each instance sits at the centre of a 2×2 tile block.
-  Kit    treeTrunkGltf_;
-  Kit    treeCanopyGltf_;
-  GLuint treeGltfInstanceVbo_    = 0;
-  Kit    outlineTreeTrunkGltf_;
-  Kit    outlineTreeCanopyGltf_;
-  GLuint outlineTreeGltfInstanceVbo_ = 0;
-  bool      treeModelLoaded_    = false;
-  glm::vec3 treeGltfAABBMin_   = glm::vec3(-0.45f, 0.0f, -0.45f);  // fallback = procedural bounds
-  glm::vec3 treeGltfAABBMax_   = glm::vec3( 0.45f, 1.6f,  0.45f);
-
-  std::size_t treeCount_  = 0;
-  std::size_t rockCount_  = 0;
-  std::size_t fenceCount_ = 0;
-
-  // Object definitions cache (keyed by id string)
   std::unordered_map<std::string, ObjectDefCache> defs_;
 };
 

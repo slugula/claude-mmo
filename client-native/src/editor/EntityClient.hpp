@@ -45,7 +45,14 @@ template<> struct glz::meta<editor::ObjectDef> {
     "drop_quantity",   &T::dropQuantity,
     "respawn_ticks",   &T::respawnTicks,
     "craft_action_id", &T::craftActionId,
-    "examine_text",    &T::examineText);
+    "examine_text",    &T::examineText,
+    "default_clip",    &T::defaultClip,
+    "looping",         &T::looping,
+    "rotation_x",        &T::rotationX,
+    "rotation_y",        &T::rotationY,
+    "rotation_z",        &T::rotationZ,
+    "depleted_object_id",&T::depletedObjectId,
+    "pickable",          &T::pickable);
 };
 
 template<> struct glz::meta<editor::NpcDef> {
@@ -114,6 +121,8 @@ std::wstring entityToWide(const std::string& s);
 // ---- EntityClient ----------------------------------------------------------
 
 struct EntityClient {
+  std::string lastError;   // populated when a save/delete returns false
+
   // ---- Items
   std::vector<ItemDef> getItems() {
     auto json = entityHttpRequest(L"GET", L"/api/db/items");
@@ -122,17 +131,18 @@ struct EntityClient {
     return out;
   }
   bool saveItem(const ItemDef& d, bool isNew) {
+    if (d.id.empty()) { lastError = "ID is required."; return false; }
     auto json = glz::write_json(d);
-    if (!json) return false;
+    if (!json) { lastError = "JSON serialization failed."; return false; }
     try {
       if (isNew) entityHttpRequest(L"POST", L"/api/db/items", *json);
       else       entityHttpRequest(L"PUT",  entityToWide("/api/db/items/" + d.id), *json);
-      return true;
-    } catch (...) { return false; }
+      lastError.clear(); return true;
+    } catch (const std::exception& e) { lastError = e.what(); return false; }
   }
   bool deleteItem(const std::string& id) {
-    try { entityHttpRequest(L"DELETE", entityToWide("/api/db/items/" + id)); return true; }
-    catch (...) { return false; }
+    try { entityHttpRequest(L"DELETE", entityToWide("/api/db/items/" + id)); lastError.clear(); return true; }
+    catch (const std::exception& e) { lastError = e.what(); return false; }
   }
 
   // ---- NPCs
@@ -143,17 +153,18 @@ struct EntityClient {
     return out;
   }
   bool saveNPC(const NpcDef& d, bool isNew) {
+    if (d.id.empty()) { lastError = "ID is required."; return false; }
     auto json = glz::write_json(d);
-    if (!json) return false;
+    if (!json) { lastError = "JSON serialization failed."; return false; }
     try {
       if (isNew) entityHttpRequest(L"POST", L"/api/db/npcs", *json);
       else       entityHttpRequest(L"PUT",  entityToWide("/api/db/npcs/" + d.id), *json);
-      return true;
-    } catch (...) { return false; }
+      lastError.clear(); return true;
+    } catch (const std::exception& e) { lastError = e.what(); return false; }
   }
   bool deleteNPC(const std::string& id) {
-    try { entityHttpRequest(L"DELETE", entityToWide("/api/db/npcs/" + id)); return true; }
-    catch (...) { return false; }
+    try { entityHttpRequest(L"DELETE", entityToWide("/api/db/npcs/" + id)); lastError.clear(); return true; }
+    catch (const std::exception& e) { lastError = e.what(); return false; }
   }
 
   // ---- Objects
@@ -164,17 +175,18 @@ struct EntityClient {
     return out;
   }
   bool saveObject(const ObjectDef& d, bool isNew) {
+    if (d.id.empty()) { lastError = "ID is required."; return false; }
     auto json = glz::write_json(d);
-    if (!json) return false;
+    if (!json) { lastError = "JSON serialization failed."; return false; }
     try {
       if (isNew) entityHttpRequest(L"POST", L"/api/db/objects", *json);
       else       entityHttpRequest(L"PUT",  entityToWide("/api/db/objects/" + d.id), *json);
-      return true;
-    } catch (...) { return false; }
+      lastError.clear(); return true;
+    } catch (const std::exception& e) { lastError = e.what(); return false; }
   }
   bool deleteObject(const std::string& id) {
-    try { entityHttpRequest(L"DELETE", entityToWide("/api/db/objects/" + id)); return true; }
-    catch (...) { return false; }
+    try { entityHttpRequest(L"DELETE", entityToWide("/api/db/objects/" + id)); lastError.clear(); return true; }
+    catch (const std::exception& e) { lastError = e.what(); return false; }
   }
 
   // ---- Actions
@@ -185,17 +197,18 @@ struct EntityClient {
     return out;
   }
   bool saveAction(const ActionDef& d, bool isNew) {
+    if (d.id.empty()) { lastError = "ID is required."; return false; }
     auto json = glz::write_json(d);
-    if (!json) return false;
+    if (!json) { lastError = "JSON serialization failed."; return false; }
     try {
       if (isNew) entityHttpRequest(L"POST", L"/api/db/actions", *json);
       else       entityHttpRequest(L"PUT",  entityToWide("/api/db/actions/" + d.id), *json);
-      return true;
-    } catch (...) { return false; }
+      lastError.clear(); return true;
+    } catch (const std::exception& e) { lastError = e.what(); return false; }
   }
   bool deleteAction(const std::string& id) {
-    try { entityHttpRequest(L"DELETE", entityToWide("/api/db/actions/" + id)); return true; }
-    catch (...) { return false; }
+    try { entityHttpRequest(L"DELETE", entityToWide("/api/db/actions/" + id)); lastError.clear(); return true; }
+    catch (const std::exception& e) { lastError = e.what(); return false; }
   }
 };
 

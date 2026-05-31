@@ -19,6 +19,7 @@
 #include "world/GltfLoader.hpp"
 #include "world/GltfModel.hpp"
 #include "world/ObstacleSystem.hpp"
+#include "world/SkinnedMesh.hpp"
 #include "world/TerrainBuilder.hpp"
 #include "world/WaterRenderer.hpp"
 
@@ -108,7 +109,7 @@ private:
 
   // ---- Utilities
   float tileWorldY(int tx, int ty) const;
-  void  setObstacleAtTile(int tx, int ty, shared::ObstacleType obs);
+  void  setObstacleAtTile(int tx, int ty, const std::string& obs);
 
   // ---- Water
   // Deform vertex heights in a ±2 tile radius around the placed water tile so
@@ -130,6 +131,7 @@ private:
   render::Shader  terrainShader_;
   render::Shader  wireframeShader_;
   render::Shader  obstacleShader_;
+  render::Shader  skinnedShader_;          // for animated obstacle models (fishing spots etc.)
   render::Shader  shadowInstancedShader_;
   render::ShadowMap shadowMap_;
   render::Mesh    terrainMesh_;
@@ -176,7 +178,7 @@ private:
   bool          middleClickIn3D_  = false;   // middle-click started in 3D viewport (locks orbit there)
 
   // Sub-selection within tools
-  shared::ObstacleType  obstacleSubtype_ = shared::ObstacleType::tree;
+  std::string           obstacleSubtype_ = "tree";  // DB object ID of selected obstacle type
   std::string           npcSubtype_      = "chicken";
 
   // Active terrain colour (PaintTerrain tool)
@@ -261,13 +263,14 @@ private:
   void   dbInitPreviewFbo();
   void   dbDestroyPreviewFbo();
   void   dbRenderPreview(float dt);   // renders into dbPreviewFbo_, angle auto-spins
-  void   dbLoadPreviewModel(const std::string& modelPath);  // load model for preview
+  void   dbLoadPreviewModel(const std::string& modelPath, bool forceReload = false);
 
   // Per-primitive GPU resources for the preview model.
   struct DbPreviewPrim {
     GLuint  vao     = 0;
     GLuint  vboPos  = 0;
     GLuint  vboNorm = 0;
+    GLuint  vboCol  = 0;
     GLuint  ebo     = 0;
     GLsizei indexCount = 0;
     glm::vec4 color    = glm::vec4(0.7f, 0.7f, 0.7f, 1.0f);
@@ -277,6 +280,11 @@ private:
   std::string                 dbPreviewLoadedPath_;
   glm::vec3                   dbPreviewCenter_ = glm::vec3(0.f);
   float                       dbPreviewRadius_ = 1.0f;
+  // Animated preview (used when the model has glTF animation clips)
+  world::SkinnedMesh          dbPreviewSkinned_;
+  bool                        dbPreviewHasAnim_  = false;
+  std::vector<std::string>    dbPreviewClips_;    // clip names from the loaded model
+  glm::vec3                   dbPreviewRot_ = glm::vec3(0.f);  // euler degrees applied in preview
 
   EntityClient         dbClient_;
   bool                 showDbWindow_  = false;

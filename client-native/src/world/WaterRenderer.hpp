@@ -15,24 +15,42 @@ namespace world {
 // Stored by the host (EditorApp / App) and passed to WaterRenderer::render().
 struct WaterUniforms {
   // ---- Basic ----
-  glm::vec3 shallowColor    = { 0.30f, 0.70f, 0.60f };
-  glm::vec3 deepColor       = { 0.05f, 0.20f, 0.35f };
-  float     waveSpeed       = 0.40f;
-  float     waveHeight      = 0.08f;
-  float     normalStrength  = 0.60f;
-  float     reflectStrength = 0.60f;
-  float     causticIntensity= 0.00f;
-  float     foamWidth       = 0.50f;  // 0–1: how far foam extends from tile edge inward
+  glm::vec3 shallowColor       = { 0.30f, 0.70f, 0.60f };
+  glm::vec3 deepColor          = { 0.05f, 0.20f, 0.35f };
+  float     waveSpeed          = 0.40f;
+  float     waveHeight         = 0.08f;
+  float     normalStrength     = 0.60f;
+  float     reflectStrength    = 0.80f;   // "water clarity" — how visible underwater content is
+  float     causticIntensity   = 0.00f;
+  float     foamWidth          = 0.50f;   // 0–1 shore-zone foam band width
+
+  // ---- Depth & refraction (new) ----
+  float     refractionStrength = 0.04f;   // UV distortion magnitude for underwater view
+  float     depthFade          = 5.0f;    // how fast water color transitions shallow→deep
+  float     foamContactWidth   = 0.3f;    // world-space depth threshold for contact foam
+  float     nearPlane          = 0.1f;    // camera near plane (set per-frame by host)
+  float     farPlane           = 500.0f;  // camera far plane
+
+  // ---- Per-frame lighting (set by host) ----
+  glm::vec3 cameraPos          = {};
+  glm::vec3 sunDir             = { 0.f, -1.f, 0.f };
+  float     specularStrength   = 0.70f;
+  float     waterAlpha         = 0.82f;   // kept for legacy settings load compat
+
   // ---- Advanced ----
-  float     waveScale       = 2.00f;
-  float     causticScale    = 4.00f;
-  float     causticSpeed    = 0.30f;
-  glm::vec3 foamColor       = { 0.90f, 0.95f, 1.00f };
-  float     foamSpeed       = 0.50f;
-  float     foamScale       = 8.00f;
-  float     parallaxDepth   = 0.04f;
+  float     waveScale          = 2.00f;
+  float     causticScale       = 4.00f;
+  float     causticSpeed       = 0.30f;
+  glm::vec3 foamColor          = { 0.90f, 0.95f, 1.00f };
+  float     foamSpeed          = 0.50f;
+  float     foamScale          = 8.00f;
+  float     parallaxDepth      = 0.04f;
   // waterOffset is in world units; also used by EditorApp banking.
-  float     waterOffset     = 0.00f;
+  float     waterOffset        = 0.00f;
+
+  // Relative path to the user-loaded caustic PNG ("" = procedural fallback).
+  // Persisted in settings.cfg so the editor and client share the same caustic.
+  std::string causticMapPath;
 };
 
 // Owns the water shader, normal-map GL texture, and WaterMesh.

@@ -149,6 +149,12 @@ void WaterRenderer::render(float time,
                             const WaterUniforms& u) {
   if (!shader_.isValid() || mesh_.empty()) return;
 
+  // Water blends over the opaque scene. Depth TEST keeps trees/obstacles in
+  // front; depth WRITE is off (water doesn't occlude anything behind it).
+  glEnable(GL_BLEND);
+  glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+  glDepthMask(GL_FALSE);
+
   shader_.use();
 
   // Matrices
@@ -166,13 +172,25 @@ void WaterRenderer::render(float time,
   shader_.setFloat("uCausticIntensity", u.causticIntensity);
   shader_.setFloat("uCausticScale",     u.causticScale);
   shader_.setFloat("uCausticSpeed",     u.causticSpeed);
-  shader_.setFloat("uFoamWidth",         u.foamWidth);
+  shader_.setFloat("uFoamWidth",        u.foamWidth);
   shader_.setFloat("uFoamSpeed",        u.foamSpeed);
   shader_.setFloat("uFoamScale",        u.foamScale);
   shader_.setFloat("uParallaxDepth",    u.parallaxDepth);
   shader_.setVec3 ("uShallowColor",     u.shallowColor);
   shader_.setVec3 ("uDeepColor",        u.deepColor);
   shader_.setVec3 ("uFoamColor",        u.foamColor);
+
+  // Depth-based & refraction uniforms (new)
+  shader_.setFloat("uRefractionStrength", u.refractionStrength);
+  shader_.setFloat("uDepthFade",          u.depthFade);
+  shader_.setFloat("uFoamContactWidth",   u.foamContactWidth);
+  shader_.setFloat("uNear",               u.nearPlane);
+  shader_.setFloat("uFar",                u.farPlane);
+
+  // Per-frame lighting/view state
+  shader_.setVec3 ("uCameraPos",        u.cameraPos);
+  shader_.setVec3 ("uSunDir",           u.sunDir);
+  shader_.setFloat("uSpecularStrength", u.specularStrength);
 
   // Textures
   shader_.setInt  ("uNormalMap",      0);
@@ -186,6 +204,8 @@ void WaterRenderer::render(float time,
   glBindTextureUnit(3, causticTex_);
 
   mesh_.draw();
+
+  glDepthMask(GL_TRUE);
 }
 
 }  // namespace world

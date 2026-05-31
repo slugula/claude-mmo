@@ -53,6 +53,7 @@ public:
   void sendMoveTo      (int targetX, int targetY);
   void sendChopTree    (int tileX,   int tileY);
   void sendMineRock    (int tileX,   int tileY);
+  void sendFish        (int tileX,   int tileY);
   void sendAttackNpc   (const std::string& npcId);
   void sendTalkTo      (const std::string& npcId);
   void sendTakeItem    (const std::string& droppedItemId);

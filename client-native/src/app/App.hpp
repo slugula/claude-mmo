@@ -4,6 +4,7 @@
 #include "app/Window.hpp"
 #include "audio/AudioEngine.hpp"
 #include "camera/GameCamera.hpp"
+#include "editor/EntityDefs.hpp"
 #include "input/Picker.hpp"
 #include "net/NetworkClient.hpp"
 #include "render/Mesh.hpp"
@@ -26,6 +27,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <unordered_set>
 
 namespace app {
 
@@ -76,6 +78,7 @@ private:
   render::Shader                           skinnedShader_;
   render::Shader                           outlineShader_;          // (kept, unused after SS-outline)
   render::Shader                           outlineMaskShader_;      // renders silhouette to mask FBO
+  render::Shader                           outlineMaskSkinnedShader_; // skinned silhouette (animated objects)
   render::Shader                           outlineCompositeShader_; // composites border over scene
   render::Shader                           shadowInstancedShader_;
   render::Shader                           shadowSkinnedShader_;
@@ -88,6 +91,12 @@ private:
   world::SkinnedMesh                       playerModel_;
   world::EntityRenderer                    entities_;
   camera::GameCamera                       camera_;
+
+  // DB entity definitions cached at startup (objects + actions) so picking,
+  // the context menu, and rendering are data-driven rather than hardcoded.
+  std::vector<editor::ObjectDef>           dbObjectDefs_;
+  std::vector<editor::ActionDef>           dbActionDefs_;
+  std::vector<editor::ItemDef>             dbItemDefs_;
 
   // Hover indicator — a small dynamic VAO/VBO holding 4 vertices drawn as
   // GL_LINE_LOOP, repositioned each frame to outline the currently
@@ -123,6 +132,8 @@ private:
     // Tick stamps to detect per-tick action events for this remote player.
     int   seenAttackTick   = -999;
     int   seenChopTick     = -999;
+    int   seenMineTick     = -999;
+    int   seenFishTick     = -999;
     int   seenHitTick      = -999;
     bool  prevPickupActive = false;  // was pickupItemId non-empty last tick?
   };
@@ -131,6 +142,10 @@ private:
   std::unordered_map<std::string, RemoteAnim>          remoteAnims_;
   std::vector<shared::NPCState>            npcs_;
   std::vector<shared::DroppedItemState>    droppedItems_;
+  // "x-y" keys of depleted resource nodes (from the server patch). When this
+  // changes, the obstacle instances are rebuilt so depleted tiles swap to their
+  // depleted-model variant. unordered_set is included via <unordered_map> deps.
+  std::unordered_set<std::string>          depletedTiles_;
   // Per-id previous + current NPC snapshots for Phase 10 interpolation.
   // Rebuilt every state tick; rendered with a lerp in renderFrame.
   std::unordered_map<std::string, shared::NPCState> prevNpcs_;
@@ -156,6 +171,8 @@ private:
   // movement state. Triggered when lastAttackTick / lastChopTick rises.
   int                                      seenAttackTick_    = -999;
   int                                      seenChopTick_      = -999;
+  int                                      seenMineTick_      = -999;
+  int                                      seenFishTick_      = -999;
   int                                      seenHitTick_       = -999;
   bool                                     prevPickupActive_  = false; // was pickupItemId non-empty last tick?
   // Per-equip-slot snapshot for detecting equip/unequip events vs the

@@ -28,6 +28,14 @@ struct ObjectDef {
   // ProductionFacility
   std::string craftActionId;
   std::string examineText;
+  // Animation & orientation
+  std::string defaultClip;            // glTF clip name to auto-play (empty = first clip)
+  bool        looping    = true;
+  float       rotationX  = 0.f;       // degrees, snapped to 90° increments in the editor
+  float       rotationY  = 0.f;
+  float       rotationZ  = 0.f;
+  std::string depletedObjectId;       // another object id shown while depleted (empty = render nothing)
+  bool        pickable   = true;      // hover outline + left-click pick
 };
 
 struct DropEntry {

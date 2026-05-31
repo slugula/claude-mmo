@@ -41,18 +41,14 @@ static void hexToRgb8(const std::string& hex,
 }
 
 // ── Obstacle colour hints (matches editor MinimapRenderer) ────────────────────
-static void obstacleColor(shared::ObstacleType obs,
+static void obstacleColor(const std::string& obs,
                            uint8_t& r, uint8_t& g, uint8_t& b)
 {
-    using OT = shared::ObstacleType;
-    switch (obs) {
-        case OT::tree:         r =  18; g =  56; b =  10; return; // dark tree green
-        case OT::rock:         r = 102; g = 102; b = 102; return; // grey
-        case OT::chest:        r = 140; g = 115; b =  26; return; // gold
-        case OT::fence:        r =  92; g =  56; b =  20; return; // wood brown
-        case OT::fishing_spot: r =  60; g = 130; b = 200; return; // light blue
-        default:               /* darken below */ break;
-    }
+    if      (obs == "tree")         { r =  18; g =  56; b =  10; return; } // dark tree green
+    else if (obs == "rock")         { r = 102; g = 102; b = 102; return; } // grey
+    else if (obs == "chest")        { r = 140; g = 115; b =  26; return; } // gold
+    else if (obs == "fence")        { r =  92; g =  56; b =  20; return; } // wood brown
+    else if (obs == "fishing_spot") { r =  60; g = 130; b = 200; return; } // light blue
     // Generic darken
     r = static_cast<uint8_t>(r * 0.55f);
     g = static_cast<uint8_t>(g * 0.55f);
@@ -141,7 +137,7 @@ void MinimapRenderer::buildBaseLayer(const shared::WorldMapFile& map)
             uint8_t r, g, b;
             hexToRgb8(tile.groundColor, r, g, b);
 
-            if (tile.obstacle != shared::ObstacleType::none) {
+            if (!tile.obstacle.empty() && tile.obstacle != "none") {
                 obstacleColor(tile.obstacle, r, g, b);
             }
 

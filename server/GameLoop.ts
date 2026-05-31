@@ -84,13 +84,11 @@ export class GameLoop {
 
     const world = createWorldFromTiles(mapData.tiles, mapData.vertexHeights);
 
-    // Enforce walkable=false for every water tile. Old maps saved by the editor
-    // before a bug-fix may have waterTiles listed but tile.walkable=true in the
-    // tile array; this re-derives walkability from the authoritative waterTiles list.
-    for (const wt of (mapData.waterTiles ?? [])) {
-      const row = world.tiles[wt.tileY];
-      if (row && row[wt.tileX]) row[wt.tileX].walkable = false;
-    }
+    // Walkability is authored per-tile (water rendering is a separate visual
+    // layer), so we trust the saved tile.walkable. This lets terrain raised
+    // above the waterline over a water tile remain walkable while the water
+    // plane still renders there. Deep/impassable water is painted non-walkable
+    // in the editor (PaintWater defaults to blocked).
 
     // NPC spawns: fully data-driven from map file
     const npcSpawnDefs = mapData.npcSpawns ?? [];
@@ -129,6 +127,7 @@ export class GameLoop {
         { id: 'rack-iron-axe',        itemId: 'iron_axe',        quantity: 1,   tileX: chestX - 1, tileY: chestY + 2, droppedAtTick: 0, permanent: true },
         { id: 'rack-basic-chaingun',  itemId: 'basic_chaingun',  quantity: 1,   tileX: chestX,     tileY: chestY + 2, droppedAtTick: 0, permanent: true },
         { id: 'rack-kinetic-charges', itemId: 'kinetic_charges', quantity: 500, tileX: chestX + 1, tileY: chestY + 2, droppedAtTick: 0, permanent: true },
+        { id: 'rack-fishing-rod',     itemId: 'fishing_rod',     quantity: 1,   tileX: chestX + 2, tileY: chestY + 2, droppedAtTick: 0, permanent: true },
       ];
     }
 
@@ -142,6 +141,8 @@ export class GameLoop {
       messages: {},
       depletedTrees: {},
       treeHealth: {},
+      depletedRocks: {},
+      rockHealth: {},
     };
   }
 
@@ -176,11 +177,17 @@ export class GameLoop {
         pickupItemId: null,
         chopTargetX: null,
         chopTargetY: null,
+        mineTargetX: null,
+        mineTargetY: null,
+        fishTargetX: null,
+        fishTargetY: null,
         chatMessage: '',
         chatMessageTick: -999,
         lastHitTick:    -999,
         lastAttackTick: -999,
         lastChopTick:   -999,
+        lastMineTick:   -999,
+        lastFishTick:   -999,
         dying:         false,
         dyingTick:     -999,
         lastRegenTick: -999,
@@ -277,6 +284,12 @@ function createInitialPlayer(tileX: number, tileY: number, name: string): Player
     chopTargetX: null,
     chopTargetY: null,
     lastChopTick: -999,
+    mineTargetX: null,
+    mineTargetY: null,
+    lastMineTick: -999,
+    fishTargetX: null,
+    fishTargetY: null,
+    lastFishTick: -999,
     dying: false,
     dyingTick: -999,
     lastRegenTick: -999,

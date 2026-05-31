@@ -1,5 +1,6 @@
 #include "app/App.hpp"
 
+#include "app/WaterSettings.hpp"
 #include "editor/EntityClient.hpp"
 #include "editor/EntityDefs.hpp"
 #include "render/GlDebug.hpp"
@@ -58,21 +59,22 @@ constexpr const char* kOutlineVertPath        = "shaders/outline.vert";
 constexpr const char* kOutlineFragPath        = "shaders/outline.frag";
 constexpr const char* kOutlineMaskVertPath    = "shaders/outline_mask.vert";
 constexpr const char* kOutlineMaskFragPath    = "shaders/outline_mask.frag";
+constexpr const char* kOutlineMaskSkinnedVertPath = "shaders/outline_mask_skinned.vert";
 constexpr const char* kOutlineCompositeVertPath = "shaders/outline_composite.vert";
 constexpr const char* kOutlineCompositeFragPath = "shaders/outline_composite.frag";
 constexpr const char* kShadowInstVertPath    = "shaders/shadow_instanced.vert";
 constexpr const char* kShadowSkinnedVertPath = "shaders/shadow_skinned.vert";
 constexpr const char* kShadowFragPath        = "shaders/shadow.frag";
-constexpr const char* kPlayerModelPath   = "assets/models/player.glb";
-constexpr const char* kTreeModelPath     = "assets/models/tree.gltf";
+constexpr const char* kPlayerModelPath       = "assets/models/player.glb";
+constexpr const char* kTreeModelPath         = "assets/models/tree.gltf";
 constexpr const char* kWaterVertPath     = "shaders/water.vert";
 constexpr const char* kWaterFragPath     = "shaders/water.frag";
 constexpr const char* kWaterNormalPath   = "assets/water_normal.png";
 constexpr const char* kWorldMapPath      = "worldMap.json";
 constexpr int         kShadowMapSize     = 2048;
 
-constexpr glm::vec3 kPlayerColor  { 0.62f, 0.45f, 0.30f};  // skin tone, modulated by Lambert
-constexpr float     kPlayerScale  = 1.0f;
+constexpr glm::vec3 kPlayerColor       { 0.62f, 0.45f, 0.30f};  // skin tone, modulated by Lambert
+constexpr float     kPlayerScale       = 1.0f;
 
 // Convert sun (yaw, pitch) in degrees to a unit "light travel" vector
 // (sun-toward-ground). yaw is around +Y measured from +Z toward +X; pitch
@@ -348,12 +350,39 @@ bool App::init() {
           if (ey >= 0 && ey < static_cast<int>(map_.tiles.size()) &&
               ex >= 0 && ex < static_cast<int>(map_.tiles[ey].size())) {
             const auto obs = map_.tiles[ey][ex].obstacle;
-            if      (obs == shared::ObstacleType::tree)
+            // Data-driven from the DB object + action definitions. Built-in
+            // action ids map to the verbs the dispatch understands; any other
+            // action shows its display name. Examine always appears.
+            const editor::ObjectDef* od = nullptr;
+            for (const auto& o : dbObjectDefs_) if (o.id == obs) { od = &o; break; }
+            if (od) {
+              const std::string subject = od->name.empty() ? obs : od->name;
+              if (!od->actionId.empty()) {
+                std::string verb;
+                if      (od->actionId == "chop") verb = "Chop down";
+                else if (od->actionId == "mine") verb = "Mine";
+                else if (od->actionId == "fish") verb = "Fish";
+                else if (od->actionId == "bank") verb = "Bank";
+                else {  // custom action — show its display name (dispatch is a no-op for now)
+                  verb = od->actionId;
+                  for (const auto& a : dbActionDefs_) if (a.id == od->actionId) { verb = a.displayName; break; }
+                }
+                if (!verb.empty()) cm.entries.push_back({ verb, subject });
+              }
+              cm.entries.push_back({ "Examine", subject });
+            } else if (obs == "tree") {
               cm.entries.push_back({ "Chop down", "Tree" });
-            else if (obs == shared::ObstacleType::rock)
-              cm.entries.push_back({ "Mine", "Rock" });
-            else if (obs == shared::ObstacleType::chest)
-              cm.entries.push_back({ "Bank", "Chest" });
+              cm.entries.push_back({ "Examine",   "Tree" });
+            } else if (obs == "rock") {
+              cm.entries.push_back({ "Mine",    "Rock" });
+              cm.entries.push_back({ "Examine", "Rock" });
+            } else if (obs == "fishing_spot") {
+              cm.entries.push_back({ "Fish",    "Fishing spot" });
+              cm.entries.push_back({ "Examine", "Fishing spot" });
+            } else if (obs == "chest") {
+              cm.entries.push_back({ "Bank",    "Chest" });
+              cm.entries.push_back({ "Examine", "Chest" });
+            }
           }
         } else if (hoveredEntity_.kind == HoveredEntity::Kind::Npc) {
           for (const auto& n : npcs_) {
@@ -435,6 +464,12 @@ bool App::init() {
     std::fprintf(stderr, "[App] outline mask shader load failed\n");
     return false;
   }
+  // Skinned variant reuses the same mask fragment shader.
+  if (!outlineMaskSkinnedShader_.fromFiles(resolveFromExe(kOutlineMaskSkinnedVertPath),
+                                           resolveFromExe(kOutlineMaskFragPath))) {
+    std::fprintf(stderr, "[App] outline skinned mask shader load failed\n");
+    return false;
+  }
   if (!outlineCompositeShader_.fromFiles(resolveFromExe(kOutlineCompositeVertPath),
                                          resolveFromExe(kOutlineCompositeFragPath))) {
     std::fprintf(stderr, "[App] outline composite shader load failed\n");
@@ -463,9 +498,11 @@ bool App::init() {
   }
 
   obstacles_.initGL();
-  if (!obstacles_.loadTreeModel(resolveFromExe(kTreeModelPath))) {
-    std::fprintf(stderr, "[App] tree model load failed — using procedural trees\n");
-  }
+  // Resolve object model_path (relative) → absolute path next to the exe. This
+  // also primes the ModelLibrary with the object placeholder.
+  obstacles_.setModelResolver([](const std::string& rel) {
+    return resolveFromExe(rel.c_str());
+  });
   entities_.initGL();
 
   // Fetch entity definitions from the DB API.
@@ -473,32 +510,73 @@ bool App::init() {
   // One-time synchronous call at startup (server is always localhost).
   {
     editor::EntityClient dbClient;
-    // NPC definitions — names, attackable flag, custom models.
+    // NPC definitions — names, attackable flag, data-driven models (placeholder
+    // when a kind has no model).
+    entities_.setNpcModelResolver([](const std::string& rel) {
+      return resolveFromExe(rel.c_str());
+    });
     try {
       const auto npcDefs = dbClient.getNPCs();
       for (const auto& def : npcDefs) {
         if (!def.name.empty())  ui::g_npcNames[def.id]     = def.name;
         ui::g_npcAttackable[def.id] = def.isAttackable;
-        if (def.modelPath.empty()) continue;
-        auto model = world::loadGlb(resolveFromExe(def.modelPath.c_str()));
-        if (!model)
-          model = world::loadGlb(resolveFromExe(("assets/" + def.modelPath).c_str()));
-        if (model && !model->primitives.empty()) {
-          entities_.loadNpcKindModel(def.id, model->primitives, model->materials);
-          std::fprintf(stdout, "[App] Loaded custom model for NPC '%s' (%zu prims)\n",
-                       def.id.c_str(), model->primitives.size());
-        }
+        entities_.ensureNpcModel(def.id, def.modelPath, def.sizeX, def.sizeY);
       }
     } catch (const std::exception& e) {
       std::fprintf(stderr, "[App] DB NPC fetch failed (server offline?): %s\n", e.what());
     }
-    // Item definitions — names only.
+    // Item definitions — names + sprite paths (sprites loaded into SpriteCache
+    // below, once we know the GL context is ready).
+    entities_.setItemModelResolver([](const std::string& rel) {
+      return resolveFromExe(rel.c_str());
+    });
     try {
-      const auto itemDefs = dbClient.getItems();
-      for (const auto& def : itemDefs)
+      dbItemDefs_ = dbClient.getItems();
+      for (const auto& def : dbItemDefs_) {
         if (!def.name.empty()) ui::g_itemNames[def.id] = def.name;
+        // Items with a model_dropped render that model on the ground; the rest
+        // keep the placeholder box.
+        entities_.ensureItemModel(def.id, def.modelDropped, 1, 1);
+      }
     } catch (const std::exception& e) {
       std::fprintf(stderr, "[App] DB item fetch failed (server offline?): %s\n", e.what());
+    }
+    // Object definitions — register with the obstacle system so custom objects
+    // (and their models) load and render in-game, not just in the editor.
+    try {
+      dbObjectDefs_ = dbClient.getObjects();
+      std::vector<world::ObstacleSystem::ObjectDefCache> caches;
+      caches.reserve(dbObjectDefs_.size());
+      for (const auto& obj : dbObjectDefs_) {
+        world::ObstacleSystem::ObjectDefCache c;
+        c.id           = obj.id;
+        c.objectType   = obj.objectType;
+        c.collision    = obj.collision;
+        c.sizeX        = obj.sizeX;
+        c.sizeY        = obj.sizeY;
+        c.modelPath    = obj.modelPath;
+        c.actionId     = obj.actionId;
+        c.dropItemId   = obj.dropItemId;
+        c.dropQuantity = obj.dropQuantity;
+        c.respawnTicks = obj.respawnTicks;
+        c.defaultClip  = obj.defaultClip;
+        c.looping      = obj.looping;
+        c.rotationX    = obj.rotationX;
+        c.rotationY    = obj.rotationY;
+        c.rotationZ    = obj.rotationZ;
+        c.depletedObjectId = obj.depletedObjectId;
+        c.pickable     = obj.pickable;
+        caches.push_back(std::move(c));
+      }
+      obstacles_.rebuildFromDefinitions(caches);
+    } catch (const std::exception& e) {
+      std::fprintf(stderr, "[App] DB object fetch failed (server offline?): %s\n", e.what());
+    }
+    // Action definitions — for data-driven context-menu verbs.
+    try {
+      dbActionDefs_ = dbClient.getActions();
+    } catch (const std::exception& e) {
+      std::fprintf(stderr, "[App] DB action fetch failed (server offline?): %s\n", e.what());
     }
   }
 
@@ -519,6 +597,7 @@ bool App::init() {
     playerModel_.setClip("Idle_Loop");
   }
 
+
   // Snap the camera to the map center so the first frame isn't mid-lerp.
   camera_.snapTo(followTargetForMap(terrainTileW_, terrainTileH_));
 
@@ -529,7 +608,16 @@ bool App::init() {
   initImGui();
 
   { int fw, fh; glfwGetFramebufferSize(window_.handle(), &fw, &fh); ui::clayInit(fw, fh); }
-  spriteCache_.init();
+  // Item sprites are DB-driven: load each item's sprite_path PNG. Items with no
+  // sprite fall back to a neutral square inside SpriteCache.
+  {
+    std::vector<ui::SpriteCache::Entry> spriteEntries;
+    spriteEntries.reserve(dbItemDefs_.size());
+    for (const auto& d : dbItemDefs_)
+      if (!d.spritePath.empty())
+        spriteEntries.push_back({ d.id, resolveFromExe(d.spritePath.c_str()).string() });
+    spriteCache_.load(spriteEntries);
+  }
   minimap_.init();
 
   if (!audio_.init()) {
@@ -558,6 +646,10 @@ bool App::init() {
       outlineDepthBias_ = s.outlineDepthBias;
       outlineColor_   = {s.outlineColorR, s.outlineColorG, s.outlineColorB, s.outlineColorA};
       hoverTileColor_ = {s.hoverTileR,    s.hoverTileG,    s.hoverTileB,    s.hoverTileA};
+      // Water settings authored in the level editor (shared settings.cfg).
+      applyWaterSettings(s, waterUniforms_);
+      if (!waterUniforms_.causticMapPath.empty())
+        waterRenderer_.loadCausticMap(resolveFromExe(waterUniforms_.causticMapPath.c_str()).string());
     }
   }
 
@@ -575,16 +667,27 @@ int App::run() {
 }
 
 void App::generateAndBuildTerrain() {
-  // Try to load a saved map from worldMap.json (level editor output).
-  // If found, it provides terrain, obstacles, water tiles, and spawn data.
-  // If not found, fall back to procedural generation (no water).
-  const auto mapPath = resolveFromExe(kWorldMapPath);
+  // Load the saved map. Single source of truth = public/maps/worldMap.json —
+  // the same file the server reads and the editor saves to (3 levels above the
+  // exe in a dev tree: Release/ → build/ → client-native/ → repo root). This
+  // keeps client rendering + walk-click gating in sync with server pathing.
+  // Falls back to an exe-relative worldMap.json (shipped builds), then to
+  // procedural generation.
+  std::filesystem::path mapPath;
+  {
+    std::error_code ec;
+    auto canonical = std::filesystem::weakly_canonical(
+        resolveFromExe("../../../public/maps/worldMap.json"), ec);
+    mapPath = (!ec && std::filesystem::exists(canonical))
+                  ? canonical
+                  : resolveFromExe(kWorldMapPath);
+  }
   if (!shared::loadWorldMap(mapPath, map_)) {
     map_ = world::generateMap(kMapWidth, kMapHeight, mapSeed_, noiseFreq_, noiseAmp_);
     std::fprintf(stdout, "[App] no worldMap.json found — using procedural map\n");
   } else {
-    std::fprintf(stdout, "[App] loaded worldMap.json (%dx%d, %zu water tiles)\n",
-                 map_.width, map_.height, map_.waterTiles.size());
+    std::fprintf(stdout, "[App] loaded map %s (%dx%d, %zu water tiles)\n",
+                 mapPath.string().c_str(), map_.width, map_.height, map_.waterTiles.size());
   }
 
   const auto data = world::buildTerrainMesh(map_);
@@ -741,28 +844,22 @@ void App::renderFrame() {
       // ---- Obstacles (trees / rocks / chests) --------------------------------
       for (int oty = 0; oty < terrainTileH_; ++oty) {
         for (int otx = 0; otx < terrainTileW_; ++otx) {
-          const auto obs = map_.tiles[oty][otx].obstacle;
-          if (obs == shared::ObstacleType::none) continue;
+          const auto& obs = map_.tiles[oty][otx].obstacle;
+          if (obs.empty() || obs == "none") continue;
+
+          // Depleted tiles pick the referenced depleted object (e.g. a stump);
+          // non-pickable objects (and depleted tiles with no variant) are skipped.
+          const bool depleted = depletedTiles_.count(
+              std::to_string(otx) + "-" + std::to_string(oty)) > 0;
+          const std::string pickId = obstacles_.effectiveId(obs, depleted);
+          if (pickId.empty() || !obstacles_.isPickable(pickId)) continue;
 
           const float baseY = tileWorldY(map_, otx, oty);
 
-          // Model-space AABB (centred on tile, base at Y=0).
+          // Model-space AABB (centred on tile, base at Y=0) from the object's
+          // loaded model + footprint. Unknown ids aren't pickable.
           glm::vec3 lMin, lMax;
-          if (obs == shared::ObstacleType::tree) {
-            if (obstacles_.treeModelLoaded()) {
-              lMin = obstacles_.treeGltfAABBMin();
-              lMax = obstacles_.treeGltfAABBMax();
-            } else {
-              lMin = glm::vec3(-0.45f,  0.00f, -0.45f);
-              lMax = glm::vec3( 0.45f,  1.60f,  0.45f);
-            }
-          } else if (obs == shared::ObstacleType::rock) {
-            lMin = glm::vec3(-0.28f,  0.00f, -0.24f);
-            lMax = glm::vec3( 0.28f,  0.36f,  0.24f);
-          } else {  // chest
-            lMin = glm::vec3(-0.28f,  0.00f, -0.28f);
-            lMax = glm::vec3( 0.28f,  0.56f,  0.28f);
-          }
+          if (!obstacles_.customAabb(pickId, lMin, lMax)) continue;
 
           glm::vec3 wMin, wMax;
           // Obstacles: AABB is derived from actual mesh vertices so no inflation
@@ -787,10 +884,15 @@ void App::renderFrame() {
       for (const auto& npc : npcs_) {
         if (npc.dying) continue;
         const float baseY = tileWorldY(map_, npc.tileX, npc.tileY);
-        // Humanoid AABB: ±0.18 XZ, 0..1.0 Y (body + head).
+        // AABB from the NPC kind's model + footprint; fall back to a humanoid
+        // box if no model is registered for the kind.
+        glm::vec3 lMin, lMax;
+        if (!entities_.npcAabb(npc.kind, lMin, lMax)) {
+          lMin = glm::vec3(-0.18f, 0.0f, -0.18f);
+          lMax = glm::vec3( 0.18f, 1.0f,  0.18f);
+        }
         glm::vec3 wMin, wMax;
-        worldAABB(glm::vec3(-0.18f, 0.0f, -0.18f),
-                  glm::vec3( 0.18f, 1.0f,  0.18f), 1.2f,
+        worldAABB(lMin, lMax, 1.0f,
                   static_cast<float>(npc.tileX), baseY,
                   static_cast<float>(npc.tileY), wMin, wMax);
 
@@ -807,10 +909,16 @@ void App::renderFrame() {
       // ---- Dropped items -----------------------------------------------------
       for (const auto& item : droppedItems_) {
         const float baseY = tileWorldY(map_, item.tileX, item.tileY);
-        // Small flat cylinder approximated as AABB: ±0.20 XZ, 0..0.20 Y.
+        // Model-backed items use their model AABB; the rest use the placeholder
+        // box bounds (±0.20 XZ, 0..0.20 Y, inflated ×1.2).
+        glm::vec3 lMin, lMax; float inflate = 1.0f;
+        if (!entities_.itemAabb(item.itemId, lMin, lMax)) {
+          lMin = glm::vec3(-0.20f, 0.0f, -0.20f);
+          lMax = glm::vec3( 0.20f, 0.20f, 0.20f);
+          inflate = 1.2f;
+        }
         glm::vec3 wMin, wMax;
-        worldAABB(glm::vec3(-0.20f, 0.0f, -0.20f),
-                  glm::vec3( 0.20f, 0.20f,  0.20f), 1.2f,
+        worldAABB(lMin, lMax, inflate,
                   static_cast<float>(item.tileX), baseY,
                   static_cast<float>(item.tileY), wMin, wMax);
 
@@ -942,6 +1050,12 @@ void App::renderFrame() {
       }
     }
 
+    // Animated custom objects + NPCs cast shadows via the skinned depth shader.
+    shadowSkinnedShader_.use();
+    shadowSkinnedShader_.setMat4("u_lightViewProj", lightVP);
+    obstacles_.renderAnimatedShadows(shadowSkinnedShader_);
+    entities_.renderNpcAnimatedShadows(shadowSkinnedShader_);
+
     shadowMap_.endPass();
   }
 
@@ -1014,7 +1128,7 @@ void App::renderFrame() {
   obstacleShader_.setVec3 ("u_fogColor",   fogColor_);
   obstacleShader_.setFloat("u_fogDensity", fogDensity_);
   obstacleShader_.setFloat("u_fogStart",   fogStart_);
-  obstacles_.render(obstacleShader_);
+  obstacles_.render(obstacleShader_);  // all static objects (data-driven)
 
   // ---- Detect connection-status transitions for chat-log + state reset -----
   {
@@ -1200,8 +1314,45 @@ void App::renderFrame() {
     }
   }
 
-  // ---- SSR snapshot — resolve BEFORE outlines so water doesn't reflect
-  //      tile/entity outlines (they're decorative UI, not world geometry).
+  // ---- Fishing spot animated model — OPAQUE pass -----------------------------
+  // Rendered with the rest of the opaque scene, BEFORE the SSR snapshot, so the
+  // water shader captures it in sceneColor and renders it as a refracted,
+  // depth-tinted underwater object. Normal depth test/write — trees, NPCs, and
+  // terrain in front correctly occlude it.
+  if (obstacles_.hasCustomModels() || entities_.hasAnimatedNpcs() || entities_.hasAnimatedItems()) {
+    skinnedShader_.use();
+    skinnedShader_.setMat4 ("u_viewProj",       viewProj);
+    skinnedShader_.setMat4 ("u_lightViewProj",  lightVP);
+    skinnedShader_.setVec3 ("u_lightDir",       sunDir);
+    skinnedShader_.setVec3 ("u_paletteLevels",
+        glm::vec3(static_cast<float>(paletteHues_),
+                  static_cast<float>(paletteSats_),
+                  static_cast<float>(paletteLums_)));
+    skinnedShader_.setFloat("u_paletteEnabled",  palette_ ? 1.0f : 0.0f);
+    skinnedShader_.setFloat("u_ambient",         ambient_);
+    skinnedShader_.setFloat("u_diffuse",         diffuse_);
+    skinnedShader_.setFloat("u_lightingEnabled", lightingEnabled_ ? 1.0f : 0.0f);
+    skinnedShader_.setInt  ("u_shadowMap",       1);
+    skinnedShader_.setFloat("u_shadowsEnabled",  shadowsEnabled_ ? 1.0f : 0.0f);
+    skinnedShader_.setFloat("u_shadowDarkness",  shadowDarkness_);
+    skinnedShader_.setFloat("u_shadowBias",      shadowBias_);
+    skinnedShader_.setFloat("u_fogEnabled",      fogEnabled_  ? 1.0f : 0.0f);
+    skinnedShader_.setVec3 ("u_fogColor",        fogColor_);
+    skinnedShader_.setFloat("u_fogDensity",      fogDensity_);
+    skinnedShader_.setFloat("u_fogStart",        fogStart_);
+
+    // Animated custom NPCs (uses the same skinned shader state).
+    entities_.renderAnimatedNpcs(skinnedShader_, dt);
+
+    // Data-driven animated custom objects (incl. fishing_spot).
+    obstacles_.renderCustomAnimated(skinnedShader_, dt);
+
+    // Animated dropped-item models (model_dropped).
+    entities_.renderAnimatedItems(skinnedShader_, dt);
+  }
+
+  // ---- SSR snapshot — resolve the full opaque scene (incl. submerged fish)
+  //      so the water shader can sample colour + depth for refraction & foam.
   if (!map_.waterTiles.empty() && waterRenderer_.valid()) {
     msaa_->resolve();
     msaa_->resolveDepth();
@@ -1210,10 +1361,14 @@ void App::renderFrame() {
   }
 
   // ---- Water pass ------------------------------------------------------------
-  // Drawn here — after opaque geometry and SSR snapshot but BEFORE the hover
-  // tile outline and entity stencil outlines, so those always composite on top
-  // of water rather than being hidden beneath it.
+  // Depth-based refraction: samples sceneColor at a wave-distorted UV, tints by
+  // water-column depth, and generates contact foam where geometry meets the
+  // surface. Drawn before outlines so they composite on top.
   if (!map_.waterTiles.empty() && waterRenderer_.valid()) {
+    waterUniforms_.cameraPos = camera_.cameraPosition();
+    waterUniforms_.sunDir    = sunDir;
+    waterUniforms_.nearPlane = 0.1f;    // matches GameCamera::viewProjection
+    waterUniforms_.farPlane  = 500.0f;
     waterRenderer_.render(
         static_cast<float>(glfwGetTime()),
         viewProj,
@@ -1258,6 +1413,7 @@ void App::renderFrame() {
     bool hasItem     = false;
     world::EntityRenderer::Instance npcInst{}, itemInst{};
     std::string hoveredNpcKind;
+    std::string hoveredItemId;
 
     if (hoveredEntity_.kind == HoveredEntity::Kind::Npc) {
       // Match against the interpolated CPU-side instance list so the outline
@@ -1287,6 +1443,7 @@ void App::renderFrame() {
       for (const auto& di : droppedItems_) {
         if (di.id == hoveredEntity_.id) {
           hasItem  = true;
+          hoveredItemId = di.itemId;
           itemInst = { static_cast<float>(di.tileX),
                        tileWorldY(map_, di.tileX, di.tileY),
                        static_cast<float>(di.tileY), 0.0f };
@@ -1316,9 +1473,19 @@ void App::renderFrame() {
       outlineMaskShader_.setFloat("u_depthBias",  outlineDepthBias_);
       glBindTextureUnit(2, msaa_->resolveDepthTexture());
 
-      if (hasObstacle) obstacles_.renderGeometryAt(outlineMaskShader_, map_, htx, hty);
+      // Skinned mask shares the same mask fragment uniforms (animated objects).
+      outlineMaskSkinnedShader_.use();
+      outlineMaskSkinnedShader_.setMat4 ("u_viewProj",  viewProj);
+      outlineMaskSkinnedShader_.setInt  ("u_sceneDepth", 2);
+      outlineMaskSkinnedShader_.setVec2 ("u_screenSize", glm::vec2(static_cast<float>(fbW),
+                                                                   static_cast<float>(fbH)));
+      outlineMaskSkinnedShader_.setFloat("u_depthBias",  outlineDepthBias_);
+      outlineMaskShader_.use();
+
+      if (hasObstacle) obstacles_.renderGeometryAt(outlineMaskShader_, outlineMaskSkinnedShader_,
+                                                   map_, htx, hty, depletedTiles_);
       if (hasNpc)      entities_.renderNpcGeometry (outlineMaskShader_, npcInst, hoveredNpcKind);
-      if (hasItem)     entities_.renderItemGeometry(outlineMaskShader_, itemInst);
+      if (hasItem)     entities_.renderItemGeometry(outlineMaskShader_, itemInst, hoveredItemId);
 
       glDepthMask(GL_TRUE);
       glDepthFunc(GL_LESS);
@@ -1380,9 +1547,10 @@ void App::renderFrame() {
           if (ey >= 0 && ey < static_cast<int>(map_.tiles.size()) &&
               ex >= 0 && ex < static_cast<int>(map_.tiles[ey].size())) {
             const auto obs = map_.tiles[ey][ex].obstacle;
-            if      (obs == shared::ObstacleType::tree)  { ctxVerb = "Chop"; ctxSubject = "Tree"; }
-            else if (obs == shared::ObstacleType::rock)  { ctxVerb = "Mine"; ctxSubject = "Rock"; }
-            else if (obs == shared::ObstacleType::chest) { ctxVerb = "Bank"; ctxSubject = "Chest"; }
+            if      (obs == "tree")  { ctxVerb = "Chop"; ctxSubject = "Tree"; }
+            else if (obs == "rock")  { ctxVerb = "Mine"; ctxSubject = "Rock"; }
+            else if (obs == "fishing_spot") { ctxVerb = "Fish"; ctxSubject = "Fishing spot"; }
+            else if (obs == "chest") { ctxVerb = "Bank"; ctxSubject = "Chest"; }
           }
           break;
         }
@@ -1476,11 +1644,11 @@ void App::renderFrame() {
             if (ey >= 0 && ey < static_cast<int>(map_.tiles.size()) &&
                 ex >= 0 && ex < static_cast<int>(map_.tiles[ey].size())) {
               const auto obs = map_.tiles[ey][ex].obstacle;
-              if      (obs == shared::ObstacleType::tree)
+              if      (obs == "tree")
                 ui::showTooltip({ TL{ {"Chop ", TC::White()}, {"Tree",  TC::Orange()} } });
-              else if (obs == shared::ObstacleType::rock)
+              else if (obs == "rock")
                 ui::showTooltip({ TL{ {"Mine ", TC::White()}, {"Rock",  TC::Orange()} } });
-              else if (obs == shared::ObstacleType::chest)
+              else if (obs == "chest")
                 ui::showTooltip({ TL{ {"Bank ", TC::White()}, {"Chest", TC::Orange()} } });
             }
             break;
@@ -1612,15 +1780,19 @@ void App::renderFrame() {
           if (ty >= 0 && ty < static_cast<int>(map_.tiles.size()) &&
               tx >= 0 && tx < static_cast<int>(map_.tiles[ty].size())) {
             const auto obs = map_.tiles[ty][tx].obstacle;
-            if (obs == shared::ObstacleType::tree) {
+            if (obs == "tree") {
               network_.sendChopTree(tx, ty);
               oneShotClip_.clear();
               dispatched = true; clickFeedbackColor_ = 1;
-            } else if (obs == shared::ObstacleType::rock) {
+            } else if (obs == "rock") {
               network_.sendMineRock(tx, ty);
               oneShotClip_.clear();
               dispatched = true; clickFeedbackColor_ = 1;
-            } else if (obs == shared::ObstacleType::chest) {
+            } else if (obs == "fishing_spot") {
+              network_.sendFish(tx, ty);
+              oneShotClip_.clear();
+              dispatched = true; clickFeedbackColor_ = 1;
+            } else if (obs == "chest") {
               network_.sendOpenBank();
               bankOpen_ = true;
               dispatched = true; clickFeedbackColor_ = 1;
@@ -1733,6 +1905,8 @@ void App::renderFrame() {
         network_.sendChopTree(ctxMenuTileX_, ctxMenuTileY_); oneShotClip_.clear();
       } else if (e.verb == "Mine") {
         network_.sendMineRock(ctxMenuTileX_, ctxMenuTileY_); oneShotClip_.clear();
+      } else if (e.verb == "Fish") {
+        network_.sendFish(ctxMenuTileX_, ctxMenuTileY_); oneShotClip_.clear();
       } else if (e.verb == "Bank") {
         network_.sendOpenBank(); bankOpen_ = true;
       } else if (e.verb == "Attack") {
@@ -1764,19 +1938,21 @@ void App::renderFrame() {
             ui::chatAppendSystem(txt);
             break;
           }
-        // Also handle obstacle examine
+        // Also handle obstacle examine — data-driven from the DB examine_text.
         if (ctxMenuTileY_ >= 0 && ctxMenuTileY_ < static_cast<int>(map_.tiles.size()) &&
             ctxMenuTileX_ >= 0 && ctxMenuTileX_ < static_cast<int>(map_.tiles[ctxMenuTileY_].size())) {
           const auto obs = map_.tiles[ctxMenuTileY_][ctxMenuTileX_].obstacle;
-          if (obs == shared::ObstacleType::tree) {
-            chatLog_.appendSystem("A sturdy tree.");
-            ui::chatAppendSystem("A sturdy tree.");
-          } else if (obs == shared::ObstacleType::rock) {
-            chatLog_.appendSystem("A rocky outcrop.");
-            ui::chatAppendSystem("A rocky outcrop.");
-          } else if (obs == shared::ObstacleType::chest) {
-            chatLog_.appendSystem("A secure bank chest.");
-            ui::chatAppendSystem("A secure bank chest.");
+          std::string txt;
+          for (const auto& o : dbObjectDefs_)
+            if (o.id == obs) { txt = o.examineText; break; }
+          if (txt.empty()) {  // built-in fallbacks
+            if      (obs == "tree")  txt = "A sturdy tree.";
+            else if (obs == "rock")  txt = "A rocky outcrop.";
+            else if (obs == "chest") txt = "A secure bank chest.";
+          }
+          if (!txt.empty()) {
+            chatLog_.appendSystem(txt.c_str());
+            ui::chatAppendSystem(txt.c_str());
           }
         }
       } else if (e.verb == "Take") {
@@ -1961,9 +2137,10 @@ void App::renderFrame() {
           ty >= 0 && ty < static_cast<int>(map_.tiles.size()) &&
           tx >= 0 && tx < static_cast<int>(map_.tiles[ty].size())) {
         const auto obs = map_.tiles[ty][tx].obstacle;
-        if      (obs == shared::ObstacleType::tree)  tooltipName = "Tree";
-        else if (obs == shared::ObstacleType::rock)  tooltipName = "Rock";
-        else if (obs == shared::ObstacleType::chest) tooltipName = "Chest";
+        if      (obs == "tree")  tooltipName = "Tree";
+        else if (obs == "rock")  tooltipName = "Rock";
+        else if (obs == "fishing_spot") tooltipName = "Fishing spot";
+        else if (obs == "chest") tooltipName = "Chest";
       }
       if (!tooltipName) {
         for (const auto& di : droppedItems_) {
@@ -2023,8 +2200,8 @@ void App::renderFrame() {
     ImGui::Separator();
     ImGui::Text("Map: %d x %d tiles  (seed %u)", terrainTileW_, terrainTileH_, mapSeed_);
     ImGui::Text("Tris/tile: 2   Indices: %d", terrainIndexCt_);
-    ImGui::Text("Obstacles: %zu trees, %zu rocks  (instanced)",
-                obstacles_.treeCount(), obstacles_.rockCount());
+    ImGui::Text("Objects: %s (data-driven models)",
+                obstacles_.hasCustomModels() ? "placed" : "none");
     ImGui::Text("Entities: %zu NPCs, %zu dropped items",
                 entities_.npcCount(), entities_.itemCount());
     if (ImGui::Button("Regenerate (next seed)")) {
@@ -2230,37 +2407,39 @@ void App::drawWorldContextMenu() {
   ImGui::Separator();
 
   // ---- Tile obstacle ------------------------------------------------------
-  shared::ObstacleType obstacle = shared::ObstacleType::none;
-  if (ctxMenuTileY_ >= 0 && ctxMenuTileY_ < static_cast<int>(map_.tiles.size()) &&
-      ctxMenuTileX_ >= 0 && ctxMenuTileX_ < static_cast<int>(map_.tiles[ctxMenuTileY_].size())) {
-    obstacle = map_.tiles[ctxMenuTileY_][ctxMenuTileX_].obstacle;
-  }
-  switch (obstacle) {
-    case shared::ObstacleType::tree:
-      if (ImGui::Selectable("Chop down  Tree")) {
-        network_.sendChopTree(ctxMenuTileX_, ctxMenuTileY_);
-        oneShotClip_.clear();
-      }
-      if (ImGui::Selectable("Examine  Tree"))
-        chatLog_.appendSystem("A sturdy tree.");
-      break;
-    case shared::ObstacleType::rock:
-      if (ImGui::Selectable("Mine  Rock")) {
-        network_.sendMineRock(ctxMenuTileX_, ctxMenuTileY_);
-        oneShotClip_.clear();
-      }
-      if (ImGui::Selectable("Examine  Rock"))
-        chatLog_.appendSystem("A rocky outcrop.");
-      break;
-    case shared::ObstacleType::chest:
-      if (ImGui::Selectable("Bank  Chest")) {
-        network_.sendOpenBank();
-        bankOpen_ = true;
-      }
-      if (ImGui::Selectable("Examine  Chest"))
-        chatLog_.appendSystem("A secure bank chest.");
-      break;
-    default: break;
+  const std::string obstacle =
+    (ctxMenuTileY_ >= 0 && ctxMenuTileY_ < static_cast<int>(map_.tiles.size()) &&
+     ctxMenuTileX_ >= 0 && ctxMenuTileX_ < static_cast<int>(map_.tiles[ctxMenuTileY_].size()))
+    ? map_.tiles[ctxMenuTileY_][ctxMenuTileX_].obstacle : "";
+
+  if (obstacle == "tree") {
+    if (ImGui::Selectable("Chop down  Tree")) {
+      network_.sendChopTree(ctxMenuTileX_, ctxMenuTileY_);
+      oneShotClip_.clear();
+    }
+    if (ImGui::Selectable("Examine  Tree"))
+      chatLog_.appendSystem("A sturdy tree.");
+  } else if (obstacle == "rock") {
+    if (ImGui::Selectable("Mine  Rock")) {
+      network_.sendMineRock(ctxMenuTileX_, ctxMenuTileY_);
+      oneShotClip_.clear();
+    }
+    if (ImGui::Selectable("Examine  Rock"))
+      chatLog_.appendSystem("A rocky outcrop.");
+  } else if (obstacle == "fishing_spot") {
+    if (ImGui::Selectable("Fish  Fishing spot")) {
+      network_.sendFish(ctxMenuTileX_, ctxMenuTileY_);
+      oneShotClip_.clear();
+    }
+    if (ImGui::Selectable("Examine  Fishing spot"))
+      chatLog_.appendSystem("You could catch some fish here.");
+  } else if (obstacle == "chest") {
+    if (ImGui::Selectable("Bank  Chest")) {
+      network_.sendOpenBank();
+      bankOpen_ = true;
+    }
+    if (ImGui::Selectable("Examine  Chest"))
+      chatLog_.appendSystem("A secure bank chest.");
   }
 
   // ---- NPCs at this tile --------------------------------------------------
@@ -2339,21 +2518,14 @@ void App::exportWorldMap() {
         case shared::TileType::door:  typeStr = "door";  break;
         default: break;
       }
-      const char* obsStr = "none";
-      switch (t.obstacle) {
-        case shared::ObstacleType::tree:         obsStr = "tree";         break;
-        case shared::ObstacleType::rock:         obsStr = "rock";         break;
-        case shared::ObstacleType::chest:        obsStr = "chest";        break;
-        case shared::ObstacleType::fishing_spot: obsStr = "fishing_spot"; break;
-        default: break;
-      }
+      // obstacle is now a plain string — write it directly
       std::fprintf(f,
           "{\"x\":%d,\"y\":%d,\"walkable\":%s,\"type\":\"%s\","
           "\"obstacle\":\"%s\",\"blocksRanged\":%s,"
           "\"groundColor\":\"%s\",\"height\":%.3f}",
           t.x, t.y,
           t.walkable ? "true" : "false",
-          typeStr, obsStr,
+          typeStr, t.obstacle.c_str(),
           t.blocksRanged ? "true" : "false",
           t.groundColor.c_str(),
           t.height);
@@ -2639,14 +2811,29 @@ void App::processNetworkMessages() {
       prevLocalPlayer_.reset();
     } else if (hdr.type == "state") {
       shared::StateMessage st;
-      if (glz::read<kPermissive>(st, raw)) {
-        std::fprintf(stderr, "[App] state parse failed\n");
+      if (auto ec = glz::read<kPermissive>(st, raw)) {
+        std::fprintf(stderr, "[App] state parse failed: %s\n",
+                     glz::format_error(ec, raw).c_str());
         continue;
       }
       currentTick_  = st.tick;
       npcs_         = std::move(st.npcs);
       droppedItems_ = std::move(st.droppedItems);
       allPlayers_   = st.players;
+
+      // Depleted resource nodes (trees + rocks): when the set changes, rebuild
+      // obstacle instances so those tiles swap to their depleted-model variant
+      // (and revert on respawn). Server interest-filters these to the view area.
+      {
+        std::unordered_set<std::string> nd;
+        nd.reserve(st.depletedTrees.size() + st.depletedRocks.size());
+        for (const auto& [k, v] : st.depletedTrees) { (void)v; nd.insert(k); }
+        for (const auto& [k, v] : st.depletedRocks) { (void)v; nd.insert(k); }
+        if (nd != depletedTiles_) {
+          depletedTiles_ = std::move(nd);
+          obstacles_.rebuildFromMap(map_, depletedTiles_);
+        }
+      }
       // Snapshot rotation for NPC interpolation: previous becomes current,
       // current becomes the just-received state.
       prevNpcs_ = currNpcs_;
@@ -2677,6 +2864,17 @@ void App::processNetworkMessages() {
             ra.seenAttackTick = ps.lastAttackTick;
             ra.oneShotClip    = "Sword_Attack";
             ra.oneShotEndsAt  = nowRem + remDurMs("Sword_Attack");
+          }
+          // Mine / Fish — stubbed to the same swing clip as chop for now.
+          if (ps.lastMineTick > ra.seenMineTick) {
+            ra.seenMineTick  = ps.lastMineTick;
+            ra.oneShotClip   = "Sword_Attack";
+            ra.oneShotEndsAt = nowRem + remDurMs("Sword_Attack");
+          }
+          if (ps.lastFishTick > ra.seenFishTick) {
+            ra.seenFishTick  = ps.lastFishTick;
+            ra.oneShotClip   = "Sword_Attack";
+            ra.oneShotEndsAt = nowRem + remDurMs("Sword_Attack");
           }
           // Chop → Sword_Attack (overwrites attack if both fire same tick).
           if (ps.lastChopTick > ra.seenChopTick) {
@@ -2748,6 +2946,17 @@ void App::processNetworkMessages() {
         // Woodcutting — also plays Sword_Attack (axe swing).
         if (cp.lastChopTick > seenChopTick_) {
           seenChopTick_  = cp.lastChopTick;
+          oneShotClip_   = "Sword_Attack";
+          oneShotEndsAt_ = lastTickTime_ + std::chrono::milliseconds(oneShotDurMs("Sword_Attack"));
+        }
+        // Mine / Fish — stubbed to the same swing clip as chop for now.
+        if (cp.lastMineTick > seenMineTick_) {
+          seenMineTick_  = cp.lastMineTick;
+          oneShotClip_   = "Sword_Attack";
+          oneShotEndsAt_ = lastTickTime_ + std::chrono::milliseconds(oneShotDurMs("Sword_Attack"));
+        }
+        if (cp.lastFishTick > seenFishTick_) {
+          seenFishTick_  = cp.lastFishTick;
           oneShotClip_   = "Sword_Attack";
           oneShotEndsAt_ = lastTickTime_ + std::chrono::milliseconds(oneShotDurMs("Sword_Attack"));
         }
@@ -2978,6 +3187,7 @@ void App::saveSettings() {
   s.outlineColorB    = outlineColor_.b;   s.outlineColorA = outlineColor_.a;
   s.hoverTileR = hoverTileColor_.r; s.hoverTileG = hoverTileColor_.g;
   s.hoverTileB = hoverTileColor_.b; s.hoverTileA = hoverTileColor_.a;
+  storeWaterSettings(waterUniforms_, s);
   ::saveSettings(s, resolveFromExe("settings.cfg"));
 }
 

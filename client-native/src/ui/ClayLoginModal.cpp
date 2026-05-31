@@ -80,9 +80,11 @@ static constexpr int kFLast  = kFPass;
 static int  s_loginActive  = kFUser; // default focus on username
 static bool s_registerMode = false;
 
+#define LOGINMODAL_STRINGIFY(x) #x
+#define LOGINMODAL_TOSTR(x)    LOGINMODAL_STRINGIFY(x)
 #ifdef PRODUCTION_BUILD
 static char s_fHost[256] = PRODUCTION_HOST;
-static char s_fPort[8]   = "8080";           // kept for LoginFormState; not shown in UI
+static char s_fPort[8]   = LOGINMODAL_TOSTR(PRODUCTION_PORT);
 #else
 static char s_fHost[256] = "localhost";
 static char s_fPort[8]   = "8080";
@@ -99,12 +101,6 @@ static int  s_fLens[kFCount] = {
 static LoginFormState s_loginState;
 
 const LoginFormState& loginFormState() { return s_loginState; }
-
-void loginClearPassword() {
-    std::memset(s_fPass,               0, sizeof(s_fPass));
-    std::memset(s_loginState.password, 0, sizeof(s_loginState.password));
-    s_fLens[kFPass] = 0;
-}
 
 void loginClearPassword() {
     std::memset(s_fPass,               0, sizeof(s_fPass));

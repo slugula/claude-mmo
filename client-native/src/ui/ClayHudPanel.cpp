@@ -28,7 +28,7 @@
 namespace ui {
 
 // ── Palette ───────────────────────────────────────────────────────────────────
-static constexpr Clay_Color kPanelBg      = {  18,  10,   3, 240 };
+static constexpr Clay_Color kPanelBg      = {  18,  10,   3, 150 };
 static constexpr Clay_Color kPanelBorder  = { 107,  79,  41, 200 };
 static constexpr Clay_Color kTabActive    = {  55,  38,  12, 255 };
 static constexpr Clay_Color kTabInactive  = {  28,  18,   5, 255 };
@@ -51,15 +51,17 @@ static constexpr Clay_Color kGrey         = { 160, 160, 160, 180 };
 static constexpr Clay_Color kDivider      = {  70,  50,  20, 200 };
 
 // ── Skills meta ───────────────────────────────────────────────────────────────
-static constexpr std::array<const char*, 5> kSkillOrder = {
-    "hitpoints", "defence", "warrior", "gunner", "woodcutting",
+static constexpr std::array<const char*, 7> kSkillOrder = {
+    "hitpoints", "defence", "warrior", "gunner", "woodcutting", "mining", "fishing",
 };
-static constexpr std::array<Clay_Color, 5> kSkillColors = {{
-    { 220,  40,  40, 255 },  // hitpoints  — red
-    {  60, 120, 220, 255 },  // defence    — blue
-    { 200, 136,  44, 255 },  // warrior    — orange
-    {   0, 207, 255, 255 },  // gunner     — cyan
+static constexpr std::array<Clay_Color, 7> kSkillColors = {{
+    { 220,  40,  40, 255 },  // hitpoints   — red
+    {  60, 120, 220, 255 },  // defence     — blue
+    { 200, 136,  44, 255 },  // warrior     — orange
+    {   0, 207, 255, 255 },  // gunner      — cyan
     {  80, 144,  64, 255 },  // woodcutting — green
+    { 150, 150, 160, 255 },  // mining      — grey
+    {  90, 160, 220, 255 },  // fishing     — light blue
 }};
 
 // ── Equipment grid ────────────────────────────────────────────────────────────
@@ -223,7 +225,9 @@ static void buildInventoryTab(const shared::PlayerState* player,
                             .childAlignment = { .x = CLAY_ALIGN_X_CENTER,
                                                 .y = CLAY_ALIGN_Y_CENTER },
                         },
-                        .backgroundColor = { 30, 16, 4, 160 },
+                        // No background — the drag ghost is just the item sprite
+                        // with its own transparency.
+                        .backgroundColor = { 0, 0, 0, 0 },
                     }) {
                         if (sprites) {
                             GLuint tex = sprites->get(dragItem->itemId);
@@ -260,9 +264,10 @@ static void buildInventoryTab(const shared::PlayerState* player,
                     }
                     bool filled   = (item != nullptr);
                     bool hovered  = (s_hovInvSlot == idx);
-                    bool dragging = (s_dragSlot == idx);  // source slot while dragging
 
-                    static constexpr Clay_Color kSlotDragging = { 12, 6, 1, 120 };
+                    // Filled slots show only the item's (transparent) sprite — no
+                    // background or border. Empty slots keep the subtle grid look.
+                    static constexpr Clay_Color kTransparent = { 0, 0, 0, 0 };
 
                     CLAY(CLAY_IDI("InvSlot", idx), {
                         .layout = {
@@ -272,11 +277,12 @@ static void buildInventoryTab(const shared::PlayerState* player,
                                                  .y = CLAY_ALIGN_Y_CENTER },
                             .layoutDirection = CLAY_TOP_TO_BOTTOM,
                         },
-                        .backgroundColor = dragging ? kSlotDragging :
-                                           filled   ? kSlotFilled   : kSlotEmpty,
+                        // Fully invisible grid: no background, no border on any
+                        // slot — items just float on the panel.
+                        .backgroundColor = kTransparent,
                         .border = {
                             .color = hovered ? kSlotHover : kSlotBorder,
-                            .width = CLAY_BORDER_ALL(1),
+                            .width = CLAY_BORDER_ALL(0),
                         }
                     }) {
                         if (filled) {
@@ -373,7 +379,7 @@ static void buildSkillsTab(const shared::PlayerState* player) {
                         auto it = player->skills.find(skillId);
                         if (it != player->skills.end()) {
                             lvl = it->second.level;
-                            xp  = it->second.xp;
+                            xp  = static_cast<int>(it->second.xp);
                         }
                     }
                     int xpThis = xpForLevel(lvl);
@@ -447,7 +453,7 @@ static void buildSkillsTab(const shared::PlayerState* player) {
         }) {
             char totalBuf[48];
             std::snprintf(totalBuf, sizeof(totalBuf), "Total level: %d / %d",
-                          totalLevel, 99 * 5);
+                          totalLevel, 99 * static_cast<int>(kSkillOrder.size()));
             CLAY_TEXT(clayStr(totalBuf), CLAY_TEXT_CONFIG({
                 .textColor = kOrange,
                 .fontSize  = 0,
@@ -783,7 +789,7 @@ void clayHudHandleInput(const shared::PlayerState* player,
             const char* skillId = kSkillOrder[si];
             int lvl = 1, xp = 0;
             auto it = player->skills.find(skillId);
-            if (it != player->skills.end()) { lvl = it->second.level; xp = it->second.xp; }
+            if (it != player->skills.end()) { lvl = it->second.level; xp = static_cast<int>(it->second.xp); }
             int xpNext    = (lvl < 99) ? xpForLevel(lvl + 1) : xpForLevel(99);
             int remaining = std::max(0, xpNext - xp);
 

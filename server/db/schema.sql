@@ -39,7 +39,15 @@ CREATE TABLE IF NOT EXISTS object_definitions (
   respawn_ticks   INT  NOT NULL DEFAULT 25,
   -- ProductionFacility fields
   craft_action_id TEXT REFERENCES action_definitions(id),
-  examine_text    TEXT
+  examine_text    TEXT,
+  -- Animation & orientation
+  default_clip    TEXT,                       -- glTF animation clip name to play on loop
+  looping         BOOLEAN NOT NULL DEFAULT TRUE,
+  rotation_x      FLOAT   NOT NULL DEFAULT 0, -- degrees, applied as pre-rotation in world/preview
+  rotation_y      FLOAT   NOT NULL DEFAULT 0,
+  rotation_z         FLOAT   NOT NULL DEFAULT 0,
+  depleted_object_id TEXT,                       -- another object_definitions.id shown while depleted (empty = render nothing)
+  pickable           BOOLEAN NOT NULL DEFAULT TRUE -- hover outline + left-click pick (false = decoration only)
 );
 
 CREATE TABLE IF NOT EXISTS npc_definitions (
@@ -152,6 +160,7 @@ INSERT INTO item_definitions (id, name, stackable, tradable, value, item_type, e
   ('axe',             'Bronze axe',      FALSE, TRUE,  16,  'equipment', 'rightHand',  FALSE, 4,  0, 0, 0, 0, 0, 'woodcutting', 1,    'axe',     NULL,     NULL),
   ('iron_axe',        'Iron axe',        FALSE, TRUE,  8,   'equipment', 'rightHand',  FALSE, -1, 0, 2, 0, 0, 0, 'woodcutting', 1,    'axe',     NULL,     NULL),
   ('pickaxe',         'Iron Pickaxe',    FALSE, TRUE,  25,  'equipment', 'rightHand',  FALSE, 6,  0, 1, 0, 0, 0, 'mining',      1,    'pickaxe', NULL,     'A sturdy iron pickaxe, good for mining.'),
+  ('fishing_rod',     'Fishing rod',     FALSE, TRUE,  5,   'resource',  NULL,         FALSE, 0,  0, 0, 0, 0, 0, 'fishing',     1,    'fishing_rod', NULL, 'Used to catch fish.'),
   ('bronze_sword',    'Bronze sword',    FALSE, TRUE,  40,  'equipment', 'rightHand',  FALSE, 6,  3, 0, 0, 0, 0, NULL,          NULL, NULL,      'melee',  NULL),
   ('iron_sword',      'Iron sword',      FALSE, TRUE,  120, 'equipment', 'rightHand',  FALSE, 10, 5, 0, 0, 0, 0, NULL,          NULL, NULL,      'melee',  NULL),
   ('bronze_shield',   'Bronze shield',   FALSE, TRUE,  30,  'equipment', 'leftHand',   FALSE, 0,  0, 5, 0, 0, 0, NULL,          NULL, NULL,      NULL,     NULL),
@@ -167,3 +176,14 @@ INSERT INTO item_definitions (id, name, stackable, tradable, value, item_type, e
   ('kinetic_charges', 'Kinetic Charges', TRUE,  TRUE,  1,   'equipment', 'ammo',       FALSE, 0,  0, 0, 0, 0, 0, NULL,          NULL, NULL,      NULL,     NULL),
   ('basic_chaingun',  'Basic Chaingun',  FALSE, TRUE,  200, 'equipment', 'rightHand',  TRUE,  0,  0, 0, 8, 4, 0, NULL,          NULL, NULL,      'gunner', 'A heavy two-handed energy weapon.')
 ON CONFLICT (id) DO NOTHING;
+
+-- Migration: add animation/orientation columns to object_definitions if not present.
+-- Safe to run multiple times (DO NOTHING on conflict).
+ALTER TABLE object_definitions ADD COLUMN IF NOT EXISTS default_clip TEXT;
+ALTER TABLE object_definitions ADD COLUMN IF NOT EXISTS looping      BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE object_definitions ADD COLUMN IF NOT EXISTS rotation_x   FLOAT   NOT NULL DEFAULT 0;
+ALTER TABLE object_definitions ADD COLUMN IF NOT EXISTS rotation_y   FLOAT   NOT NULL DEFAULT 0;
+ALTER TABLE object_definitions ADD COLUMN IF NOT EXISTS rotation_z   FLOAT   NOT NULL DEFAULT 0;
+ALTER TABLE object_definitions ADD COLUMN IF NOT EXISTS depleted_object_id TEXT;
+ALTER TABLE object_definitions ADD COLUMN IF NOT EXISTS pickable BOOLEAN NOT NULL DEFAULT TRUE;
+ALTER TABLE object_definitions DROP COLUMN IF EXISTS depleted_model;

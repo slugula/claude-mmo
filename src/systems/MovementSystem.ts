@@ -1,6 +1,7 @@
 import type { PlayerState, WorldState, GameAction, Direction, GridPosition } from '../shared/types';
 import { findPath } from '../world/Pathfinder';
 import { findWalkableTileNear } from '../world/WorldState';
+import { clearActionIntents } from './ActionIntent';
 
 function directionBetween(from: GridPosition, to: GridPosition): Direction {
   const dx = Math.sign(to.x - from.x);
@@ -39,14 +40,13 @@ export function processMovement(
         { x: state.tileX, y: state.tileY },
         dest,
       );
+      // Walking away cancels every ongoing/queued action (combat, chop, mine,
+      // fish, pickup, talk, …) — centralized in clearActionIntents so new
+      // actions are cancelled automatically without touching this file.
+      state = clearActionIntents(state);
       state.path = newPath;
       state.destinationX = dest.x;
       state.destinationY = dest.y;
-      state.attackTargetId = null; // walking cancels combat
-      state.talkTargetId   = null;
-      state.pickupItemId   = null;
-      state.chopTargetX    = null;
-      state.chopTargetY    = null;
     }
   }
 

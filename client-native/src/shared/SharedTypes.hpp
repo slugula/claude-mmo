@@ -30,10 +30,6 @@ enum class TileType {
   grass, dirt, stone, water, cliff, wall, door,
 };
 
-enum class ObstacleType {
-  tree, rock, chest, fishing_spot, fence, none,
-};
-
 // ---- TileData ------------------------------------------------------------
 
 struct TileData {
@@ -41,7 +37,7 @@ struct TileData {
   int          y            = 0;
   bool         walkable     = true;
   TileType     type         = TileType::grass;
-  ObstacleType obstacle     = ObstacleType::none;
+  std::string  obstacle     = "";   // empty = none; otherwise a DB object ID e.g. "tree"
   bool         blocksRanged = false;
   std::string  groundColor  = "#7ec850";
   float        height       = 0.0f;
@@ -98,7 +94,10 @@ struct ItemStack {
 // SkillsState in TS is Record<SkillId, SkillState>. We deserialize as a
 // flat map so any future skill the server adds shows up automatically.
 struct SkillState {
-  int xp    = 0;
+  // Server XP is fractional (e.g. mining 17.5/ore, combat hitpoints = dmg×1.33),
+  // so this must be floating point — an int here fails JSON parsing on any
+  // non-integer total ("parse_number_failure").
+  double xp = 0;
   int level = 1;
 };
 
@@ -129,6 +128,8 @@ struct PlayerState {
   // value rises monotonically when the server validates an attack / chop.
   int                                          lastAttackTick  = -999;
   int                                          lastChopTick    = -999;
+  int                                          lastMineTick    = -999;
+  int                                          lastFishTick    = -999;
   // Set while the server has a pending pick-up queued for this player.
   // Transitions from has_value() → nullopt indicate a completed pickup.
   std::optional<std::string>                   pickupItemId;
@@ -181,6 +182,10 @@ struct StateMessage {
   // Per-player system messages (keyed by playerId). Contains feedback like
   // "Shopkeeper: Welcome..." or "I can't reach that." etc.
   std::unordered_map<std::string, std::vector<std::string>> messages;
+  // Resource nodes the server reports as depleted (key="x-y" → respawnAtTick).
+  // The client swaps these tiles to the object's depleted-model variant.
+  std::unordered_map<std::string, int> depletedTrees;
+  std::unordered_map<std::string, int> depletedRocks;
 };
 
 // Client -> server: actions queued by the player.

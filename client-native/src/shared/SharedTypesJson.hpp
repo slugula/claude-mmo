@@ -2,9 +2,10 @@
 
 // Glaze JSON adapters for the types in SharedTypes.hpp.
 //
-// String-backed enums (TileType, ObstacleType) need explicit enumerate() meta.
+// TileType needs explicit enumerate() meta (string-backed enum).
 // NpcSpawn and WaterTile also have explicit object() meta to guarantee named-key
 // JSON objects on all compilers. TileData and OnDisk use auto-reflection.
+// TileData::obstacle is now a plain std::string — no glaze meta needed.
 
 #include "shared/SharedTypes.hpp"
 
@@ -22,18 +23,6 @@ struct glz::meta<shared::TileType> {
     "cliff", cliff,
     "wall",  wall,
     "door",  door);
-};
-
-template <>
-struct glz::meta<shared::ObstacleType> {
-  using enum shared::ObstacleType;
-  static constexpr auto value = enumerate(
-    "tree",         tree,
-    "rock",         rock,
-    "chest",        chest,
-    "fishing_spot", fishing_spot,
-    "fence",        fence,
-    "none",         none);
 };
 
 // Explicit metas for NpcSpawn and WaterTile ensure glaze always deserialises
@@ -128,17 +117,17 @@ inline bool loadWorldMap(const std::filesystem::path& path, WorldMapFile& out) {
       out.tiles[ty][tx].y = ty;
     }
 
-  // Enforce walkable=false for every water tile. Old maps may have the
-  // waterTiles list correct but tile.walkable=true due to a now-fixed editor
-  // bug. Re-derive walkability from waterTiles so overlays and picking are right.
-  for (const auto& wt : out.waterTiles) {
-    if (wt.tileY >= 0 && wt.tileY < out.height &&
-        wt.tileX >= 0 && wt.tileX < out.width &&
-        wt.tileY < static_cast<int>(out.tiles.size()) &&
-        wt.tileX < static_cast<int>(out.tiles[wt.tileY].size())) {
-      out.tiles[wt.tileY][wt.tileX].walkable = false;
-    }
-  }
+  // Backward-compat: old maps stored obstacle as the string "none" (the old
+  // enum serialisation).  Normalise to "" so every consumer can use .empty().
+  for (int ty = 0; ty < out.height && ty < static_cast<int>(out.tiles.size()); ++ty)
+    for (int tx = 0; tx < out.width && tx < static_cast<int>(out.tiles[ty].size()); ++tx)
+      if (out.tiles[ty][tx].obstacle == "none")
+        out.tiles[ty][tx].obstacle = "";
+
+  // Walkability is authored per-tile and trusted as-is — water rendering is a
+  // separate visual layer. This lets terrain raised above the waterline over a
+  // water tile stay walkable while the water plane still renders. Impassable
+  // water is painted non-walkable in the editor (PaintWater defaults to blocked).
 
   return true;
 }
@@ -200,18 +189,8 @@ inline bool saveWorldMap(const std::filesystem::path& path,
         }
         return "grass";
       };
-      auto obsStr = [&]() -> const char* {
-        switch (t.obstacle) {
-          case ObstacleType::tree:         return "tree";
-          case ObstacleType::rock:         return "rock";
-          case ObstacleType::chest:        return "chest";
-          case ObstacleType::fishing_spot: return "fishing_spot";
-          case ObstacleType::fence:        return "fence";
-          case ObstacleType::none:         return "none";
-        }
-        return "none";
-      };
-
+      // obstacle is now a plain std::string — write it directly.
+      // Empty string means no obstacle; write "" to match the load path.
       std::fprintf(f,
         "%s{\"x\":%d,\"y\":%d,\"walkable\":%s,"
         "\"type\":\"%s\",\"obstacle\":\"%s\","
@@ -219,7 +198,7 @@ inline bool saveWorldMap(const std::filesystem::path& path,
         tx == 0 ? "" : ",",
         t.x, t.y,
         t.walkable     ? "true" : "false",
-        typeStr(), obsStr(),
+        typeStr(), t.obstacle.c_str(),
         t.blocksRanged ? "true" : "false",
         hexOf(t.groundColor).c_str(),
         t.height);

@@ -26,6 +26,16 @@ function err(res: Response, e: unknown, status = 500) {
   res.status(status).json({ error: String(e) });
 }
 
+// Coerce empty strings (and undefined/null) to SQL NULL. The native editor
+// serializes optional text fields as "" rather than omitting them; for columns
+// with a foreign key (action_id, craft_action_id, drop_item_id, etc.) an empty
+// string violates the FK, so it must become NULL.
+function nullIfEmpty(v: unknown): string | null {
+  if (v === undefined || v === null) return null;
+  const s = String(v);
+  return s.length === 0 ? null : s;
+}
+
 // ---- Actions ----------------------------------------------------------------
 
 entityRouter.get('/actions', async (_req, res) => {
@@ -85,7 +95,14 @@ entityRouter.get('/objects', async (_req, res) => {
         COALESCE(drop_quantity,  1)  AS drop_quantity,
         COALESCE(respawn_ticks,  25) AS respawn_ticks,
         COALESCE(craft_action_id,'') AS craft_action_id,
-        COALESCE(examine_text,   '') AS examine_text
+        COALESCE(examine_text,   '') AS examine_text,
+        COALESCE(default_clip,   '') AS default_clip,
+        COALESCE(looping,        TRUE) AS looping,
+        COALESCE(rotation_x,     0)  AS rotation_x,
+        COALESCE(rotation_y,     0)  AS rotation_y,
+        COALESCE(rotation_z,     0)  AS rotation_z,
+        COALESCE(depleted_object_id, '') AS depleted_object_id,
+        COALESCE(pickable,       TRUE) AS pickable
       FROM object_definitions ORDER BY id`);
     ok(res, r.rows);
   } catch (e) { err(res, e); }
@@ -105,11 +122,13 @@ entityRouter.post('/objects', async (req, res) => {
     await pool.query(`
       INSERT INTO object_definitions
         (id,name,model_path,object_type,collision,size_x,size_y,action_id,required_skill,
-         required_level,drop_item_id,drop_quantity,respawn_ticks,craft_action_id,examine_text)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
-      [b.id,b.name,b.model_path??null,b.object_type??'Decoration',b.collision??'full_blocking',
-       b.size_x??1,b.size_y??1,b.action_id??null,b.required_skill??null,b.required_level??null,
-       b.drop_item_id??null,b.drop_quantity??1,b.respawn_ticks??25,b.craft_action_id??null,b.examine_text??null]);
+         required_level,drop_item_id,drop_quantity,respawn_ticks,craft_action_id,examine_text,
+         default_clip,looping,rotation_x,rotation_y,rotation_z,depleted_object_id,pickable)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)`,
+      [b.id,b.name,nullIfEmpty(b.model_path),b.object_type??'Decoration',b.collision??'full_blocking',
+       b.size_x??1,b.size_y??1,nullIfEmpty(b.action_id),nullIfEmpty(b.required_skill),b.required_level??null,
+       nullIfEmpty(b.drop_item_id),b.drop_quantity??1,b.respawn_ticks??25,nullIfEmpty(b.craft_action_id),nullIfEmpty(b.examine_text),
+       nullIfEmpty(b.default_clip),b.looping??true,b.rotation_x??0,b.rotation_y??0,b.rotation_z??0,nullIfEmpty(b.depleted_object_id),b.pickable??true]);
     ok(res, { ok: true });
   } catch (e) { err(res, e); }
 });
@@ -121,11 +140,14 @@ entityRouter.put('/objects/:id', async (req, res) => {
       UPDATE object_definitions SET
         name=$1,model_path=$2,object_type=$3,collision=$4,size_x=$5,size_y=$6,
         action_id=$7,required_skill=$8,required_level=$9,drop_item_id=$10,
-        drop_quantity=$11,respawn_ticks=$12,craft_action_id=$13,examine_text=$14
-      WHERE id=$15`,
-      [b.name,b.model_path??null,b.object_type,b.collision,b.size_x??1,b.size_y??1,
-       b.action_id??null,b.required_skill??null,b.required_level??null,b.drop_item_id??null,
-       b.drop_quantity??1,b.respawn_ticks??25,b.craft_action_id??null,b.examine_text??null,req.params.id]);
+        drop_quantity=$11,respawn_ticks=$12,craft_action_id=$13,examine_text=$14,
+        default_clip=$15,looping=$16,rotation_x=$17,rotation_y=$18,rotation_z=$19,depleted_object_id=$20,pickable=$21
+      WHERE id=$22`,
+      [b.name,nullIfEmpty(b.model_path),b.object_type,b.collision,b.size_x??1,b.size_y??1,
+       nullIfEmpty(b.action_id),nullIfEmpty(b.required_skill),b.required_level??null,nullIfEmpty(b.drop_item_id),
+       b.drop_quantity??1,b.respawn_ticks??25,nullIfEmpty(b.craft_action_id),nullIfEmpty(b.examine_text),
+       nullIfEmpty(b.default_clip),b.looping??true,b.rotation_x??0,b.rotation_y??0,b.rotation_z??0,nullIfEmpty(b.depleted_object_id),b.pickable??true,
+       req.params.id]);
     ok(res, { ok: true });
   } catch (e) { err(res, e); }
 });

@@ -214,7 +214,7 @@ export class TilemapView {
     for (let ty = startTY; ty <= endTY; ty++) {
       for (let tx = startTX; tx <= endTX; tx++) {
         const tile = this.state.tiles[ty]?.[tx];
-        if (!tile || tile.obstacle === 'none') continue;
+        if (!tile || !tile.obstacle) continue;
         const color = ICON_COLORS[tile.obstacle];
         if (!color) continue;
         const sx = this.offsetX + tx * step + step / 2;

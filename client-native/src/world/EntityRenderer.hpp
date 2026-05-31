@@ -3,10 +3,15 @@
 #include "render/Shader.hpp"
 #include "shared/SharedTypes.hpp"
 #include "world/GltfModel.hpp"
+#include "world/ModelLibrary.hpp"
+#include "world/SkinnedMesh.hpp"
 
 #include <glad/glad.h>
 #include <glm/glm.hpp>
 
+#include <filesystem>
+#include <functional>
+#include <memory>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -58,13 +63,63 @@ public:
                         const std::vector<std::string>& kinds = {});
   void setItemInstances(const std::vector<Instance>& insts);
 
-  // Load / clear per-kind custom model geometry.
-  // Call at startup after fetching NPC definitions from the DB API.
-  // `primitives` and `materials` come from world::loadGlb().
-  void loadNpcKindModel(const std::string&                kind,
-                        const std::vector<GltfPrimitive>& primitives,
-                        const std::vector<GltfMaterial>&  materials);
-  void clearNpcKindModels();
+  // Resolver maps a relative model_path → absolute path; primes the NPC
+  // ModelLibrary with the NPC placeholder. Call once after initGL().
+  void setNpcModelResolver(std::function<std::filesystem::path(const std::string&)> r) {
+    npcResolver_ = r;
+    if (!npcModelsInited_) {
+      npcModels_.init(r, "assets/models/_placeholder_npc.gltf");
+      npcModelsInited_ = true;
+    }
+  }
+  // Load/cache a per-kind NPC model (or placeholder when modelPath is empty).
+  void ensureNpcModel(const std::string& kind, const std::string& modelPath,
+                      int sizeX = 1, int sizeY = 1) {
+    npcModels_.ensure(kind, modelPath, sizeX, sizeY);
+    if (npcModels_.isAnimated(kind)) anyNpcAnimated_ = true;
+  }
+  // World-space AABB for an NPC kind's model + footprint (for picking).
+  bool npcAabb(const std::string& kind, glm::vec3& mn, glm::vec3& mx) const {
+    return const_cast<ModelLibrary&>(npcModels_).aabb(kind, mn, mx);
+  }
+
+  // True if any loaded NPC kind is animated (host gates the skinned pass on it).
+  bool hasAnimatedNpcs() const { return anyNpcAnimated_; }
+
+  // ---- Dropped-item models (DB-driven via model_dropped) -------------------
+  // Items WITH a model_dropped render that model; items without keep the small
+  // placeholder box (itemBox_).
+  void setItemModelResolver(std::function<std::filesystem::path(const std::string&)> r) {
+    itemResolver_ = r;
+    if (!itemModelsInited_) { itemModels_.init(r, ""); itemModelsInited_ = true; }
+  }
+  // Register a model for an item id. No-op for an empty path (those items keep
+  // the placeholder box rather than a giant unit-cube placeholder).
+  void ensureItemModel(const std::string& itemId, const std::string& modelPath,
+                       int sizeX = 1, int sizeY = 1) {
+    if (modelPath.empty()) return;
+    itemModels_.ensure(itemId, modelPath, sizeX, sizeY);
+    if (itemModels_.isAnimated(itemId)) anyItemAnimated_ = true;
+  }
+  bool itemHasModel(const std::string& itemId) const {
+    return const_cast<ModelLibrary&>(itemModels_).has(itemId);
+  }
+  bool itemAabb(const std::string& itemId, glm::vec3& mn, glm::vec3& mx) const {
+    return const_cast<ModelLibrary&>(itemModels_).aabb(itemId, mn, mx);
+  }
+  bool hasAnimatedItems() const { return anyItemAnimated_; }
+  // Draw animated item models (skinned shader); advances clips once per frame.
+  void renderAnimatedItems(render::Shader& skinnedShader, float dt);
+
+  // Animated NPCs into the skinned shadow depth pass (no clip advance).
+  void renderNpcAnimatedShadows(render::Shader& skinnedDepthShader);
+
+  // Draw animated NPC kinds via the skinned shader, one draw per instance.
+  // The caller has already set the skinned shader's lighting uniforms (same
+  // setup as the fishing-spot / custom-object pass). Advances each kind's clip
+  // once per frame. Instances + smoothed yaw come from the last
+  // setNpcInstances() call.
+  void renderAnimatedNpcs(render::Shader& skinnedShader, float dt);
 
   // One instanced draw per kind, in the order NPCs then items.
   // The caller has already set u_viewProj / u_lightDir / palette uniforms;
@@ -93,7 +148,8 @@ public:
   // falls back to the humanoid procedural geometry when empty or unknown.
   void renderNpcGeometry (render::Shader& maskShader, const Instance& inst,
                           const std::string& kind = "") const;
-  void renderItemGeometry(render::Shader& maskShader, const Instance& inst) const;
+  void renderItemGeometry(render::Shader& maskShader, const Instance& inst,
+                          const std::string& itemId = "") const;
 
   std::size_t npcCount()  const { return npcCount_;  }
   std::size_t itemCount() const { return itemCount_; }
@@ -117,20 +173,6 @@ private:
     glm::vec3 color      = glm::vec3(1.0f);
   };
 
-  // One primitive of a custom (DB-loaded) NPC model.
-  struct CustomPrim {
-    GLuint  vao        = 0;
-    GLuint  vboPos     = 0;
-    GLuint  vboNrm     = 0;
-    GLuint  ebo        = 0;
-    GLsizei indexCount = 0;
-    glm::vec4 color    = glm::vec4(0.7f, 0.7f, 0.7f, 1.0f);
-    // Separate VAO wired to outlineInstanceVbo_ for the mask/geometry pass.
-    // Shares the same geometry buffers as `vao`.
-    GLuint  outlineVao = 0;
-  };
-  struct CustomKit { std::vector<CustomPrim> prims; };
-
   void destroy();
   void uploadKit(Kit& dst,
                  const std::vector<float>&    positions,
@@ -138,12 +180,24 @@ private:
                  const std::vector<uint32_t>& indices,
                  GLuint instanceVbo);
 
-  Kit humanoid_;
+  // NPC models are fully data-driven via the shared ModelLibrary (model file or
+  // placeholder, static or animated). Dropped items keep a procedural box.
+  ModelLibrary npcModels_;
+  std::function<std::filesystem::path(const std::string&)> npcResolver_;
+  bool npcModelsInited_ = false;
+  bool anyNpcAnimated_  = false;
+
   Kit itemBox_;
 
-  GLuint npcInstanceVbo_        = 0;
+  // Dropped items with a model_dropped are data-driven via the shared
+  // ModelLibrary, keyed by item id. Items without a model use itemBox_.
+  ModelLibrary itemModels_;
+  std::function<std::filesystem::path(const std::string&)> itemResolver_;
+  bool itemModelsInited_ = false;
+  bool anyItemAnimated_  = false;
+  std::unordered_map<std::string, std::vector<ModelLibrary::Instance>> itemModelGroups_;
+
   GLuint itemInstanceVbo_       = 0;
-  GLuint customNpcInstanceVbo_  = 0;   // scratch VBO for per-kind instanced draws
   std::size_t npcCount_         = 0;
   std::size_t itemCount_        = 0;
 
@@ -151,13 +205,9 @@ private:
   std::vector<Instance>     npcInstCpu_;
   std::vector<std::string>  npcKinds_;
 
-  std::unordered_map<std::string, CustomKit> npcKindKits_;
-
-  // Single-instance VBO + dedicated VAOs used for the 2-pass stencil outline.
-  // Separate from the batched instance VBOs so we can upload one instance
-  // without corrupting the multi-instance draw data.
+  // Single-instance VBO + dedicated VAO used for the 2-pass stencil outline of
+  // dropped items.
   GLuint outlineInstanceVbo_ = 0;
-  GLuint npcOutlineVao_      = 0;
   GLuint itemOutlineVao_     = 0;
 
   // Internal helper: build an outline VAO sharing geometry from `kit` but

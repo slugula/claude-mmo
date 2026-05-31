@@ -226,7 +226,7 @@ export function processWoodcutting(
       // Mark tile as walkable
       const newTiles = nextWorld.tiles.map(row => [...row]);
       newTiles[ty] = [...newTiles[ty]];
-      newTiles[ty][tx] = { ...newTiles[ty][tx], walkable: true, obstacle: 'none', blocksRanged: false };
+      newTiles[ty][tx] = { ...newTiles[ty][tx], walkable: true, obstacle: '', blocksRanged: false };
       nextWorld = { ...nextWorld, tiles: newTiles };
 
       p = { ...p, chopTargetX: null, chopTargetY: null };

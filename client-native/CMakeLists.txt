@@ -49,6 +49,7 @@ add_library(game_core STATIC
   src/world/EntityRenderer.cpp
   src/world/GltfLoader.cpp
   src/world/MapGenerator.cpp
+  src/world/ModelLibrary.cpp
   src/world/ObstacleSystem.cpp
   src/world/SkinnedMesh.cpp
   src/world/TerrainBuilder.cpp

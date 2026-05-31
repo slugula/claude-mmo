@@ -7,14 +7,25 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtx/quaternion.hpp>
+#include <glm/gtx/matrix_decompose.hpp>
 
 #include <cstdio>
 #include <cstring>
+#include <functional>
 #include <unordered_map>
 
 namespace world {
 
 namespace {
+
+// glTF vertex colours are linear; this engine treats colours as sRGB/display
+// (terrain hex, material colours used directly), so convert on load to match —
+// otherwise painted colours render noticeably too dark.
+float linearToSrgb(float c) {
+  c = c < 0.0f ? 0.0f : (c > 1.0f ? 1.0f : c);
+  return (c <= 0.0031308f) ? c * 12.92f
+                           : 1.055f * std::pow(c, 1.0f / 2.4f) - 0.055f;
+}
 
 // Read N float values from an accessor into outVec. Handles cgltf's
 // stride-aware reads and pads with zeros for fewer-than-N component types.
@@ -81,11 +92,17 @@ void applyTransformToNormals(std::vector<float>& nrm, const glm::mat4& xf) {
 // Parse all primitives of a single cgltf_mesh into `model.primitives`.
 // For static (non-skinned) meshes, `worldTransform` is baked into positions/normals.
 // For skinned meshes the transform is left alone (skinning handles it at runtime).
+//
+// `rigidJointIndex >= 0` marks a "rigid" (node-transform animated) mesh: the
+// rest world transform is still baked (keeps AABB/picking correct), but every
+// vertex is bound 1:1 to the owning node's synthesized joint so its animated
+// TRS moves the geometry through the normal skinning pipeline.
 void parseMeshPrimitives(
     const cgltf_mesh& mesh,
     const cgltf_data* data,
     const glm::mat4&  worldTransform,
-    GltfModel&        model)
+    GltfModel&        model,
+    int               rigidJointIndex = -1)
 {
   for (size_t p = 0; p < mesh.primitives_count; ++p) {
     const cgltf_primitive& prim = mesh.primitives[p];
@@ -95,6 +112,8 @@ void parseMeshPrimitives(
     const cgltf_accessor* aNorm  = nullptr;
     const cgltf_accessor* aJoint = nullptr;
     const cgltf_accessor* aWt    = nullptr;
+    // All COLOR_n sets, indexed by their set number (COLOR_0, COLOR_1, …).
+    std::vector<const cgltf_accessor*> colorSets;
     for (size_t a = 0; a < prim.attributes_count; ++a) {
       const cgltf_attribute& at = prim.attributes[a];
       switch (at.type) {
@@ -102,12 +121,45 @@ void parseMeshPrimitives(
         case cgltf_attribute_type_normal:   aNorm  = at.data; break;
         case cgltf_attribute_type_joints:   if (at.index == 0) aJoint = at.data; break;
         case cgltf_attribute_type_weights:  if (at.index == 0) aWt    = at.data; break;
+        case cgltf_attribute_type_color: {
+          if (static_cast<int>(colorSets.size()) <= at.index)
+            colorSets.resize(at.index + 1, nullptr);
+          colorSets[at.index] = at.data;
+          break;
+        }
         default: break;
       }
     }
 
     readAccessorFloats(aPos,  out.positions, 3);
     readAccessorFloats(aNorm, out.normals,   3);
+
+    // Vertex colors. glTF's primary set is COLOR_0, but Blender can export a
+    // stray all-white set as COLOR_0 while the painted colours land in COLOR_1.
+    // So read into RGBA, and if a set is uniformly white but a later set carries
+    // real paint, use that instead. cgltf normalizes ubyte/ushort and converts
+    // VEC3/VEC4 transparently.
+    auto readColorSet = [](const cgltf_accessor* acc, std::vector<float>& dst, bool& allWhite) {
+      const int    ncomp = static_cast<int>(cgltf_num_components(acc->type));
+      const size_t count = acc->count;
+      dst.assign(count * 4, 1.0f);
+      allWhite = true;
+      for (size_t i = 0; i < count; ++i) {
+        float tmp[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
+        cgltf_accessor_read_float(acc, i, tmp, static_cast<cgltf_size>(ncomp));
+        if (tmp[0] < 0.996f || tmp[1] < 0.996f || tmp[2] < 0.996f) allWhite = false;
+        // glTF colours are linear → convert to sRGB to match the engine.
+        dst[i*4+0]=linearToSrgb(tmp[0]); dst[i*4+1]=linearToSrgb(tmp[1]); dst[i*4+2]=linearToSrgb(tmp[2]);
+        dst[i*4+3]=(ncomp>=4)?tmp[3]:1.0f;
+      }
+    };
+    for (const cgltf_accessor* acc : colorSets) {
+      if (!acc) continue;
+      std::vector<float> cand; bool allWhite = true;
+      readColorSet(acc, cand, allWhite);
+      out.colors = std::move(cand);     // keep the latest read as a baseline
+      if (!allWhite) break;             // found a painted set → use it
+    }
 
     // Joints
     if (aJoint) {
@@ -127,6 +179,18 @@ void parseMeshPrimitives(
       const size_t vcount = aPos ? aPos->count : 0;
       out.jointWeights.assign(vcount * 4, 0.0f);
       for (size_t i = 0; i < vcount; ++i) out.jointWeights[i * 4] = 1.0f;
+    }
+
+    // Rigid node animation: override joints so every vertex follows this node's
+    // synthesized joint at full weight.
+    if (rigidJointIndex >= 0) {
+      const size_t vcount = out.positions.size() / 3;
+      out.jointIndices.assign(vcount * 4, 0);
+      out.jointWeights.assign(vcount * 4, 0.0f);
+      for (size_t i = 0; i < vcount; ++i) {
+        out.jointIndices[i * 4] = static_cast<uint8_t>(rigidJointIndex & 0xFF);
+        out.jointWeights[i * 4] = 1.0f;
+      }
     }
 
     readAccessorUints(prim.indices, out.indices, 1);
@@ -252,11 +316,57 @@ std::optional<GltfModel> loadGlb(const std::filesystem::path& path) {
   // Walk the scene graph so every node's mesh is loaded, with each node's
   // accumulated world transform baked into the geometry for static meshes.
   // Skinned meshes keep geometry in bind-pose (skinning handles the xf).
+  //
+  // Special case: a model with animations but NO skin (typical of object/prop
+  // animations authored in Blender/Blockbench, where the mesh *node* is keyed
+  // rather than bones). We synthesize a "node skeleton" — every scene node
+  // becomes a 1-influence joint with inverseBind = inverse(restWorld) — so the
+  // existing skinning runtime/shader plays the node TRS channels unchanged.
+  const bool rigidAnimated = (data->skins_count == 0 && data->animations_count > 0);
   {
     const cgltf_scene* scene = data->scene;
     if (!scene && data->scenes_count > 0) scene = &data->scenes[0];
 
-    if (scene) {
+    if (rigidAnimated) {
+      // DFS pre-order so a parent's joint index is always < its children's
+      // (required by SkinnedMesh::evaluatePose's single-pass hierarchy walk).
+      std::function<void(const cgltf_node*, int, const glm::mat4&)> build =
+          [&](const cgltf_node* node, int parent, const glm::mat4& parentWorld) {
+        const glm::mat4 localRest = nodeLocalTransform(node);
+        const glm::mat4 restWorld = parentWorld * localRest;
+        const int       myIndex   = static_cast<int>(model.joints.size());
+
+        GltfJoint jt;
+        jt.name   = node->name ? node->name : "";
+        jt.parent = parent;
+        if (node->has_translation)
+          jt.restTranslation = glm::vec3(node->translation[0], node->translation[1], node->translation[2]);
+        if (node->has_rotation)
+          jt.restRotation = glm::quat(node->rotation[3], node->rotation[0], node->rotation[1], node->rotation[2]);
+        if (node->has_scale)
+          jt.restScale = glm::vec3(node->scale[0], node->scale[1], node->scale[2]);
+        if (node->has_matrix && !(node->has_translation || node->has_rotation || node->has_scale)) {
+          glm::mat4 m; std::memcpy(glm::value_ptr(m), node->matrix, 16 * sizeof(float));
+          glm::vec3 skew; glm::vec4 persp;
+          glm::decompose(m, jt.restScale, jt.restRotation, jt.restTranslation, skew, persp);
+        }
+        jt.inverseBind = glm::inverse(restWorld);
+        model.joints.push_back(jt);
+        jointIndexByNode[node] = myIndex;
+
+        if (node->mesh) parseMeshPrimitives(*node->mesh, data, restWorld, model, myIndex);
+        for (size_t i = 0; i < node->children_count; ++i)
+          build(node->children[i], myIndex, restWorld);
+      };
+
+      if (scene) {
+        for (size_t ni = 0; ni < scene->nodes_count; ++ni)
+          build(scene->nodes[ni], -1, glm::mat4(1.0f));
+      } else {
+        for (size_t ni = 0; ni < data->nodes_count; ++ni)
+          if (!data->nodes[ni].parent) build(&data->nodes[ni], -1, glm::mat4(1.0f));
+      }
+    } else if (scene) {
       for (size_t ni = 0; ni < scene->nodes_count; ++ni)
         processNode(data, scene->nodes[ni], glm::mat4(1.0f), model);
     } else {

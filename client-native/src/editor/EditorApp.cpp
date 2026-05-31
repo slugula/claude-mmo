@@ -1,5 +1,6 @@
 #include "editor/EditorApp.hpp"
 
+#include "app/WaterSettings.hpp"
 #include "editor/EditorPalette.hpp"
 #include "input/Picker.hpp"
 #include "render/GlDebug.hpp"
@@ -42,6 +43,8 @@ constexpr const char* kWireframeVertPath = "shaders/wireframe.vert";
 constexpr const char* kWireframeFragPath = "shaders/wireframe.frag";
 constexpr const char* kObstacleVertPath  = "shaders/obstacle.vert";
 constexpr const char* kObstacleFragPath  = "shaders/obstacle.frag";
+constexpr const char* kSkinnedVertPath   = "shaders/skinned.vert";
+constexpr const char* kSkinnedFragPath   = "shaders/skinned.frag";
 constexpr const char* kShadowInstVertPath= "shaders/shadow_instanced.vert";
 constexpr const char* kShadowFragPath    = "shaders/shadow.frag";
 constexpr const char* kWaterVertPath     = "shaders/water.vert";
@@ -111,6 +114,7 @@ void EditorApp::dbDestroyPreviewFbo() {
     if (p.vao)    glDeleteVertexArrays(1, &p.vao);
     if (p.vboPos) glDeleteBuffers(1, &p.vboPos);
     if (p.vboNorm)glDeleteBuffers(1, &p.vboNorm);
+    if (p.vboCol) glDeleteBuffers(1, &p.vboCol);
     if (p.ebo)    glDeleteBuffers(1, &p.ebo);
   }
   dbPreviewPrims_.clear();
@@ -119,23 +123,49 @@ void EditorApp::dbDestroyPreviewFbo() {
   if (dbPreviewRbo_) { glDeleteRenderbuffers(1, &dbPreviewRbo_);  dbPreviewRbo_ = 0; }
 }
 
-void EditorApp::dbLoadPreviewModel(const std::string& modelPath) {
-  if (modelPath == dbPreviewLoadedPath_) return;
+void EditorApp::dbLoadPreviewModel(const std::string& modelPath, bool forceReload) {
+  if (!forceReload && modelPath == dbPreviewLoadedPath_) return;
 
   // Release old primitive GPU resources
   for (auto& p : dbPreviewPrims_) {
     if (p.vao)    glDeleteVertexArrays(1, &p.vao);
     if (p.vboPos) glDeleteBuffers(1, &p.vboPos);
     if (p.vboNorm)glDeleteBuffers(1, &p.vboNorm);
+    if (p.vboCol) glDeleteBuffers(1, &p.vboCol);
     if (p.ebo)    glDeleteBuffers(1, &p.ebo);
   }
   dbPreviewPrims_.clear();
+  dbPreviewHasAnim_  = false;
+  dbPreviewClips_.clear();
   dbPreviewLoadedPath_ = modelPath;
   dbPreviewCenter_     = glm::vec3(0.f);
   dbPreviewRadius_     = 1.0f;
 
   if (modelPath.empty()) return;
 
+  // ---- Try SkinnedMesh first (handles animated glTF models) ---------------
+  {
+    std::string resolvedPath;
+    for (const char* prefix : { "", "assets/" }) {
+      auto candidate = resolveFromExe((std::string(prefix) + modelPath).c_str());
+      if (std::filesystem::exists(candidate)) { resolvedPath = candidate.string(); break; }
+    }
+    if (!resolvedPath.empty() && dbPreviewSkinned_.load(resolvedPath)) {
+      if (dbPreviewSkinned_.animationCount() > 0) {
+        dbPreviewHasAnim_ = true;
+        for (int i = 0; i < dbPreviewSkinned_.animationCount(); ++i) {
+          const std::string* n = dbPreviewSkinned_.animationNameAt(i);
+          dbPreviewClips_.push_back(n ? *n : "clip_" + std::to_string(i));
+        }
+        dbPreviewSkinned_.setClip("");  // default: first clip
+        // Estimate radius from bounding box
+        dbPreviewRadius_ = 1.5f;  // conservative; could compute AABB from joints
+        return;  // animated preview ready — skip static path
+      }
+    }
+  }
+
+  // ---- Fall back to static primitive preview --------------------------------
   // Try the path as-is (relative to exe), then with assets/ prefix
   std::optional<world::GltfModel> model;
   for (const char* prefix : { "", "assets/" }) {
@@ -178,6 +208,13 @@ void EditorApp::dbLoadPreviewModel(const std::string& modelPath) {
     glCreateBuffers(1, &gp.vboNorm);
     glNamedBufferStorage(gp.vboNorm, norms.size() * sizeof(float), norms.data(), 0);
 
+    // Per-vertex RGBA colours (white when the model has none).
+    const std::size_t vcount = prim.positions.size() / 3;
+    std::vector<float> cols = prim.colors;
+    if (cols.size() != vcount * 4) cols.assign(vcount * 4, 1.0f);
+    glCreateBuffers(1, &gp.vboCol);
+    glNamedBufferStorage(gp.vboCol, cols.size() * sizeof(float), cols.data(), 0);
+
     glCreateBuffers(1, &gp.ebo);
     glNamedBufferStorage(gp.ebo,
       prim.indices.size() * sizeof(uint32_t), prim.indices.data(), 0);
@@ -193,6 +230,11 @@ void EditorApp::dbLoadPreviewModel(const std::string& modelPath) {
     glEnableVertexArrayAttrib(gp.vao, 1);
     glVertexArrayAttribFormat(gp.vao, 1, 3, GL_FLOAT, GL_FALSE, 0);
     glVertexArrayAttribBinding(gp.vao, 1, 1);
+    // colour — binding 4 (matches preview.vert / obstacle.vert location 4)
+    glVertexArrayVertexBuffer(gp.vao, 4, gp.vboCol, 0, 4 * sizeof(float));
+    glEnableVertexArrayAttrib(gp.vao, 4);
+    glVertexArrayAttribFormat(gp.vao, 4, 4, GL_FLOAT, GL_FALSE, 0);
+    glVertexArrayAttribBinding(gp.vao, 4, 4);
     // EBO
     glVertexArrayElementBuffer(gp.vao, gp.ebo);
     dbPreviewPrims_.push_back(gp);
@@ -210,7 +252,10 @@ void EditorApp::dbRenderPreview(float dt) {
   glClearColor(0.10f, 0.12f, 0.15f, 1.0f);
   glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-  if (!dbPreviewPrims_.empty() && dbPreviewShader_.isValid()) {
+  // Common camera setup
+  const bool hasContent = dbPreviewHasAnim_ ? dbPreviewSkinned_.isLoaded()
+                                            : !dbPreviewPrims_.empty();
+  if (hasContent) {
     glEnable(GL_DEPTH_TEST);
 
     // Orbit camera: fixed 20° elevation, auto-rotating azimuth
@@ -220,21 +265,51 @@ void EditorApp::dbRenderPreview(float dt) {
       camDist * std::cos(dbPreviewAngle_) * std::cos(elevRad),
       camDist * std::sin(elevRad),
       camDist * std::sin(dbPreviewAngle_) * std::cos(elevRad));
-    glm::mat4 view     = glm::lookAt(eye, dbPreviewCenter_, glm::vec3(0, 1, 0));
-    glm::mat4 proj     = glm::perspective(glm::radians(40.0f), 1.0f,
-                                           camDist * 0.01f, camDist * 4.0f);
+    // Left-handed view/projection to match the game (GameCamera::viewProjection
+    // uses lookAtLH + perspectiveLH). Using RH here flipped the model upside-down
+    // relative to how it renders in-world.
+    glm::mat4 view     = glm::lookAtLH(eye, dbPreviewCenter_, glm::vec3(0, 1, 0));
+    glm::mat4 proj     = glm::perspectiveLH(glm::radians(40.0f), 1.0f,
+                                            camDist * 0.01f, camDist * 4.0f);
     glm::mat4 viewProj = proj * view;
 
-    dbPreviewShader_.use();
-    dbPreviewShader_.setMat4("u_model",    glm::mat4(1.0f));
-    dbPreviewShader_.setMat4("u_viewProj", viewProj);
+    // Orientation is authored at model-build time now; the preview shows the
+    // model exactly as it will appear in-world (no editor rotation applied).
+    const glm::mat4 model = glm::mat4(1.0f);
 
-    for (const auto& prim : dbPreviewPrims_) {
-      dbPreviewShader_.setVec4("u_color", prim.color);
-      glBindVertexArray(prim.vao);
-      glDrawElements(GL_TRIANGLES, prim.indexCount, GL_UNSIGNED_INT, nullptr);
+    if (dbPreviewHasAnim_ && skinnedShader_.isValid()) {
+      // Animated preview via SkinnedMesh
+      dbPreviewSkinned_.update(dt);
+      skinnedShader_.use();
+      skinnedShader_.setMat4("u_viewProj",      viewProj);
+      skinnedShader_.setMat4("u_lightViewProj", glm::mat4(1.f));
+      skinnedShader_.setVec3("u_lightDir",      glm::vec3(0.f, -1.f, 0.f));
+      skinnedShader_.setVec3("u_paletteLevels", glm::vec3(0.f));
+      skinnedShader_.setFloat("u_paletteEnabled",  0.f);
+      skinnedShader_.setFloat("u_ambient",         0.35f);
+      skinnedShader_.setFloat("u_diffuse",         0.80f);
+      skinnedShader_.setFloat("u_lightingEnabled", 1.f);
+      skinnedShader_.setInt  ("u_shadowMap",       1);
+      skinnedShader_.setFloat("u_shadowsEnabled",  0.f);
+      skinnedShader_.setFloat("u_shadowDarkness",  0.f);
+      skinnedShader_.setFloat("u_shadowBias",      0.f);
+      skinnedShader_.setFloat("u_fogEnabled",      0.f);
+      skinnedShader_.setVec3 ("u_fogColor",        glm::vec3(0.f));
+      skinnedShader_.setFloat("u_fogDensity",      0.f);
+      skinnedShader_.setFloat("u_fogStart",        0.f);
+      dbPreviewSkinned_.render(skinnedShader_, model, /*useMaterialColors=*/true);
+    } else if (dbPreviewShader_.isValid()) {
+      // Static primitive preview
+      dbPreviewShader_.use();
+      dbPreviewShader_.setMat4("u_model",    model);
+      dbPreviewShader_.setMat4("u_viewProj", viewProj);
+      for (const auto& prim : dbPreviewPrims_) {
+        dbPreviewShader_.setVec4("u_color", prim.color);
+        glBindVertexArray(prim.vao);
+        glDrawElements(GL_TRIANGLES, prim.indexCount, GL_UNSIGNED_INT, nullptr);
+      }
+      glBindVertexArray(0);
     }
-    glBindVertexArray(0);
   }
 
   // Restore FBO state for the rest of the frame
@@ -284,6 +359,7 @@ bool EditorApp::init() {
   if (!loadShader(terrainShader_,         kTerrainVertPath,    kTerrainFragPath,    "terrain"))    return false;
   if (!loadShader(wireframeShader_,       kWireframeVertPath,  kWireframeFragPath,  "wireframe"))  return false;
   if (!loadShader(obstacleShader_,        kObstacleVertPath,   kObstacleFragPath,   "obstacle"))   return false;
+  if (!loadShader(skinnedShader_,         kSkinnedVertPath,    kSkinnedFragPath,    "skinned"))    return false;
   if (!loadShader(shadowInstancedShader_, kShadowInstVertPath, kShadowFragPath,     "shadow"))     return false;
 
   if (!waterRenderer_.init(resolveFromExe(kWaterVertPath).string(),
@@ -299,9 +375,9 @@ bool EditorApp::init() {
   }
 
   obstacles_.initGL();
-  if (!obstacles_.loadTreeModel(resolveFromExe(kTreeModelPath))) {
-    std::fprintf(stderr, "[Editor] tree model not found — using procedural trees\n");
-  }
+  obstacles_.setModelResolver([](const std::string& rel) {
+    return resolveFromExe(rel.c_str());
+  });
   entities_.initGL();
 
   initNewMap(64, 64);
@@ -333,6 +409,10 @@ bool EditorApp::init() {
       paletteHues_ = s.paletteHues;
       paletteSats_ = s.paletteSats;
       paletteLums_ = s.paletteLums;
+      // Water settings (shared with the game client).
+      applyWaterSettings(s, waterUniforms_);
+      if (!waterUniforms_.causticMapPath.empty())
+        waterRenderer_.loadCausticMap(resolveFromExe(waterUniforms_.causticMapPath.c_str()).string());
     }
   }
 
@@ -341,6 +421,13 @@ bool EditorApp::init() {
 
   // Set initial window title.
   updateWindowTitle();
+
+  // Attempt to pre-populate the entity DB from the server so the Objects
+  // toolbar list (PlaceObstacle) shows all registered object types without
+  // requiring the user to open Database → Edit Database first.
+  // Failure is silently swallowed — the editor still works with the built-in
+  // hardcoded fallback list when no server is available.
+  try { dbLoadAll(); } catch (...) {}
 
   lastFrameTime_ = std::chrono::steady_clock::now();
   return true;
@@ -613,7 +700,7 @@ void EditorApp::render3DViewport(float dt) {
   viewport3dFbo_->bind();
   glViewport(0, 0, viewport3dW_, viewport3dH_);
   glClearColor(0.45f, 0.65f, 0.85f, 1.0f);
-  glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+  glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
 
   glBindTextureUnit(1, shadowMap_.depthTexture());
 
@@ -656,30 +743,66 @@ void EditorApp::render3DViewport(float dt) {
   obstacleShader_.setVec3 ("u_fogColor",   fogColor_);
   obstacleShader_.setFloat("u_fogDensity", fogDensity_);
   obstacleShader_.setFloat("u_fogStart",   fogStart_);
-  obstacles_.render(obstacleShader_);
+  obstacles_.render(obstacleShader_);  // all static objects (data-driven)
 
-  // NPC stand-ins
+  // NPCs — same data-driven models as the game (placeholder when no model).
   {
     std::vector<world::EntityRenderer::Instance> insts;
+    std::vector<std::string> kinds;
     insts.reserve(npcSpawns_.size());
+    kinds.reserve(npcSpawns_.size());
     for (const auto& n : npcSpawns_) {
       const float wy = tileWorldY(n.tileX, n.tileY);
       insts.push_back({ static_cast<float>(n.tileX), wy, static_cast<float>(n.tileY), 0.0f });
+      kinds.push_back(n.kind);
     }
-    entities_.setNpcInstances(insts);
-    entities_.render(obstacleShader_);
+    entities_.setNpcInstances(insts, kinds);
+    entities_.render(obstacleShader_);  // static NPC models
+  }
+
+  // ---- Fishing spot animated model — OPAQUE pass -----------------------------
+  // Rendered with the opaque scene BEFORE the SSR snapshot so the water shader
+  // captures it in sceneColor and draws it as a refracted underwater object.
+  if (obstacles_.hasCustomModels() || entities_.hasAnimatedNpcs()) {
+    skinnedShader_.use();
+    skinnedShader_.setMat4 ("u_viewProj",       viewProj);
+    skinnedShader_.setMat4 ("u_lightViewProj",  lightVP);
+    skinnedShader_.setVec3 ("u_lightDir",       sunDir);
+    skinnedShader_.setVec3 ("u_paletteLevels",  glm::vec3(static_cast<float>(paletteHues_),
+                                                           static_cast<float>(paletteSats_),
+                                                           static_cast<float>(paletteLums_)));
+    skinnedShader_.setFloat("u_paletteEnabled",  palette_ ? 1.0f : 0.0f);
+    skinnedShader_.setFloat("u_ambient",         ambient_);
+    skinnedShader_.setFloat("u_diffuse",         diffuse_);
+    skinnedShader_.setFloat("u_lightingEnabled", lightingEnabled_ ? 1.0f : 0.0f);
+    skinnedShader_.setInt  ("u_shadowMap",       1);
+    skinnedShader_.setFloat("u_shadowsEnabled",  0.0f);
+    skinnedShader_.setFloat("u_shadowDarkness",  0.0f);
+    skinnedShader_.setFloat("u_shadowBias",      0.0f);
+    skinnedShader_.setFloat("u_fogEnabled",      fogEnabled_ ? 1.0f : 0.0f);
+    skinnedShader_.setVec3 ("u_fogColor",        fogColor_);
+    skinnedShader_.setFloat("u_fogDensity",      fogDensity_);
+    skinnedShader_.setFloat("u_fogStart",        fogStart_);
+
+    // Data-driven animated custom objects (incl. fishing_spot) + NPCs.
+    obstacles_.renderCustomAnimated(skinnedShader_, dt);
+    entities_.renderAnimatedNpcs(skinnedShader_, dt);  // animated NPCs in editor
   }
 
   // ---- Water pass -------------------------------------------------------
-  // Resolve colour (for SSR) and depth (for foam intersection) before drawing
-  // water.  Then re-bind the MSAA FBO, draw water on top, and resolve again.
+  // Resolve colour + depth (full opaque scene incl. submerged fish), then draw
+  // depth-based refraction water on top.
   if (!map_.waterTiles.empty() && waterRenderer_.valid()) {
-    viewport3dFbo_->resolve();      // pre-water colour snapshot for SSR
-    viewport3dFbo_->resolveDepth(); // pre-water depth snapshot for foam
+    viewport3dFbo_->resolve();
+    viewport3dFbo_->resolveDepth();
 
     viewport3dFbo_->bind();
     glViewport(0, 0, viewport3dW_, viewport3dH_);
 
+    waterUniforms_.cameraPos = camera_.cameraPosition();
+    waterUniforms_.sunDir    = sunDir;
+    waterUniforms_.nearPlane = 0.1f;    // matches GameCamera::viewProjection
+    waterUniforms_.farPlane  = 500.0f;
     waterRenderer_.render(
         static_cast<float>(glfwGetTime()),
         viewProj,
@@ -869,47 +992,87 @@ void EditorApp::drawToolbar() {
 // -----------------------------------------------------------------------
 void EditorApp::drawWaterSettings() {
   auto& u = waterUniforms_;
-  if (ImGui::CollapsingHeader("Water — Basic", ImGuiTreeNodeFlags_DefaultOpen)) {
-    ImGui::SetNextItemWidth(-1); ImGui::ColorEdit3("Shallow##w",  &u.shallowColor.x);
-    ImGui::SetNextItemWidth(-1); ImGui::ColorEdit3("Deep##w",     &u.deepColor.x);
-    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##wsp",  &u.waveSpeed,       0.0f, 2.0f,  "WaveSpd:%.2f");
-    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##wht",  &u.waveHeight,      0.0f, 0.5f,  "WaveH:%.3f");
-    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##nstr", &u.normalStrength,  0.0f, 2.0f,  "NrmStr:%.2f");
-    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##rfl",  &u.reflectStrength, 0.0f, 1.0f,  "Reflect:%.2f");
-    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##caus", &u.causticIntensity,0.0f, 1.0f,  "Caustic:%.2f");
-    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##fwid", &u.foamWidth,        0.0f, 1.0f,  "FoamWidth:%.2f");
-  }
-  if (ImGui::CollapsingHeader("Water — Advanced")) {
-    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##wsc",  &u.waveScale,       0.5f, 8.0f,  "WaveSc:%.2f");
-    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##csc",  &u.causticScale,    1.0f, 12.0f, "CausSc:%.2f");
-    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##cspd", &u.causticSpeed,    0.0f, 1.0f,  "CausSpd:%.2f");
-    ImGui::SetNextItemWidth(-1); ImGui::ColorEdit3("Foam##w", &u.foamColor.x);
-    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##fspd", &u.foamSpeed,       0.0f, 2.0f,  "FoamSpd:%.2f");
-    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##fsc",  &u.foamScale,       1.0f, 20.0f, "FoamSc:%.1f");
-    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##prlx", &u.parallaxDepth,   0.0f, 0.15f, "Parallax:%.3f");
-    float prevOff = u.waterOffset;
-    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##woff", &u.waterOffset,     0.0f, 0.5f,  "WaterOff:%.3f");
-    // When waterOffset changes, rebuild water mesh (water Y changes)
-    if (u.waterOffset != prevOff)
-      waterRenderer_.rebuild(map_, u.waterOffset);
 
-    ImGui::Separator();
-    ImGui::TextDisabled("Caustic texture");
+  // ---- Waves -------------------------------------------------------------
+  if (ImGui::CollapsingHeader("Waves", ImGuiTreeNodeFlags_DefaultOpen)) {
+    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##wsp",  &u.waveSpeed,      0.0f, 2.0f,  "Speed:%.2f");
+    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##wht",  &u.waveHeight,     0.0f, 0.5f,  "Height:%.3f");
+    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##wsc",  &u.waveScale,      0.5f, 8.0f,  "Scale:%.2f");
+    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##nstr", &u.normalStrength, 0.0f, 2.0f,  "NormalStr:%.2f");
+  }
+
+  // ---- Colour & Depth ----------------------------------------------------
+  if (ImGui::CollapsingHeader("Colour & Depth", ImGuiTreeNodeFlags_DefaultOpen)) {
+    ImGui::SetNextItemWidth(-1); ImGui::ColorEdit3("Shallow##w", &u.shallowColor.x);
+    ImGui::SetNextItemWidth(-1); ImGui::ColorEdit3("Deep##w",    &u.deepColor.x);
+    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##dfade", &u.depthFade,   0.5f, 20.0f, "DepthFade:%.1f");
+    float prevOff = u.waterOffset;
+    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##woff",  &u.waterOffset, 0.0f, 0.5f,  "WaterLevel:%.3f");
+    if (u.waterOffset != prevOff)  // rebuild mesh — water Y changed
+      waterRenderer_.rebuild(map_, u.waterOffset);
+  }
+
+  // ---- Refraction (underwater view) --------------------------------------
+  if (ImGui::CollapsingHeader("Refraction", ImGuiTreeNodeFlags_DefaultOpen)) {
+    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##rfl",  &u.reflectStrength,    0.0f, 1.0f,  "Clarity:%.2f");
+    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##refr", &u.refractionStrength, 0.0f, 0.15f, "Distortion:%.3f");
+    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##prlx", &u.parallaxDepth,      0.0f, 0.15f, "Parallax:%.3f");
+    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##spec", &u.specularStrength,   0.0f, 2.0f,  "Sparkle:%.2f");
+  }
+
+  // ---- Foam --------------------------------------------------------------
+  if (ImGui::CollapsingHeader("Foam", ImGuiTreeNodeFlags_DefaultOpen)) {
+    ImGui::SetNextItemWidth(-1); ImGui::ColorEdit3("Colour##foam", &u.foamColor.x);
+    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##cfoam",&u.foamContactWidth, 0.0f, 2.0f,  "ContactWidth:%.2f");
+    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##fwid", &u.foamWidth,        0.0f, 1.0f,  "Amount:%.2f");
+    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##fspd", &u.foamSpeed,        0.0f, 2.0f,  "Speed:%.2f");
+    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##fsc",  &u.foamScale,        1.0f, 20.0f, "Scale:%.1f");
+  }
+
+  // ---- Caustics ----------------------------------------------------------
+  if (ImGui::CollapsingHeader("Caustics")) {
+    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##caus", &u.causticIntensity, 0.0f, 1.0f,  "Intensity:%.2f");
+    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##csc",  &u.causticScale,     0.0f, 12.0f, "Scale:%.2f");
+    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##cspd", &u.causticSpeed,     0.0f, 1.0f,  "Speed:%.2f");
+
+    ImGui::Spacing();
     if (ImGui::Button("Load Caustic Map...", ImVec2(-1, 0))) {
       const std::wstring wpath = winOpenDialog();
       if (!wpath.empty()) {
-        // Convert wide path to narrow UTF-8 string for stbi_load
+        // Convert wide path to narrow UTF-8 string.
         const int sz = WideCharToMultiByte(CP_UTF8, 0, wpath.c_str(), -1,
                                            nullptr, 0, nullptr, nullptr);
-        std::string path(static_cast<std::size_t>(sz), '\0');
+        std::string srcPath(static_cast<std::size_t>(sz), '\0');
         WideCharToMultiByte(CP_UTF8, 0, wpath.c_str(), -1,
-                            path.data(), sz, nullptr, nullptr);
-        waterRenderer_.loadCausticMap(path);
+                            srcPath.data(), sz, nullptr, nullptr);
+        if (!srcPath.empty() && srcPath.back() == '\0') srcPath.pop_back();
+
+        // Copy into the shared assets folder under a fixed name so both the
+        // editor and the game client (same Release dir) can reload it, and
+        // record the relative path so it persists in settings.cfg.
+        const std::string relPath = "assets/water_caustic.png";
+        const auto destPath = resolveFromExe(relPath.c_str());
+        std::error_code ec;
+        std::filesystem::create_directories(destPath.parent_path(), ec);
+        std::filesystem::copy_file(srcPath, destPath,
+            std::filesystem::copy_options::overwrite_existing, ec);
+        const std::string loadFrom = ec ? srcPath : destPath.string();
+        if (waterRenderer_.loadCausticMap(loadFrom))
+          waterUniforms_.causticMapPath = ec ? srcPath : relPath;
       }
     }
-    ImGui::TextDisabled("(PNG, scrolls in two");
-    ImGui::TextDisabled(" directions for anim)");
+    if (!waterUniforms_.causticMapPath.empty()) {
+      ImGui::TextDisabled("Loaded: %s", waterUniforms_.causticMapPath.c_str());
+      if (ImGui::Button("Clear Caustic Map", ImVec2(-1, 0)))
+        waterUniforms_.causticMapPath.clear();  // procedural fallback resumes next launch
+    } else {
+      ImGui::TextDisabled("(none — using procedural)");
+    }
   }
+
+  ImGui::Spacing();
+  ImGui::Separator();
+  ImGui::TextDisabled("Save via 'Save as Default'");
 }
 
 // -----------------------------------------------------------------------
@@ -946,40 +1109,26 @@ void EditorApp::drawProperties() {
   }
   else if (activeTool_ == EditorTool::PlaceObstacle) {
     ImGui::TextDisabled("Object type");
-    // Helper: map DB object id → ObstacleType enum (for the 5 built-in types)
-    auto idToObs = [](const std::string& id) -> shared::ObstacleType {
-      if (id == "tree")         return shared::ObstacleType::tree;
-      if (id == "rock")         return shared::ObstacleType::rock;
-      if (id == "chest")        return shared::ObstacleType::chest;
-      if (id == "fence")        return shared::ObstacleType::fence;
-      if (id == "fishing_spot") return shared::ObstacleType::fishing_spot;
-      return shared::ObstacleType::none;
+    // Scrollable object list — DB-driven when loaded, hardcoded fallback otherwise.
+    // obstacleSubtype_ is now a plain string ID (e.g. "tree", "bookcase_oak").
+    auto obstBtn = [&](const char* label, const std::string& id) {
+      const bool a = (obstacleSubtype_ == id);
+      if (a) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f, 0.34f, 0.10f, 1.0f));
+      if (ImGui::Button(label, ImVec2(-1, 0))) obstacleSubtype_ = id;
+      if (a) ImGui::PopStyleColor();
     };
     if (!dbObjects_.empty()) {
-      // DB-driven list
+      // DB-driven grouped list
       for (const auto& obj : dbObjects_) {
-        const auto t = idToObs(obj.id);
-        if (t == shared::ObstacleType::none) {
-          ImGui::TextDisabled("%s (not placeable yet)", obj.name.c_str());
-          continue;
-        }
-        const bool a = (obstacleSubtype_ == t);
-        if (a) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f, 0.34f, 0.10f, 1.0f));
-        if (ImGui::Button(obj.name.c_str(), ImVec2(-1, 0))) obstacleSubtype_ = t;
-        if (a) ImGui::PopStyleColor();
+        obstBtn(obj.name.c_str(), obj.id);
       }
     } else {
-      // Fallback when DB not loaded
-      auto obstBtn = [&](const char* label, shared::ObstacleType t) {
-        const bool a = (obstacleSubtype_ == t);
-        if (a) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f, 0.34f, 0.10f, 1.0f));
-        if (ImGui::Button(label, ImVec2(-1, 0))) obstacleSubtype_ = t;
-        if (a) ImGui::PopStyleColor();
-      };
-      obstBtn("Tree",  shared::ObstacleType::tree);
-      obstBtn("Rock",  shared::ObstacleType::rock);
-      obstBtn("Chest", shared::ObstacleType::chest);
-      obstBtn("Fence", shared::ObstacleType::fence);
+      // Fallback built-ins when DB not loaded
+      obstBtn("Tree",         "tree");
+      obstBtn("Rock",         "rock");
+      obstBtn("Chest",        "chest");
+      obstBtn("Fence",        "fence");
+      obstBtn("Fishing Spot", "fishing_spot");
     }
   }
   else if (activeTool_ == EditorTool::PlaceNPC) {
@@ -1097,6 +1246,19 @@ void EditorApp::drawPreferencesWindow() {
   if (ImGui::Button("Save as Default")) saveSettings();
   ImGui::SameLine();
   ImGui::TextDisabled("Writes to settings.cfg");
+
+  // DB connection status — shown at the bottom of the panel
+  ImGui::Spacing();
+  ImGui::Separator();
+  if (dbLoaded_) {
+    ImGui::TextColored({0.4f, 0.9f, 0.4f, 1.0f}, "DB: connected");
+  } else {
+    ImGui::TextColored({1.0f, 0.8f, 0.2f, 1.0f}, "DB: offline");
+    ImGui::TextDisabled("(built-ins only)");
+    if (ImGui::SmallButton("Retry")) {
+      try { dbLoadAll(); } catch (...) {}
+    }
+  }
 
   ImGui::EndChild();
   ImGui::End();
@@ -1278,11 +1440,11 @@ void EditorApp::drawGridView() {
       }
 
       // Obstacle dot
-      if (z >= 6.0f && tile.obstacle != shared::ObstacleType::none) {
+      if (z >= 6.0f && !tile.obstacle.empty() && tile.obstacle != "none") {
         ImU32 oc = IM_COL32(20, 90, 10, 255);
-        if (tile.obstacle == shared::ObstacleType::rock)  oc = IM_COL32(110, 110, 110, 255);
-        if (tile.obstacle == shared::ObstacleType::chest) oc = IM_COL32(200, 160, 30,  255);
-        if (tile.obstacle == shared::ObstacleType::fence) oc = IM_COL32(100, 60,  20,  255);
+        if (tile.obstacle == "rock")  oc = IM_COL32(110, 110, 110, 255);
+        if (tile.obstacle == "chest") oc = IM_COL32(200, 160, 30,  255);
+        if (tile.obstacle == "fence") oc = IM_COL32(100, 60,  20,  255);
         dl->AddCircleFilled(ImVec2(px + z * 0.5f, py + z * 0.5f), std::max(2.0f, z * 0.28f), oc);
       }
 
@@ -1374,7 +1536,7 @@ void EditorApp::drawGridView() {
         }
         if (ty < static_cast<int>(map_.tiles.size()) &&
             tx < static_cast<int>(map_.tiles[ty].size())) {
-          setObstacleAtTile(tx, ty, shared::ObstacleType::none);
+          setObstacleAtTile(tx, ty, "");
           map_.tiles[ty][tx].walkable = true;
           npcSpawns_.erase(std::remove_if(npcSpawns_.begin(), npcSpawns_.end(),
             [tx, ty](const shared::NpcSpawn& n){ return n.tileX == tx && n.tileY == ty; }),
@@ -1491,7 +1653,7 @@ void EditorApp::applyToolAt(int tx, int ty, float dt, bool rightClick,
     }
     case EditorTool::PlaceObstacle: {
       if (rightClick) {
-        setObstacleAtTile(tx, ty, shared::ObstacleType::none);
+        setObstacleAtTile(tx, ty, "");
         tile.walkable = true;
       } else {
         setObstacleAtTile(tx, ty, obstacleSubtype_);
@@ -1540,7 +1702,7 @@ void EditorApp::applyToolAt(int tx, int ty, float dt, bool rightClick,
           map_.waterTiles.push_back({ tx, ty });
           // Clear any obstacle first (setObstacleAtTile(none) resets walkable to
           // true internally, so we must force it back to false afterwards).
-          setObstacleAtTile(tx, ty, shared::ObstacleType::none);
+          setObstacleAtTile(tx, ty, "");
           tile.walkable = false;
           bakeWaterBank(tx, ty);
           dirtyTerrain = true;
@@ -1552,7 +1714,7 @@ void EditorApp::applyToolAt(int tx, int ty, float dt, bool rightClick,
       break;
     }
     case EditorTool::Erase: {
-      setObstacleAtTile(tx, ty, shared::ObstacleType::none);
+      setObstacleAtTile(tx, ty, "");
       tile.walkable = true;
       npcSpawns_.erase(std::remove_if(npcSpawns_.begin(), npcSpawns_.end(),
         [tx, ty](const shared::NpcSpawn& n){ return n.tileX == tx && n.tileY == ty; }),
@@ -1635,7 +1797,7 @@ void EditorApp::initNewMap(int w, int h) {
       t.x = tx; t.y = ty; t.walkable = true;
       t.groundColor = kDefaultGroundColor;
       t.type = shared::TileType::grass;
-      t.obstacle = shared::ObstacleType::none;
+      t.obstacle = "";
       t.blocksRanged = false; t.height = 0.0f;
     }
   }
@@ -1665,17 +1827,55 @@ void EditorApp::rebuildObstacles() {
 }
 
 // -----------------------------------------------------------------------
-void EditorApp::setObstacleAtTile(int tx, int ty, shared::ObstacleType obs) {
-  if (ty < 0 || ty >= static_cast<int>(map_.tiles.size())) return;
-  if (tx < 0 || tx >= static_cast<int>(map_.tiles[ty].size())) return;
-  auto& tile = map_.tiles[ty][tx];
-  tile.obstacle = obs;
-  if (obs == shared::ObstacleType::none) {
-    tile.walkable = true; tile.blocksRanged = false;
-  } else if (obs == shared::ObstacleType::fence) {
-    tile.walkable = false; tile.blocksRanged = false;
-  } else {
-    tile.walkable = false; tile.blocksRanged = true;
+void EditorApp::setObstacleAtTile(int tx, int ty, const std::string& obs) {
+  const int W = map_.width, H = map_.height;
+  if (ty < 0 || ty >= H || tx < 0 || tx >= W) return;
+  if (ty >= static_cast<int>(map_.tiles.size())) return;
+  auto& anchor = map_.tiles[ty][tx];
+
+  // Footprint + collision come from the definition. When clearing, use whatever
+  // is currently on the tile so the full NxM block is restored.
+  const std::string lookupId = obs.empty() ? anchor.obstacle : obs;
+  int sx = 1, sy = 1;
+  std::string collision = "full_blocking";
+  if (const auto* def = obstacles_.getDefinition(lookupId)) {
+    sx = std::max(1, def->sizeX);
+    sy = std::max(1, def->sizeY);
+    collision = def->collision;
+  } else if (lookupId == "fence") {
+    collision = "half_blocking";
+  }
+
+  // Resolve walkability for the whole footprint.
+  bool walkable = true, blocksRanged = false;
+  if (!obs.empty() && obs != "none") {
+    if      (collision == "none")          { walkable = true;  blocksRanged = false; }
+    else if (collision == "half_blocking") { walkable = false; blocksRanged = false; }
+    else                                    { walkable = false; blocksRanged = true; }
+  }
+
+  auto isWater = [&](int x, int y) {
+    for (const auto& w : map_.waterTiles) if (w.tileX == x && w.tileY == y) return true;
+    return false;
+  };
+
+  // The obstacle marker lives only on the anchor tile (one rendered instance).
+  anchor.obstacle = obs;
+
+  // Apply walkability across the footprint block (anchor + covered tiles).
+  for (int dy = 0; dy < sy; ++dy) {
+    for (int dx = 0; dx < sx; ++dx) {
+      const int cx = tx + dx, cy = ty + dy;
+      if (cx < 0 || cx >= W || cy < 0 || cy >= H) continue;
+      auto& t = map_.tiles[cy][cx];
+      const bool isAnchor = (cx == tx && cy == ty);
+      // When placing, don't stomp another object's anchor on a covered tile.
+      if (!isAnchor && !obs.empty() && !t.obstacle.empty()) continue;
+      // When clearing, never re-open a water tile.
+      if (obs.empty() && isWater(cx, cy)) continue;
+      t.walkable     = walkable;
+      t.blocksRanged = blocksRanged;
+    }
   }
 }
 
@@ -1863,7 +2063,7 @@ void EditorApp::resizeMap(int newW, int newH) {
         auto& t = newTiles[ty][tx];
         t.x = tx; t.y = ty; t.walkable = true;
         t.groundColor = kDefaultGroundColor;
-        t.type = shared::TileType::grass; t.obstacle = shared::ObstacleType::none;
+        t.type = shared::TileType::grass; t.obstacle = "";
       }
     }
   }
@@ -2047,6 +2247,8 @@ void EditorApp::saveSettings() {
   s.shadowHalfExtent = shadowHalfExtent_;
   s.palette     = palette_;
   s.paletteHues = paletteHues_; s.paletteSats = paletteSats_; s.paletteLums = paletteLums_;
+  // Water settings (shared with the game client).
+  storeWaterSettings(waterUniforms_, s);
   // Outline fields are client-only; write defaults so the file is valid.
   ::saveSettings(s, resolveFromExe("settings.cfg"));
 }
@@ -2171,9 +2373,23 @@ void EditorApp::dbLoadAll() {
       c.dropItemId   = obj.dropItemId;
       c.dropQuantity = obj.dropQuantity;
       c.respawnTicks = obj.respawnTicks;
+      c.defaultClip  = obj.defaultClip;
+      c.looping      = obj.looping;
+      c.rotationX    = obj.rotationX;
+      c.rotationY    = obj.rotationY;
+      c.rotationZ    = obj.rotationZ;
+      c.depletedObjectId = obj.depletedObjectId;
+      c.pickable     = obj.pickable;
       caches.push_back(std::move(c));
     }
     obstacles_.rebuildFromDefinitions(caches);
+
+    // Load NPC models (or placeholder) so editor NPCs render like the game.
+    entities_.setNpcModelResolver([](const std::string& rel) {
+      return resolveFromExe(rel.c_str());
+    });
+    for (const auto& npc : dbNPCs_)
+      entities_.ensureNpcModel(npc.id, npc.modelPath, npc.sizeX, npc.sizeY);
 
   } catch (const std::exception& e) {
     dbStatus_  = std::string("Load failed: ") + e.what();
@@ -2190,6 +2406,42 @@ static bool dbInputText(const char* label, std::string& s, float width = -1.0f) 
   else              ImGui::SetNextItemWidth(-1.0f);
   if (ImGui::InputText(label, buf, sizeof(buf))) { s = buf; return true; }
   return false;
+}
+
+// Open a Windows file dialog, copy the chosen file into <destSubdir> next to the
+// exe (so editor + game share it), and return the relative path
+// ("assets/.../<file>"). Returns empty on cancel. destSubdir must end in '/'.
+static std::string dbBrowseCopyAsset(const wchar_t* filter, const std::string& destSubdir) {
+  OPENFILENAMEW ofn = {};
+  wchar_t buf[MAX_PATH] = {};
+  ofn.lStructSize = sizeof(ofn);
+  ofn.lpstrFilter = filter;
+  ofn.lpstrFile   = buf;  ofn.nMaxFile = MAX_PATH;
+  ofn.Flags       = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
+  if (!GetOpenFileNameW(&ofn)) return {};
+
+  const int sz = WideCharToMultiByte(CP_UTF8, 0, buf, -1, nullptr, 0, nullptr, nullptr);
+  std::string src(static_cast<std::size_t>(sz), '\0');
+  WideCharToMultiByte(CP_UTF8, 0, buf, -1, src.data(), sz, nullptr, nullptr);
+  if (!src.empty() && src.back() == '\0') src.pop_back();
+
+  const std::filesystem::path s(src);
+  const std::string rel = destSubdir + s.filename().string();
+
+  // Copy into the build output (next to the exe) so it loads immediately, AND
+  // into the source asset tree (client-native/assets, two levels above the exe)
+  // so it's committed to git and survives clean rebuilds. Both best-effort.
+  std::error_code ec;
+  const auto buildDest = resolveFromExe(rel.c_str());
+  std::filesystem::create_directories(buildDest.parent_path(), ec);
+  std::filesystem::copy_file(s, buildDest, std::filesystem::copy_options::overwrite_existing, ec);
+
+  std::error_code ec2;
+  const auto srcDest = resolveFromExe(("../../" + rel).c_str());  // build/Release -> client-native
+  std::filesystem::create_directories(srcDest.parent_path(), ec2);
+  std::filesystem::copy_file(s, srcDest, std::filesystem::copy_options::overwrite_existing, ec2);
+
+  return ec ? src : rel;   // fall back to absolute source if the build copy failed
 }
 
 static bool dbCombo(const char* label, std::string& val, std::initializer_list<const char*> opts) {
@@ -2276,10 +2528,25 @@ void EditorApp::dbDrawItemsTab() {
     ImGui::TextColored({1.f,0.55f,0.f,1.f}, "Assets");
     ImGui::TextUnformatted("Sprite Path");
     ImGui::SetNextItemWidth(-1); dbInputText("##item_sprite", d.spritePath);
+    if (ImGui::Button("Browse Sprite...##item_sprite", ImVec2(-1, 0))) {
+      std::string rel = dbBrowseCopyAsset(L"PNG Image (*.png)\0*.png\0All Files\0*.*\0",
+                                          "assets/sprites/items/");
+      if (!rel.empty()) d.spritePath = rel;
+    }
     ImGui::TextUnformatted("Dropped Model");
     ImGui::SetNextItemWidth(-1); dbInputText("##item_dropped", d.modelDropped);
+    if (ImGui::Button("Browse Dropped Model...##item_dropped", ImVec2(-1, 0))) {
+      std::string rel = dbBrowseCopyAsset(L"3D Model (*.glb;*.gltf)\0*.glb;*.gltf\0All Files\0*.*\0",
+                                          "assets/models/");
+      if (!rel.empty()) d.modelDropped = rel;
+    }
     ImGui::TextUnformatted("Equipped Model");
     ImGui::SetNextItemWidth(-1); dbInputText("##item_equipped", d.modelEquipped);
+    if (ImGui::Button("Browse Equipped Model...##item_equipped", ImVec2(-1, 0))) {
+      std::string rel = dbBrowseCopyAsset(L"3D Model (*.glb;*.gltf)\0*.glb;*.gltf\0All Files\0*.*\0",
+                                          "assets/models/");
+      if (!rel.empty()) d.modelEquipped = rel;
+    }
     ImGui::TextUnformatted("Examine Text");
     ImGui::SetNextItemWidth(-1); dbInputText("##item_examine", d.examineText);
 
@@ -2293,14 +2560,14 @@ void EditorApp::dbDrawItemsTab() {
         // Re-select by id
         for (int i = 0; i < (int)dbItems_.size(); ++i)
           if (dbItems_[i].id == d.id) { dbSelItem_ = i; dbEditIsNew_ = false; break; }
-      } else { dbStatus_ = "Save failed — is the server running?"; }
+      } else { dbStatus_ = "Save failed: " + dbClient_.lastError; }
     }
     ImGui::SameLine();
     if (!dbEditIsNew_ && ImGui::Button("Delete##item")) {
       if (dbClient_.deleteItem(d.id)) {
         dbStatus_ = "Deleted.";
         dbSelItem_ = -1; dbLoadAll();
-      } else { dbStatus_ = "Delete failed."; }
+      } else { dbStatus_ = "Delete failed: " + dbClient_.lastError; }
     }
     ImGui::SameLine();
     if (ImGui::Button("Revert##item")) {
@@ -2341,7 +2608,10 @@ void EditorApp::dbDrawNPCsTab() {
 
     // 3D model preview
     if (dbPreviewTex_) {
-      ImGui::Image((ImTextureID)(intptr_t)dbPreviewTex_, ImVec2(128, 128));
+      // Flip V — the FBO texture is bottom-up (OpenGL origin), same as the
+      // main 3D viewport which uses (0,1)-(1,0).
+      ImGui::Image((ImTextureID)(intptr_t)dbPreviewTex_, ImVec2(128, 128),
+                   ImVec2(0, 1), ImVec2(1, 0));
       ImGui::SameLine();
     }
     ImGui::BeginGroup();
@@ -2425,12 +2695,12 @@ void EditorApp::dbDrawNPCsTab() {
         dbStatus_ = "Saved."; dbLoadAll();
         for (int i = 0; i < (int)dbNPCs_.size(); ++i)
           if (dbNPCs_[i].id == d.id) { dbSelNPC_ = i; dbEditIsNew_ = false; break; }
-      } else { dbStatus_ = "Save failed."; }
+      } else { dbStatus_ = "Save failed: " + dbClient_.lastError; }
     }
     ImGui::SameLine();
     if (!dbEditIsNew_ && ImGui::Button("Delete##npc")) {
       if (dbClient_.deleteNPC(d.id)) { dbStatus_ = "Deleted."; dbSelNPC_ = -1; dbLoadAll(); }
-      else dbStatus_ = "Delete failed.";
+      else dbStatus_ = "Delete failed: " + dbClient_.lastError;
     }
     ImGui::SameLine();
     if (ImGui::Button("Revert##npc")) { if (dbSelNPC_ >= 0) dbEditNPC_ = dbNPCs_[dbSelNPC_]; }
@@ -2469,7 +2739,10 @@ void EditorApp::dbDrawObjectsTab() {
 
     // 3D model preview
     if (dbPreviewTex_) {
-      ImGui::Image((ImTextureID)(intptr_t)dbPreviewTex_, ImVec2(128, 128));
+      // Flip V — the FBO texture is bottom-up (OpenGL origin), same as the
+      // main 3D viewport which uses (0,1)-(1,0).
+      ImGui::Image((ImTextureID)(intptr_t)dbPreviewTex_, ImVec2(128, 128),
+                   ImVec2(0, 1), ImVec2(1, 0));
       ImGui::SameLine();
     }
     ImGui::BeginGroup();
@@ -2494,14 +2767,87 @@ void EditorApp::dbDrawObjectsTab() {
       ofn.lpstrFile   = buf; ofn.nMaxFile = MAX_PATH;
       ofn.Flags       = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
       if (GetOpenFileNameW(&ofn)) {
-        wchar_t exeDir[MAX_PATH] = {};
-        GetModuleFileNameW(nullptr, exeDir, MAX_PATH);
-        std::filesystem::path rel = std::filesystem::relative(buf, std::filesystem::path(exeDir).parent_path());
-        d.modelPath = rel.string();
-        dbLoadPreviewModel(d.modelPath);
+        // Convert the chosen path to UTF-8.
+        const int sz = WideCharToMultiByte(CP_UTF8, 0, buf, -1, nullptr, 0, nullptr, nullptr);
+        std::string srcPath(static_cast<std::size_t>(sz), '\0');
+        WideCharToMultiByte(CP_UTF8, 0, buf, -1, srcPath.data(), sz, nullptr, nullptr);
+        if (!srcPath.empty() && srcPath.back() == '\0') srcPath.pop_back();
+
+        // Copy the model into assets/models/<filename> so both the editor and
+        // the game client (same Release dir) can load it, then store the
+        // relative path. Force-reload the preview even if the path is unchanged.
+        const std::filesystem::path src(srcPath);
+        const std::string fname   = src.filename().string();
+        const std::string relPath = "assets/models/" + fname;
+        const auto destPath = resolveFromExe(relPath.c_str());
+        std::error_code ec;
+        std::filesystem::create_directories(destPath.parent_path(), ec);
+        std::filesystem::copy_file(src, destPath,
+            std::filesystem::copy_options::overwrite_existing, ec);
+        // Also copy into the source asset tree (client-native/assets) so it's
+        // committed + survives clean rebuilds.
+        std::error_code ec2;
+        const auto srcDest = resolveFromExe(("../../" + relPath).c_str());
+        std::filesystem::create_directories(srcDest.parent_path(), ec2);
+        std::filesystem::copy_file(src, srcDest,
+            std::filesystem::copy_options::overwrite_existing, ec2);
+        d.modelPath = ec ? srcPath : relPath;
+        dbLoadPreviewModel(d.modelPath, /*forceReload=*/true);
       }
     }
     if (d.modelPath != dbPreviewLoadedPath_) dbLoadPreviewModel(d.modelPath);
+    if (ImGui::Button("Reload Model##obj_model", ImVec2(-1, 0)))
+      dbLoadPreviewModel(d.modelPath, /*forceReload=*/true);
+
+    // Pickable — hover outline + left-click. Default true; set false for pure
+    // decorations (e.g. a tree stump used only as a depleted variant).
+    ImGui::Spacing();
+    ImGui::Checkbox("Pickable##obj", &d.pickable);
+
+    // Depleted object — another object shown in-game while this resource node is
+    // depleted (between harvest and respawn). Empty = render nothing. Picking,
+    // outline and examine then follow that object (e.g. a non-pickable stump).
+    ImGui::TextUnformatted("Depleted Object (optional)");
+    const char* depPreview = d.depletedObjectId.empty() ? "(none)" : d.depletedObjectId.c_str();
+    ImGui::SetNextItemWidth(-1);
+    if (ImGui::BeginCombo("##obj_depleted_obj", depPreview)) {
+      if (ImGui::Selectable("(none)", d.depletedObjectId.empty()))
+        d.depletedObjectId.clear();
+      for (const auto& o : dbObjects_) {
+        if (o.id == d.id) continue;   // can't reference itself
+        const bool sel = (o.id == d.depletedObjectId);
+        if (ImGui::Selectable(o.id.c_str(), sel)) d.depletedObjectId = o.id;
+      }
+      ImGui::EndCombo();
+    }
+
+    // ---- Animation section (only shown when the loaded model has clips) ----
+    if (dbPreviewHasAnim_ && !dbPreviewClips_.empty()) {
+      ImGui::Separator();
+      ImGui::TextColored({0.4f, 0.8f, 1.0f, 1.0f}, "Animation");
+      // Clip selector
+      const char* currentClip = d.defaultClip.empty() ? "(first clip)" : d.defaultClip.c_str();
+      if (ImGui::BeginCombo("Clip##obj_anim", currentClip)) {
+        if (ImGui::Selectable("(first clip)", d.defaultClip.empty())) {
+          d.defaultClip = "";
+          dbPreviewSkinned_.setClip("");
+        }
+        for (const auto& clip : dbPreviewClips_) {
+          bool sel = (d.defaultClip == clip);
+          if (ImGui::Selectable(clip.c_str(), sel)) {
+            d.defaultClip = clip;
+            dbPreviewSkinned_.setClip(clip);
+          }
+          if (sel) ImGui::SetItemDefaultFocus();
+        }
+        ImGui::EndCombo();
+      }
+      ImGui::Checkbox("Loop##obj_anim", &d.looping);
+    }
+
+    // Orientation is authored in the model file (true scale, base at Y=0,
+    // facing −Z). The preview shows it exactly as it renders in-world.
+
     ImGui::TextUnformatted("Examine Text");
     ImGui::SetNextItemWidth(-1); dbInputText("##obj_examine", d.examineText);
 
@@ -2557,12 +2903,12 @@ void EditorApp::dbDrawObjectsTab() {
         dbStatus_ = "Saved."; dbLoadAll();
         for (int i = 0; i < (int)dbObjects_.size(); ++i)
           if (dbObjects_[i].id == d.id) { dbSelObject_ = i; dbEditIsNew_ = false; break; }
-      } else { dbStatus_ = "Save failed."; }
+      } else { dbStatus_ = "Save failed: " + dbClient_.lastError; }
     }
     ImGui::SameLine();
     if (!dbEditIsNew_ && ImGui::Button("Delete##obj")) {
       if (dbClient_.deleteObject(d.id)) { dbStatus_ = "Deleted."; dbSelObject_ = -1; dbLoadAll(); }
-      else dbStatus_ = "Delete failed.";
+      else dbStatus_ = "Delete failed: " + dbClient_.lastError;
     }
     ImGui::SameLine();
     if (ImGui::Button("Revert##obj")) { if (dbSelObject_ >= 0) dbEditObject_ = dbObjects_[dbSelObject_]; }
@@ -2618,12 +2964,12 @@ void EditorApp::dbDrawActionsTab() {
         dbStatus_ = "Saved."; dbLoadAll();
         for (int i = 0; i < (int)dbActions_.size(); ++i)
           if (dbActions_[i].id == d.id) { dbSelAction_ = i; dbEditIsNew_ = false; break; }
-      } else { dbStatus_ = "Save failed."; }
+      } else { dbStatus_ = "Save failed: " + dbClient_.lastError; }
     }
     ImGui::SameLine();
     if (!dbEditIsNew_ && ImGui::Button("Delete##act")) {
       if (dbClient_.deleteAction(d.id)) { dbStatus_ = "Deleted."; dbSelAction_ = -1; dbLoadAll(); }
-      else dbStatus_ = "Delete failed.";
+      else dbStatus_ = "Delete failed: " + dbClient_.lastError;
     }
     ImGui::SameLine();
     if (ImGui::Button("Revert##act")) { if (dbSelAction_ >= 0) dbEditAction_ = dbActions_[dbSelAction_]; }
