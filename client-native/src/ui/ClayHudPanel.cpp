@@ -225,7 +225,9 @@ static void buildInventoryTab(const shared::PlayerState* player,
                             .childAlignment = { .x = CLAY_ALIGN_X_CENTER,
                                                 .y = CLAY_ALIGN_Y_CENTER },
                         },
-                        .backgroundColor = { 30, 16, 4, 160 },
+                        // No background — the drag ghost is just the item sprite
+                        // with its own transparency.
+                        .backgroundColor = { 0, 0, 0, 0 },
                     }) {
                         if (sprites) {
                             GLuint tex = sprites->get(dragItem->itemId);
@@ -262,9 +264,10 @@ static void buildInventoryTab(const shared::PlayerState* player,
                     }
                     bool filled   = (item != nullptr);
                     bool hovered  = (s_hovInvSlot == idx);
-                    bool dragging = (s_dragSlot == idx);  // source slot while dragging
 
-                    static constexpr Clay_Color kSlotDragging = { 12, 6, 1, 120 };
+                    // Filled slots show only the item's (transparent) sprite — no
+                    // background or border. Empty slots keep the subtle grid look.
+                    static constexpr Clay_Color kTransparent = { 0, 0, 0, 0 };
 
                     CLAY(CLAY_IDI("InvSlot", idx), {
                         .layout = {
@@ -274,11 +277,10 @@ static void buildInventoryTab(const shared::PlayerState* player,
                                                  .y = CLAY_ALIGN_Y_CENTER },
                             .layoutDirection = CLAY_TOP_TO_BOTTOM,
                         },
-                        .backgroundColor = dragging ? kSlotDragging :
-                                           filled   ? kSlotFilled   : kSlotEmpty,
+                        .backgroundColor = filled ? kTransparent : kSlotEmpty,
                         .border = {
                             .color = hovered ? kSlotHover : kSlotBorder,
-                            .width = CLAY_BORDER_ALL(1),
+                            .width = CLAY_BORDER_ALL(static_cast<uint16_t>(filled ? 0 : 1)),
                         }
                     }) {
                         if (filled) {
