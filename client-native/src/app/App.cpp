@@ -2754,6 +2754,20 @@ void App::processNetworkMessages() {
       npcs_         = std::move(st.npcs);
       droppedItems_ = std::move(st.droppedItems);
       allPlayers_   = st.players;
+
+      // Depleted resource nodes (trees + rocks): when the set changes, rebuild
+      // obstacle instances so those tiles swap to their depleted-model variant
+      // (and revert on respawn). Server interest-filters these to the view area.
+      {
+        std::unordered_set<std::string> nd;
+        nd.reserve(st.depletedTrees.size() + st.depletedRocks.size());
+        for (const auto& [k, v] : st.depletedTrees) { (void)v; nd.insert(k); }
+        for (const auto& [k, v] : st.depletedRocks) { (void)v; nd.insert(k); }
+        if (nd != depletedTiles_) {
+          depletedTiles_ = std::move(nd);
+          obstacles_.rebuildFromMap(map_, depletedTiles_);
+        }
+      }
       // Snapshot rotation for NPC interpolation: previous becomes current,
       // current becomes the just-received state.
       prevNpcs_ = currNpcs_;

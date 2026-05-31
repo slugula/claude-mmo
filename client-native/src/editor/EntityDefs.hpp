@@ -34,6 +34,7 @@ struct ObjectDef {
   float       rotationX  = 0.f;       // degrees, snapped to 90° increments in the editor
   float       rotationY  = 0.f;
   float       rotationZ  = 0.f;
+  std::string depletedModel;          // mesh shown while the node is depleted (empty = render nothing)
 };
 
 struct DropEntry {

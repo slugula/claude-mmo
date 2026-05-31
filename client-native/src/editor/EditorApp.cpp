@@ -2378,6 +2378,7 @@ void EditorApp::dbLoadAll() {
       c.rotationX    = obj.rotationX;
       c.rotationY    = obj.rotationY;
       c.rotationZ    = obj.rotationZ;
+      c.depletedModel = obj.depletedModel;
       caches.push_back(std::move(c));
     }
     obstacles_.rebuildFromDefinitions(caches);
@@ -2779,6 +2780,36 @@ void EditorApp::dbDrawObjectsTab() {
     if (d.modelPath != dbPreviewLoadedPath_) dbLoadPreviewModel(d.modelPath);
     if (ImGui::Button("Reload Model##obj_model", ImVec2(-1, 0)))
       dbLoadPreviewModel(d.modelPath, /*forceReload=*/true);
+
+    // Depleted model — shown in-game while a resource node is depleted
+    // (between harvest and respawn). Empty = render nothing, as before.
+    ImGui::Spacing();
+    ImGui::TextUnformatted("Depleted Model Path (optional)");
+    ImGui::SetNextItemWidth(-1); dbInputText("##obj_depleted", d.depletedModel);
+    if (ImGui::Button("Browse Depleted Model...##obj_depleted", ImVec2(-1, 0))) {
+      OPENFILENAMEW ofn = {};
+      wchar_t buf[MAX_PATH] = {};
+      ofn.lStructSize = sizeof(ofn);
+      ofn.lpstrFilter = L"3D Model (*.glb;*.gltf)\0*.glb;*.gltf\0All Files\0*.*\0";
+      ofn.lpstrFile   = buf; ofn.nMaxFile = MAX_PATH;
+      ofn.Flags       = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
+      if (GetOpenFileNameW(&ofn)) {
+        const int sz = WideCharToMultiByte(CP_UTF8, 0, buf, -1, nullptr, 0, nullptr, nullptr);
+        std::string srcPath(static_cast<std::size_t>(sz), '\0');
+        WideCharToMultiByte(CP_UTF8, 0, buf, -1, srcPath.data(), sz, nullptr, nullptr);
+        if (!srcPath.empty() && srcPath.back() == '\0') srcPath.pop_back();
+
+        const std::filesystem::path src(srcPath);
+        const std::string fname   = src.filename().string();
+        const std::string relPath = "assets/models/" + fname;
+        const auto destPath = resolveFromExe(relPath.c_str());
+        std::error_code ec;
+        std::filesystem::create_directories(destPath.parent_path(), ec);
+        std::filesystem::copy_file(src, destPath,
+            std::filesystem::copy_options::overwrite_existing, ec);
+        d.depletedModel = ec ? srcPath : relPath;
+      }
+    }
 
     // ---- Animation section (only shown when the loaded model has clips) ----
     if (dbPreviewHasAnim_ && !dbPreviewClips_.empty()) {

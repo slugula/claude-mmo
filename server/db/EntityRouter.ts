@@ -100,7 +100,8 @@ entityRouter.get('/objects', async (_req, res) => {
         COALESCE(looping,        TRUE) AS looping,
         COALESCE(rotation_x,     0)  AS rotation_x,
         COALESCE(rotation_y,     0)  AS rotation_y,
-        COALESCE(rotation_z,     0)  AS rotation_z
+        COALESCE(rotation_z,     0)  AS rotation_z,
+        COALESCE(depleted_model, '') AS depleted_model
       FROM object_definitions ORDER BY id`);
     ok(res, r.rows);
   } catch (e) { err(res, e); }
@@ -121,12 +122,12 @@ entityRouter.post('/objects', async (req, res) => {
       INSERT INTO object_definitions
         (id,name,model_path,object_type,collision,size_x,size_y,action_id,required_skill,
          required_level,drop_item_id,drop_quantity,respawn_ticks,craft_action_id,examine_text,
-         default_clip,looping,rotation_x,rotation_y,rotation_z)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`,
+         default_clip,looping,rotation_x,rotation_y,rotation_z,depleted_model)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)`,
       [b.id,b.name,nullIfEmpty(b.model_path),b.object_type??'Decoration',b.collision??'full_blocking',
        b.size_x??1,b.size_y??1,nullIfEmpty(b.action_id),nullIfEmpty(b.required_skill),b.required_level??null,
        nullIfEmpty(b.drop_item_id),b.drop_quantity??1,b.respawn_ticks??25,nullIfEmpty(b.craft_action_id),nullIfEmpty(b.examine_text),
-       nullIfEmpty(b.default_clip),b.looping??true,b.rotation_x??0,b.rotation_y??0,b.rotation_z??0]);
+       nullIfEmpty(b.default_clip),b.looping??true,b.rotation_x??0,b.rotation_y??0,b.rotation_z??0,nullIfEmpty(b.depleted_model)]);
     ok(res, { ok: true });
   } catch (e) { err(res, e); }
 });
@@ -139,12 +140,12 @@ entityRouter.put('/objects/:id', async (req, res) => {
         name=$1,model_path=$2,object_type=$3,collision=$4,size_x=$5,size_y=$6,
         action_id=$7,required_skill=$8,required_level=$9,drop_item_id=$10,
         drop_quantity=$11,respawn_ticks=$12,craft_action_id=$13,examine_text=$14,
-        default_clip=$15,looping=$16,rotation_x=$17,rotation_y=$18,rotation_z=$19
-      WHERE id=$20`,
+        default_clip=$15,looping=$16,rotation_x=$17,rotation_y=$18,rotation_z=$19,depleted_model=$20
+      WHERE id=$21`,
       [b.name,nullIfEmpty(b.model_path),b.object_type,b.collision,b.size_x??1,b.size_y??1,
        nullIfEmpty(b.action_id),nullIfEmpty(b.required_skill),b.required_level??null,nullIfEmpty(b.drop_item_id),
        b.drop_quantity??1,b.respawn_ticks??25,nullIfEmpty(b.craft_action_id),nullIfEmpty(b.examine_text),
-       nullIfEmpty(b.default_clip),b.looping??true,b.rotation_x??0,b.rotation_y??0,b.rotation_z??0,
+       nullIfEmpty(b.default_clip),b.looping??true,b.rotation_x??0,b.rotation_y??0,b.rotation_z??0,nullIfEmpty(b.depleted_model),
        req.params.id]);
     ok(res, { ok: true });
   } catch (e) { err(res, e); }

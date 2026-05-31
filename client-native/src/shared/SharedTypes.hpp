@@ -177,6 +177,10 @@ struct StateMessage {
   // Per-player system messages (keyed by playerId). Contains feedback like
   // "Shopkeeper: Welcome..." or "I can't reach that." etc.
   std::unordered_map<std::string, std::vector<std::string>> messages;
+  // Resource nodes the server reports as depleted (key="x-y" → respawnAtTick).
+  // The client swaps these tiles to the object's depleted-model variant.
+  std::unordered_map<std::string, int> depletedTrees;
+  std::unordered_map<std::string, int> depletedRocks;
 };
 
 // Client -> server: actions queued by the player.

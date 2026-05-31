@@ -27,6 +27,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <unordered_set>
 
 namespace app {
 
@@ -137,6 +138,10 @@ private:
   std::unordered_map<std::string, RemoteAnim>          remoteAnims_;
   std::vector<shared::NPCState>            npcs_;
   std::vector<shared::DroppedItemState>    droppedItems_;
+  // "x-y" keys of depleted resource nodes (from the server patch). When this
+  // changes, the obstacle instances are rebuilt so depleted tiles swap to their
+  // depleted-model variant. unordered_set is included via <unordered_map> deps.
+  std::unordered_set<std::string>          depletedTiles_;
   // Per-id previous + current NPC snapshots for Phase 10 interpolation.
   // Rebuilt every state tick; rendered with a lerp in renderFrame.
   std::unordered_map<std::string, shared::NPCState> prevNpcs_;

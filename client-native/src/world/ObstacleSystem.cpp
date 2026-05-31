@@ -56,12 +56,16 @@ void ObstacleSystem::loadCustomModels() {
   // models (e.g. fishing_spot) are auto-detected and routed to the skinned path.
   for (const auto& [id, def] : defs_) {
     models_.ensure(id, def.modelPath, def.sizeX, def.sizeY);
+    // Depleted variant (optional) — keyed by "<id>#depleted".
+    if (!def.depletedModel.empty())
+      models_.ensure(id + "#depleted", def.depletedModel, def.sizeX, def.sizeY);
   }
 }
 
 // ---- Instances ------------------------------------------------------------
 
-void ObstacleSystem::rebuildFromMap(const shared::WorldMapFile& map) {
+void ObstacleSystem::rebuildFromMap(const shared::WorldMapFile& map,
+                                   const std::unordered_set<std::string>& depletedKeys) {
   customInstances_.clear();
 
   const int W = map.width, H = map.height;
@@ -72,10 +76,21 @@ void ObstacleSystem::rebuildFromMap(const shared::WorldMapFile& map) {
     for (int tx = 0; tx < W; ++tx) {
       const auto& tile = map.tiles[ty][tx];
       if (tile.obstacle.empty() || tile.obstacle == "none") continue;
-      if (!models_.has(tile.obstacle)) continue;
+
+      // Depleted resource nodes render their "#depleted" variant (or nothing
+      // if the definition has no depleted model).
+      std::string modelId = tile.obstacle;
+      if (!depletedKeys.empty() &&
+          depletedKeys.count(std::to_string(tx) + "-" + std::to_string(ty))) {
+        const std::string depId = tile.obstacle + "#depleted";
+        if (!models_.has(depId)) continue;   // no depleted mesh → render nothing
+        modelId = depId;
+      } else if (!models_.has(tile.obstacle)) {
+        continue;
+      }
 
       const float y = tileCenterY(vh, W, H, tx, ty);
-      customInstances_[tile.obstacle].push_back(
+      customInstances_[modelId].push_back(
           ModelLibrary::Instance{ static_cast<float>(tx), y,
                                   static_cast<float>(ty), 0.0f });  // orientation in model
     }

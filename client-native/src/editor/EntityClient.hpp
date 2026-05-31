@@ -50,7 +50,8 @@ template<> struct glz::meta<editor::ObjectDef> {
     "looping",         &T::looping,
     "rotation_x",      &T::rotationX,
     "rotation_y",      &T::rotationY,
-    "rotation_z",      &T::rotationZ);
+    "rotation_z",      &T::rotationZ,
+    "depleted_model",  &T::depletedModel);
 };
 
 template<> struct glz::meta<editor::NpcDef> {

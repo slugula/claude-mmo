@@ -45,7 +45,8 @@ CREATE TABLE IF NOT EXISTS object_definitions (
   looping         BOOLEAN NOT NULL DEFAULT TRUE,
   rotation_x      FLOAT   NOT NULL DEFAULT 0, -- degrees, applied as pre-rotation in world/preview
   rotation_y      FLOAT   NOT NULL DEFAULT 0,
-  rotation_z      FLOAT   NOT NULL DEFAULT 0
+  rotation_z      FLOAT   NOT NULL DEFAULT 0,
+  depleted_model  TEXT                        -- mesh shown while a resource node is depleted (empty = render nothing)
 );
 
 CREATE TABLE IF NOT EXISTS npc_definitions (
@@ -181,3 +182,4 @@ ALTER TABLE object_definitions ADD COLUMN IF NOT EXISTS looping      BOOLEAN NOT
 ALTER TABLE object_definitions ADD COLUMN IF NOT EXISTS rotation_x   FLOAT   NOT NULL DEFAULT 0;
 ALTER TABLE object_definitions ADD COLUMN IF NOT EXISTS rotation_y   FLOAT   NOT NULL DEFAULT 0;
 ALTER TABLE object_definitions ADD COLUMN IF NOT EXISTS rotation_z   FLOAT   NOT NULL DEFAULT 0;
+ALTER TABLE object_definitions ADD COLUMN IF NOT EXISTS depleted_model TEXT;

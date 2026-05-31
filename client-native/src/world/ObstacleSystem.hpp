@@ -11,6 +11,7 @@
 #include <functional>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace world {
@@ -32,7 +33,11 @@ public:
 
   // Gather per-id instance lists from the map tiles (one instance per placed
   // object, at its anchor tile). Cheap; runs each time the map changes.
-  void rebuildFromMap(const shared::WorldMapFile& map);
+  // `depletedKeys` holds "x-y" keys of resource nodes the server reports as
+  // depleted; those tiles render the object's depleted-model variant (id +
+  // "#depleted") instead, or nothing if it has none.
+  void rebuildFromMap(const shared::WorldMapFile& map,
+                      const std::unordered_set<std::string>& depletedKeys = {});
 
   // Database-authored object definition (collision, footprint, model, action…).
   struct ObjectDefCache {
@@ -51,6 +56,7 @@ public:
     float       rotationX     = 0.f;
     float       rotationY     = 0.f;
     float       rotationZ     = 0.f;
+    std::string depletedModel;
   };
 
   // Seed built-in defaults, overlay server definitions, then (re)load all
