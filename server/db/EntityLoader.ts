@@ -61,13 +61,35 @@ function rowToNPCDef(row: Record<string, unknown>, drops: DropEntry[]): NPCDefin
   };
 }
 
+// Raw DB rows for the four definition tables, cached at startup. They carry the
+// client-only rendering fields (sprite_path, model_*, depleted_object_id,
+// pickable, …) that the gameplay registries drop, and are relayed verbatim to
+// the client in the `init` message so shared builds get the authored content
+// without needing localhost DB access.
+let clientDefs: {
+  items:   Record<string, unknown>[];
+  objects: Record<string, unknown>[];
+  npcs:    Record<string, unknown>[];
+  actions: Record<string, unknown>[];
+} = { items: [], objects: [], npcs: [], actions: [] };
+
+export function getClientDefs() { return clientDefs; }
+
 export async function loadEntitiesFromDB(): Promise<void> {
   try {
-    const [itemRows, npcRows, dropRows] = await Promise.all([
-      pool.query('SELECT * FROM item_definitions ORDER BY id'),
-      pool.query('SELECT * FROM npc_definitions  ORDER BY id'),
+    const [itemRows, npcRows, dropRows, objectRows, actionRows] = await Promise.all([
+      pool.query('SELECT * FROM item_definitions   ORDER BY id'),
+      pool.query('SELECT * FROM npc_definitions    ORDER BY id'),
       pool.query('SELECT * FROM npc_drops'),
+      pool.query('SELECT * FROM object_definitions ORDER BY id'),
+      pool.query('SELECT * FROM action_definitions ORDER BY id'),
     ]);
+    clientDefs = {
+      items:   itemRows.rows,
+      objects: objectRows.rows,
+      npcs:    npcRows.rows,
+      actions: actionRows.rows,
+    };
     if (itemRows.rows.length > 0) {
       reloadItems(itemRows.rows.map(rowToItemDef));
       console.log(`[EntityLoader] loaded ${itemRows.rows.length} items from DB`);
