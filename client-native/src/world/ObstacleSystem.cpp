@@ -164,8 +164,14 @@ bool ObstacleSystem::renderGeometryAt(render::Shader& maskShader,
   glDepthFunc(GL_LEQUAL);
   glDepthMask(GL_FALSE);
   if (models_.isAnimated(id)) {
+    // SkinnedMesh::render() issues raw glUniform* against the ACTIVE program, so
+    // the skinned mask program must be bound first (the host leaves the static
+    // mask program active). Restore it afterwards for subsequent NPC/item draws.
+    maskSkinnedShader.use();
     models_.drawAnimatedAt(maskSkinnedShader, id, m);
+    maskShader.use();
   } else {
+    maskShader.use();
     models_.drawStaticInstanced(maskShader, id,
         { ModelLibrary::Instance{ static_cast<float>(tileX), cy,
                                   static_cast<float>(tileY), 0.0f } });
