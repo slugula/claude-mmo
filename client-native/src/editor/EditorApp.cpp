@@ -2427,11 +2427,21 @@ static std::string dbBrowseCopyAsset(const wchar_t* filter, const std::string& d
 
   const std::filesystem::path s(src);
   const std::string rel = destSubdir + s.filename().string();
-  const auto dest = resolveFromExe(rel.c_str());
+
+  // Copy into the build output (next to the exe) so it loads immediately, AND
+  // into the source asset tree (client-native/assets, two levels above the exe)
+  // so it's committed to git and survives clean rebuilds. Both best-effort.
   std::error_code ec;
-  std::filesystem::create_directories(dest.parent_path(), ec);
-  std::filesystem::copy_file(s, dest, std::filesystem::copy_options::overwrite_existing, ec);
-  return ec ? src : rel;   // fall back to absolute source if the copy failed
+  const auto buildDest = resolveFromExe(rel.c_str());
+  std::filesystem::create_directories(buildDest.parent_path(), ec);
+  std::filesystem::copy_file(s, buildDest, std::filesystem::copy_options::overwrite_existing, ec);
+
+  std::error_code ec2;
+  const auto srcDest = resolveFromExe(("../../" + rel).c_str());  // build/Release -> client-native
+  std::filesystem::create_directories(srcDest.parent_path(), ec2);
+  std::filesystem::copy_file(s, srcDest, std::filesystem::copy_options::overwrite_existing, ec2);
+
+  return ec ? src : rel;   // fall back to absolute source if the build copy failed
 }
 
 static bool dbCombo(const char* label, std::string& val, std::initializer_list<const char*> opts) {
@@ -2774,6 +2784,13 @@ void EditorApp::dbDrawObjectsTab() {
         std::filesystem::create_directories(destPath.parent_path(), ec);
         std::filesystem::copy_file(src, destPath,
             std::filesystem::copy_options::overwrite_existing, ec);
+        // Also copy into the source asset tree (client-native/assets) so it's
+        // committed + survives clean rebuilds.
+        std::error_code ec2;
+        const auto srcDest = resolveFromExe(("../../" + relPath).c_str());
+        std::filesystem::create_directories(srcDest.parent_path(), ec2);
+        std::filesystem::copy_file(src, srcDest,
+            std::filesystem::copy_options::overwrite_existing, ec2);
         d.modelPath = ec ? srcPath : relPath;
         dbLoadPreviewModel(d.modelPath, /*forceReload=*/true);
       }
