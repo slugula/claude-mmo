@@ -51,15 +51,17 @@ static constexpr Clay_Color kGrey         = { 160, 160, 160, 180 };
 static constexpr Clay_Color kDivider      = {  70,  50,  20, 200 };
 
 // ── Skills meta ───────────────────────────────────────────────────────────────
-static constexpr std::array<const char*, 5> kSkillOrder = {
-    "hitpoints", "defence", "warrior", "gunner", "woodcutting",
+static constexpr std::array<const char*, 7> kSkillOrder = {
+    "hitpoints", "defence", "warrior", "gunner", "woodcutting", "mining", "fishing",
 };
-static constexpr std::array<Clay_Color, 5> kSkillColors = {{
-    { 220,  40,  40, 255 },  // hitpoints  — red
-    {  60, 120, 220, 255 },  // defence    — blue
-    { 200, 136,  44, 255 },  // warrior    — orange
-    {   0, 207, 255, 255 },  // gunner     — cyan
+static constexpr std::array<Clay_Color, 7> kSkillColors = {{
+    { 220,  40,  40, 255 },  // hitpoints   — red
+    {  60, 120, 220, 255 },  // defence     — blue
+    { 200, 136,  44, 255 },  // warrior     — orange
+    {   0, 207, 255, 255 },  // gunner      — cyan
     {  80, 144,  64, 255 },  // woodcutting — green
+    { 150, 150, 160, 255 },  // mining      — grey
+    {  90, 160, 220, 255 },  // fishing     — light blue
 }};
 
 // ── Equipment grid ────────────────────────────────────────────────────────────
@@ -447,7 +449,7 @@ static void buildSkillsTab(const shared::PlayerState* player) {
         }) {
             char totalBuf[48];
             std::snprintf(totalBuf, sizeof(totalBuf), "Total level: %d / %d",
-                          totalLevel, 99 * 5);
+                          totalLevel, 99 * static_cast<int>(kSkillOrder.size()));
             CLAY_TEXT(clayStr(totalBuf), CLAY_TEXT_CONFIG({
                 .textColor = kOrange,
                 .fontSize  = 0,

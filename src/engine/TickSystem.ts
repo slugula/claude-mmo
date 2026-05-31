@@ -5,6 +5,8 @@ import { processCombat } from '../systems/CombatSystem';
 import { processInteractions } from '../systems/InteractSystem';
 import { processItems } from '../systems/ItemSystem';
 import { processWoodcutting } from '../systems/WoodcuttingSystem';
+import { processMining } from '../systems/MiningSystem';
+import { processFishing } from '../systems/FishingSystem';
 
 export function processTick(
   prev: GameState,
@@ -60,26 +62,51 @@ export function processTick(
     if (nextMessages[pid]) nextMessages[pid].push(...msgs);
     else nextMessages[pid] = [...msgs];
   }
-  const wcPlayers = wc.players;
+
+  // 6. Mining (global step — rock state shared across all players)
+  const mine = processMining(
+    wc.players,
+    playerActions,
+    wc.world,
+    prev.depletedRocks,
+    prev.rockHealth,
+    tick,
+  );
+  for (const [pid, msgs] of Object.entries(mine.messages)) {
+    if (nextMessages[pid]) nextMessages[pid].push(...msgs);
+    else nextMessages[pid] = [...msgs];
+  }
+
+  // 7. Fishing (global step — inexhaustible spots, no shared depletion)
+  const fish = processFishing(mine.players, playerActions, mine.world, tick);
+  for (const [pid, msgs] of Object.entries(fish.messages)) {
+    if (nextMessages[pid]) nextMessages[pid].push(...msgs);
+    else nextMessages[pid] = [...msgs];
+  }
+
+  const finalPlayers = fish.players;
+  const finalWorld = mine.world;
 
   // Expire dropped items older than 60 seconds (300 ticks at 200ms). Permanent items never despawn.
   const ITEM_DESPAWN_TICKS = 300;
   sharedDropped = sharedDropped.filter(item => item.permanent || tick - item.droppedAtTick < ITEM_DESPAWN_TICKS);
 
   // NPC AI runs once (shared world)
-  const afterAI = processNPCs(sharedNpcs, wc.world);
-  const respawned = processRespawns(sharedRespawns, afterAI, wc.world, tick);
+  const afterAI = processNPCs(sharedNpcs, finalWorld);
+  const respawned = processRespawns(sharedRespawns, afterAI, finalWorld, tick);
 
   return {
     ...prev,
     tick,
-    world: wc.world,
-    players: wcPlayers,
+    world: finalWorld,
+    players: finalPlayers,
     npcs: respawned.npcs,
     droppedItems: sharedDropped,
     pendingRespawns: respawned.pending,
     messages: nextMessages,
     depletedTrees: wc.depletedTrees,
     treeHealth: wc.treeHealth,
+    depletedRocks: mine.depletedRocks,
+    rockHealth: mine.rockHealth,
   };
 }

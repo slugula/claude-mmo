@@ -360,6 +360,7 @@ bool App::init() {
                 std::string verb;
                 if      (od->actionId == "chop") verb = "Chop down";
                 else if (od->actionId == "mine") verb = "Mine";
+                else if (od->actionId == "fish") verb = "Fish";
                 else if (od->actionId == "bank") verb = "Bank";
                 else {  // custom action — show its display name (dispatch is a no-op for now)
                   verb = od->actionId;
@@ -374,6 +375,9 @@ bool App::init() {
             } else if (obs == "rock") {
               cm.entries.push_back({ "Mine",    "Rock" });
               cm.entries.push_back({ "Examine", "Rock" });
+            } else if (obs == "fishing_spot") {
+              cm.entries.push_back({ "Fish",    "Fishing spot" });
+              cm.entries.push_back({ "Examine", "Fishing spot" });
             } else if (obs == "chest") {
               cm.entries.push_back({ "Bank",    "Chest" });
               cm.entries.push_back({ "Examine", "Chest" });
@@ -1480,6 +1484,7 @@ void App::renderFrame() {
             const auto obs = map_.tiles[ey][ex].obstacle;
             if      (obs == "tree")  { ctxVerb = "Chop"; ctxSubject = "Tree"; }
             else if (obs == "rock")  { ctxVerb = "Mine"; ctxSubject = "Rock"; }
+            else if (obs == "fishing_spot") { ctxVerb = "Fish"; ctxSubject = "Fishing spot"; }
             else if (obs == "chest") { ctxVerb = "Bank"; ctxSubject = "Chest"; }
           }
           break;
@@ -1718,6 +1723,10 @@ void App::renderFrame() {
               network_.sendMineRock(tx, ty);
               oneShotClip_.clear();
               dispatched = true; clickFeedbackColor_ = 1;
+            } else if (obs == "fishing_spot") {
+              network_.sendFish(tx, ty);
+              oneShotClip_.clear();
+              dispatched = true; clickFeedbackColor_ = 1;
             } else if (obs == "chest") {
               network_.sendOpenBank();
               bankOpen_ = true;
@@ -1831,6 +1840,8 @@ void App::renderFrame() {
         network_.sendChopTree(ctxMenuTileX_, ctxMenuTileY_); oneShotClip_.clear();
       } else if (e.verb == "Mine") {
         network_.sendMineRock(ctxMenuTileX_, ctxMenuTileY_); oneShotClip_.clear();
+      } else if (e.verb == "Fish") {
+        network_.sendFish(ctxMenuTileX_, ctxMenuTileY_); oneShotClip_.clear();
       } else if (e.verb == "Bank") {
         network_.sendOpenBank(); bankOpen_ = true;
       } else if (e.verb == "Attack") {
@@ -2063,6 +2074,7 @@ void App::renderFrame() {
         const auto obs = map_.tiles[ty][tx].obstacle;
         if      (obs == "tree")  tooltipName = "Tree";
         else if (obs == "rock")  tooltipName = "Rock";
+        else if (obs == "fishing_spot") tooltipName = "Fishing spot";
         else if (obs == "chest") tooltipName = "Chest";
       }
       if (!tooltipName) {
@@ -2349,6 +2361,13 @@ void App::drawWorldContextMenu() {
     }
     if (ImGui::Selectable("Examine  Rock"))
       chatLog_.appendSystem("A rocky outcrop.");
+  } else if (obstacle == "fishing_spot") {
+    if (ImGui::Selectable("Fish  Fishing spot")) {
+      network_.sendFish(ctxMenuTileX_, ctxMenuTileY_);
+      oneShotClip_.clear();
+    }
+    if (ImGui::Selectable("Examine  Fishing spot"))
+      chatLog_.appendSystem("You could catch some fish here.");
   } else if (obstacle == "chest") {
     if (ImGui::Selectable("Bank  Chest")) {
       network_.sendOpenBank();

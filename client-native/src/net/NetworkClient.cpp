@@ -258,6 +258,14 @@ void NetworkClient::sendMineRock(int tileX, int tileY) {
   sendActionRaw(buf);
 }
 
+void NetworkClient::sendFish(int tileX, int tileY) {
+  char buf[96];
+  std::snprintf(buf, sizeof(buf),
+                "{\"type\":\"FISH\",\"tileX\":%d,\"tileY\":%d}",
+                tileX, tileY);
+  sendActionRaw(buf);
+}
+
 void NetworkClient::sendAttackNpc(const std::string& npcId) {
   sendActionRaw("{\"type\":\"ATTACK_NPC\",\"npcId\":\"" + jsonEscape(npcId) + "\"}");
 }

@@ -16,16 +16,16 @@ export type SkinColor  = 'fair' | 'tan' | 'olive' | 'brown';
 
 export type SkillId =
   | 'warrior' | 'defence' | 'hitpoints'
-  | 'woodcutting' | 'mining' | 'gunner';
+  | 'woodcutting' | 'mining' | 'fishing' | 'gunner';
 
 export const ALL_SKILLS: SkillId[] = [
   'warrior', 'defence', 'hitpoints',
-  'woodcutting', 'mining', 'gunner'
+  'woodcutting', 'mining', 'fishing', 'gunner'
 ];
 
 // Only skills with active gameplay systems — shown in the Skills panel
 export const VISIBLE_SKILLS: SkillId[] = [
-  'hitpoints', 'defence', 'warrior', 'gunner', 'woodcutting'
+  'hitpoints', 'defence', 'warrior', 'gunner', 'woodcutting', 'mining', 'fishing'
 ];
 
 export interface SkillState {
@@ -60,7 +60,7 @@ export interface ItemDefinition {
   equipSlot?: EquipSlot;
   stats?: Partial<EquipStats>;
   requirements?: Partial<Record<SkillId, number>>;
-  toolType?: 'axe' | 'pickaxe';
+  toolType?: 'axe' | 'pickaxe' | 'fishing_rod';
   combatStyle?: 'melee' | 'gunner';
   twoHanded?: boolean;
 }
@@ -166,6 +166,12 @@ export interface PlayerState {
   chopTargetX: number | null;
   chopTargetY: number | null;
   lastChopTick: number;
+  mineTargetX: number | null;
+  mineTargetY: number | null;
+  lastMineTick: number;
+  fishTargetX: number | null;
+  fishTargetY: number | null;
+  lastFishTick: number;
   dying: boolean;
   dyingTick: number;
   lastRegenTick: number;
@@ -204,6 +210,8 @@ export interface GameState {
   messages: Record<string, string[]>;
   depletedTrees: Record<string, number>;  // key="{x}-{y}", value=respawnAtTick
   treeHealth: Record<string, number>;     // key="{x}-{y}", value=ticksRemainingBeforeDepletion
+  depletedRocks: Record<string, number>;  // mirror of depletedTrees for mining
+  rockHealth: Record<string, number>;     // mirror of treeHealth for mining
 }
 
 // State broadcast from server — world omitted (generated locally from seed)
@@ -243,6 +251,7 @@ export interface HoverTarget {
 export interface MoveToAction      { type: 'MOVE_TO';     targetX: number; targetY: number; }
 export interface ChopTreeAction    { type: 'CHOP_TREE';   tileX: number;   tileY: number; }
 export interface MineRockAction    { type: 'MINE_ROCK';   tileX: number;   tileY: number; }
+export interface FishAction        { type: 'FISH';        tileX: number;   tileY: number; }
 export interface AttackNPCAction   { type: 'ATTACK_NPC';  npcId: string; }
 export interface TalkToAction      { type: 'TALK_TO';     npcId: string; }
 export interface TakeItemAction    { type: 'TAKE_ITEM';   droppedItemId: string; }
@@ -259,7 +268,7 @@ export interface DepositWornAction    { type: 'DEPOSIT_WORN'; }
 export interface WithdrawItemAction   { type: 'WITHDRAW_ITEM'; bankSlot: number; quantity: number; }
 
 export type GameAction =
-  | MoveToAction | ChopTreeAction | MineRockAction
+  | MoveToAction | ChopTreeAction | MineRockAction | FishAction
   | AttackNPCAction | TalkToAction | TakeItemAction
   | DropItemAction | MoveSlotAction
   | EquipItemAction | UnequipItemAction | SendChatAction

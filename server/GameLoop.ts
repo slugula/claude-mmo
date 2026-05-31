@@ -129,6 +129,7 @@ export class GameLoop {
         { id: 'rack-iron-axe',        itemId: 'iron_axe',        quantity: 1,   tileX: chestX - 1, tileY: chestY + 2, droppedAtTick: 0, permanent: true },
         { id: 'rack-basic-chaingun',  itemId: 'basic_chaingun',  quantity: 1,   tileX: chestX,     tileY: chestY + 2, droppedAtTick: 0, permanent: true },
         { id: 'rack-kinetic-charges', itemId: 'kinetic_charges', quantity: 500, tileX: chestX + 1, tileY: chestY + 2, droppedAtTick: 0, permanent: true },
+        { id: 'rack-fishing-rod',     itemId: 'fishing_rod',     quantity: 1,   tileX: chestX + 2, tileY: chestY + 2, droppedAtTick: 0, permanent: true },
       ];
     }
 
@@ -142,6 +143,8 @@ export class GameLoop {
       messages: {},
       depletedTrees: {},
       treeHealth: {},
+      depletedRocks: {},
+      rockHealth: {},
     };
   }
 
@@ -176,11 +179,17 @@ export class GameLoop {
         pickupItemId: null,
         chopTargetX: null,
         chopTargetY: null,
+        mineTargetX: null,
+        mineTargetY: null,
+        fishTargetX: null,
+        fishTargetY: null,
         chatMessage: '',
         chatMessageTick: -999,
         lastHitTick:    -999,
         lastAttackTick: -999,
         lastChopTick:   -999,
+        lastMineTick:   -999,
+        lastFishTick:   -999,
         dying:         false,
         dyingTick:     -999,
         lastRegenTick: -999,
@@ -277,6 +286,12 @@ function createInitialPlayer(tileX: number, tileY: number, name: string): Player
     chopTargetX: null,
     chopTargetY: null,
     lastChopTick: -999,
+    mineTargetX: null,
+    mineTargetY: null,
+    lastMineTick: -999,
+    fishTargetX: null,
+    fishTargetY: null,
+    lastFishTick: -999,
     dying: false,
     dyingTick: -999,
     lastRegenTick: -999,

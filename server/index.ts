@@ -98,6 +98,21 @@ function broadcast(patch: ServerStatePatch): void {
       if (chebyshev(tx, ty, cx, cy) <= r) visibleTreeHealth[key] = val;
     }
 
+    const visibleDepletedRocks: Record<string, number> = {};
+    const visibleRockHealth: Record<string, number>    = {};
+    for (const [key, val] of Object.entries(patch.depletedRocks)) {
+      const dash = key.lastIndexOf('-');
+      const tx = parseInt(key.slice(0, dash), 10);
+      const ty = parseInt(key.slice(dash + 1), 10);
+      if (chebyshev(tx, ty, cx, cy) <= r) visibleDepletedRocks[key] = val;
+    }
+    for (const [key, val] of Object.entries(patch.rockHealth)) {
+      const dash = key.lastIndexOf('-');
+      const tx = parseInt(key.slice(0, dash), 10);
+      const ty = parseInt(key.slice(dash + 1), 10);
+      if (chebyshev(tx, ty, cx, cy) <= r) visibleRockHealth[key] = val;
+    }
+
     const filteredPatch: ServerStatePatch = {
       tick:           patch.tick,
       players:        visiblePlayers,
@@ -107,6 +122,8 @@ function broadcast(patch: ServerStatePatch): void {
       messages:       { [playerId]: patch.messages[playerId] ?? [] },
       depletedTrees:  visibleDepletedTrees,
       treeHealth:     visibleTreeHealth,
+      depletedRocks:  visibleDepletedRocks,
+      rockHealth:     visibleRockHealth,
     };
 
     ws.send(JSON.stringify({ type: 'state', ...filteredPatch }));
