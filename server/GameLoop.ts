@@ -84,13 +84,11 @@ export class GameLoop {
 
     const world = createWorldFromTiles(mapData.tiles, mapData.vertexHeights);
 
-    // Enforce walkable=false for every water tile. Old maps saved by the editor
-    // before a bug-fix may have waterTiles listed but tile.walkable=true in the
-    // tile array; this re-derives walkability from the authoritative waterTiles list.
-    for (const wt of (mapData.waterTiles ?? [])) {
-      const row = world.tiles[wt.tileY];
-      if (row && row[wt.tileX]) row[wt.tileX].walkable = false;
-    }
+    // Walkability is authored per-tile (water rendering is a separate visual
+    // layer), so we trust the saved tile.walkable. This lets terrain raised
+    // above the waterline over a water tile remain walkable while the water
+    // plane still renders there. Deep/impassable water is painted non-walkable
+    // in the editor (PaintWater defaults to blocked).
 
     // NPC spawns: fully data-driven from map file
     const npcSpawnDefs = mapData.npcSpawns ?? [];
