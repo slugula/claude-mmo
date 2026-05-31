@@ -78,6 +78,7 @@ private:
   render::Shader                           skinnedShader_;
   render::Shader                           outlineShader_;          // (kept, unused after SS-outline)
   render::Shader                           outlineMaskShader_;      // renders silhouette to mask FBO
+  render::Shader                           outlineMaskSkinnedShader_; // skinned silhouette (animated objects)
   render::Shader                           outlineCompositeShader_; // composites border over scene
   render::Shader                           shadowInstancedShader_;
   render::Shader                           shadowSkinnedShader_;

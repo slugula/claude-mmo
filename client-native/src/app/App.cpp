@@ -59,6 +59,7 @@ constexpr const char* kOutlineVertPath        = "shaders/outline.vert";
 constexpr const char* kOutlineFragPath        = "shaders/outline.frag";
 constexpr const char* kOutlineMaskVertPath    = "shaders/outline_mask.vert";
 constexpr const char* kOutlineMaskFragPath    = "shaders/outline_mask.frag";
+constexpr const char* kOutlineMaskSkinnedVertPath = "shaders/outline_mask_skinned.vert";
 constexpr const char* kOutlineCompositeVertPath = "shaders/outline_composite.vert";
 constexpr const char* kOutlineCompositeFragPath = "shaders/outline_composite.frag";
 constexpr const char* kShadowInstVertPath    = "shaders/shadow_instanced.vert";
@@ -463,6 +464,12 @@ bool App::init() {
     std::fprintf(stderr, "[App] outline mask shader load failed\n");
     return false;
   }
+  // Skinned variant reuses the same mask fragment shader.
+  if (!outlineMaskSkinnedShader_.fromFiles(resolveFromExe(kOutlineMaskSkinnedVertPath),
+                                           resolveFromExe(kOutlineMaskFragPath))) {
+    std::fprintf(stderr, "[App] outline skinned mask shader load failed\n");
+    return false;
+  }
   if (!outlineCompositeShader_.fromFiles(resolveFromExe(kOutlineCompositeVertPath),
                                          resolveFromExe(kOutlineCompositeFragPath))) {
     std::fprintf(stderr, "[App] outline composite shader load failed\n");
@@ -549,6 +556,8 @@ bool App::init() {
         c.rotationX    = obj.rotationX;
         c.rotationY    = obj.rotationY;
         c.rotationZ    = obj.rotationZ;
+        c.depletedObjectId = obj.depletedObjectId;
+        c.pickable     = obj.pickable;
         caches.push_back(std::move(c));
       }
       obstacles_.rebuildFromDefinitions(caches);
@@ -810,12 +819,19 @@ void App::renderFrame() {
           const auto& obs = map_.tiles[oty][otx].obstacle;
           if (obs.empty() || obs == "none") continue;
 
+          // Depleted tiles pick the referenced depleted object (e.g. a stump);
+          // non-pickable objects (and depleted tiles with no variant) are skipped.
+          const bool depleted = depletedTiles_.count(
+              std::to_string(otx) + "-" + std::to_string(oty)) > 0;
+          const std::string pickId = obstacles_.effectiveId(obs, depleted);
+          if (pickId.empty() || !obstacles_.isPickable(pickId)) continue;
+
           const float baseY = tileWorldY(map_, otx, oty);
 
           // Model-space AABB (centred on tile, base at Y=0) from the object's
           // loaded model + footprint. Unknown ids aren't pickable.
           glm::vec3 lMin, lMax;
-          if (!obstacles_.customAabb(obs, lMin, lMax)) continue;
+          if (!obstacles_.customAabb(pickId, lMin, lMax)) continue;
 
           glm::vec3 wMin, wMax;
           // Obstacles: AABB is derived from actual mesh vertices so no inflation
@@ -1418,7 +1434,17 @@ void App::renderFrame() {
       outlineMaskShader_.setFloat("u_depthBias",  outlineDepthBias_);
       glBindTextureUnit(2, msaa_->resolveDepthTexture());
 
-      if (hasObstacle) obstacles_.renderGeometryAt(outlineMaskShader_, map_, htx, hty);
+      // Skinned mask shares the same mask fragment uniforms (animated objects).
+      outlineMaskSkinnedShader_.use();
+      outlineMaskSkinnedShader_.setMat4 ("u_viewProj",  viewProj);
+      outlineMaskSkinnedShader_.setInt  ("u_sceneDepth", 2);
+      outlineMaskSkinnedShader_.setVec2 ("u_screenSize", glm::vec2(static_cast<float>(fbW),
+                                                                   static_cast<float>(fbH)));
+      outlineMaskSkinnedShader_.setFloat("u_depthBias",  outlineDepthBias_);
+      outlineMaskShader_.use();
+
+      if (hasObstacle) obstacles_.renderGeometryAt(outlineMaskShader_, outlineMaskSkinnedShader_,
+                                                   map_, htx, hty, depletedTiles_);
       if (hasNpc)      entities_.renderNpcGeometry (outlineMaskShader_, npcInst, hoveredNpcKind);
       if (hasItem)     entities_.renderItemGeometry(outlineMaskShader_, itemInst);
 

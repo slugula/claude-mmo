@@ -214,6 +214,11 @@ void ModelLibrary::ensure(const std::string& id, const std::string& modelPath,
   const float fy = static_cast<float>(std::max(1, sizeY));
   bmin.x = std::min(bmin.x, -0.5f);          bmin.z = std::min(bmin.z, -0.5f);
   bmax.x = std::max(bmax.x, fx - 0.5f);      bmax.z = std::max(bmax.z, fy - 0.5f);
+  // Guarantee a pickable vertical extent. Thin or oddly-baked models (e.g.
+  // node-animated props whose rest pose sits near a single Y plane) otherwise
+  // collapse to a near-flat box the pick ray skims past, making them unclickable.
+  bmin.y = std::min(bmin.y, 0.0f);
+  bmax.y = std::max(bmax.y, bmin.y + 1.0f);
   e.aabbMin = bmin;
   e.aabbMax = bmax;
 

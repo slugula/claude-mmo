@@ -48,10 +48,11 @@ template<> struct glz::meta<editor::ObjectDef> {
     "examine_text",    &T::examineText,
     "default_clip",    &T::defaultClip,
     "looping",         &T::looping,
-    "rotation_x",      &T::rotationX,
-    "rotation_y",      &T::rotationY,
-    "rotation_z",      &T::rotationZ,
-    "depleted_model",  &T::depletedModel);
+    "rotation_x",        &T::rotationX,
+    "rotation_y",        &T::rotationY,
+    "rotation_z",        &T::rotationZ,
+    "depleted_object_id",&T::depletedObjectId,
+    "pickable",          &T::pickable);
 };
 
 template<> struct glz::meta<editor::NpcDef> {

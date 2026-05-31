@@ -2378,7 +2378,8 @@ void EditorApp::dbLoadAll() {
       c.rotationX    = obj.rotationX;
       c.rotationY    = obj.rotationY;
       c.rotationZ    = obj.rotationZ;
-      c.depletedModel = obj.depletedModel;
+      c.depletedObjectId = obj.depletedObjectId;
+      c.pickable     = obj.pickable;
       caches.push_back(std::move(c));
     }
     obstacles_.rebuildFromDefinitions(caches);
@@ -2781,34 +2782,26 @@ void EditorApp::dbDrawObjectsTab() {
     if (ImGui::Button("Reload Model##obj_model", ImVec2(-1, 0)))
       dbLoadPreviewModel(d.modelPath, /*forceReload=*/true);
 
-    // Depleted model — shown in-game while a resource node is depleted
-    // (between harvest and respawn). Empty = render nothing, as before.
+    // Pickable — hover outline + left-click. Default true; set false for pure
+    // decorations (e.g. a tree stump used only as a depleted variant).
     ImGui::Spacing();
-    ImGui::TextUnformatted("Depleted Model Path (optional)");
-    ImGui::SetNextItemWidth(-1); dbInputText("##obj_depleted", d.depletedModel);
-    if (ImGui::Button("Browse Depleted Model...##obj_depleted", ImVec2(-1, 0))) {
-      OPENFILENAMEW ofn = {};
-      wchar_t buf[MAX_PATH] = {};
-      ofn.lStructSize = sizeof(ofn);
-      ofn.lpstrFilter = L"3D Model (*.glb;*.gltf)\0*.glb;*.gltf\0All Files\0*.*\0";
-      ofn.lpstrFile   = buf; ofn.nMaxFile = MAX_PATH;
-      ofn.Flags       = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
-      if (GetOpenFileNameW(&ofn)) {
-        const int sz = WideCharToMultiByte(CP_UTF8, 0, buf, -1, nullptr, 0, nullptr, nullptr);
-        std::string srcPath(static_cast<std::size_t>(sz), '\0');
-        WideCharToMultiByte(CP_UTF8, 0, buf, -1, srcPath.data(), sz, nullptr, nullptr);
-        if (!srcPath.empty() && srcPath.back() == '\0') srcPath.pop_back();
+    ImGui::Checkbox("Pickable##obj", &d.pickable);
 
-        const std::filesystem::path src(srcPath);
-        const std::string fname   = src.filename().string();
-        const std::string relPath = "assets/models/" + fname;
-        const auto destPath = resolveFromExe(relPath.c_str());
-        std::error_code ec;
-        std::filesystem::create_directories(destPath.parent_path(), ec);
-        std::filesystem::copy_file(src, destPath,
-            std::filesystem::copy_options::overwrite_existing, ec);
-        d.depletedModel = ec ? srcPath : relPath;
+    // Depleted object — another object shown in-game while this resource node is
+    // depleted (between harvest and respawn). Empty = render nothing. Picking,
+    // outline and examine then follow that object (e.g. a non-pickable stump).
+    ImGui::TextUnformatted("Depleted Object (optional)");
+    const char* depPreview = d.depletedObjectId.empty() ? "(none)" : d.depletedObjectId.c_str();
+    ImGui::SetNextItemWidth(-1);
+    if (ImGui::BeginCombo("##obj_depleted_obj", depPreview)) {
+      if (ImGui::Selectable("(none)", d.depletedObjectId.empty()))
+        d.depletedObjectId.clear();
+      for (const auto& o : dbObjects_) {
+        if (o.id == d.id) continue;   // can't reference itself
+        const bool sel = (o.id == d.depletedObjectId);
+        if (ImGui::Selectable(o.id.c_str(), sel)) d.depletedObjectId = o.id;
       }
+      ImGui::EndCombo();
     }
 
     // ---- Animation section (only shown when the loaded model has clips) ----

@@ -56,7 +56,8 @@ public:
     float       rotationX     = 0.f;
     float       rotationY     = 0.f;
     float       rotationZ     = 0.f;
-    std::string depletedModel;
+    std::string depletedObjectId;
+    bool        pickable      = true;
   };
 
   // Seed built-in defaults, overlay server definitions, then (re)load all
@@ -87,16 +88,26 @@ public:
 
   bool hasCustomModels() const { return !customInstances_.empty(); }
 
-  // Render one object's model into the outline mask (static only).
+  // Render one tile's object into the outline mask. Resolves the depleted
+  // variant when the tile is depleted, and routes animated models through the
+  // skinned mask shader. Returns false (no outline) for empty/non-pickable tiles.
   bool renderGeometryAt(render::Shader& maskShader,
+                        render::Shader& maskSkinnedShader,
                         const shared::WorldMapFile& map,
-                        int tileX, int tileY);
+                        int tileX, int tileY,
+                        const std::unordered_set<std::string>& depletedKeys = {});
 
   // World-space AABB for an object id (model bounds ∪ footprint), in model
   // space centred on its tile. Returns false for unknown ids.
   bool customAabb(const std::string& id, glm::vec3& outMin, glm::vec3& outMax) const {
     return const_cast<ModelLibrary&>(models_).aabb(id, outMin, outMax);
   }
+
+  // Resolve the object id a tile should render/pick: its depleted reference when
+  // `depleted`, else its own obstacle id. "" = render nothing while depleted.
+  std::string effectiveId(const std::string& obs, bool depleted) const;
+  // Whether an object id is pickable (hover outline + left-click). Default true.
+  bool isPickable(const std::string& id) const;
 
 private:
   void loadCustomModels();   // ensure a ModelLibrary entry for every definition
