@@ -527,10 +527,17 @@ bool App::init() {
     }
     // Item definitions — names + sprite paths (sprites loaded into SpriteCache
     // below, once we know the GL context is ready).
+    entities_.setItemModelResolver([](const std::string& rel) {
+      return resolveFromExe(rel.c_str());
+    });
     try {
       dbItemDefs_ = dbClient.getItems();
-      for (const auto& def : dbItemDefs_)
+      for (const auto& def : dbItemDefs_) {
         if (!def.name.empty()) ui::g_itemNames[def.id] = def.name;
+        // Items with a model_dropped render that model on the ground; the rest
+        // keep the placeholder box.
+        entities_.ensureItemModel(def.id, def.modelDropped, 1, 1);
+      }
     } catch (const std::exception& e) {
       std::fprintf(stderr, "[App] DB item fetch failed (server offline?): %s\n", e.what());
     }
@@ -902,10 +909,16 @@ void App::renderFrame() {
       // ---- Dropped items -----------------------------------------------------
       for (const auto& item : droppedItems_) {
         const float baseY = tileWorldY(map_, item.tileX, item.tileY);
-        // Small flat cylinder approximated as AABB: ±0.20 XZ, 0..0.20 Y.
+        // Model-backed items use their model AABB; the rest use the placeholder
+        // box bounds (±0.20 XZ, 0..0.20 Y, inflated ×1.2).
+        glm::vec3 lMin, lMax; float inflate = 1.0f;
+        if (!entities_.itemAabb(item.itemId, lMin, lMax)) {
+          lMin = glm::vec3(-0.20f, 0.0f, -0.20f);
+          lMax = glm::vec3( 0.20f, 0.20f, 0.20f);
+          inflate = 1.2f;
+        }
         glm::vec3 wMin, wMax;
-        worldAABB(glm::vec3(-0.20f, 0.0f, -0.20f),
-                  glm::vec3( 0.20f, 0.20f,  0.20f), 1.2f,
+        worldAABB(lMin, lMax, inflate,
                   static_cast<float>(item.tileX), baseY,
                   static_cast<float>(item.tileY), wMin, wMax);
 
@@ -1306,7 +1319,7 @@ void App::renderFrame() {
   // water shader captures it in sceneColor and renders it as a refracted,
   // depth-tinted underwater object. Normal depth test/write — trees, NPCs, and
   // terrain in front correctly occlude it.
-  if (obstacles_.hasCustomModels() || entities_.hasAnimatedNpcs()) {
+  if (obstacles_.hasCustomModels() || entities_.hasAnimatedNpcs() || entities_.hasAnimatedItems()) {
     skinnedShader_.use();
     skinnedShader_.setMat4 ("u_viewProj",       viewProj);
     skinnedShader_.setMat4 ("u_lightViewProj",  lightVP);
@@ -1333,6 +1346,9 @@ void App::renderFrame() {
 
     // Data-driven animated custom objects (incl. fishing_spot).
     obstacles_.renderCustomAnimated(skinnedShader_, dt);
+
+    // Animated dropped-item models (model_dropped).
+    entities_.renderAnimatedItems(skinnedShader_, dt);
   }
 
   // ---- SSR snapshot — resolve the full opaque scene (incl. submerged fish)
@@ -1397,6 +1413,7 @@ void App::renderFrame() {
     bool hasItem     = false;
     world::EntityRenderer::Instance npcInst{}, itemInst{};
     std::string hoveredNpcKind;
+    std::string hoveredItemId;
 
     if (hoveredEntity_.kind == HoveredEntity::Kind::Npc) {
       // Match against the interpolated CPU-side instance list so the outline
@@ -1426,6 +1443,7 @@ void App::renderFrame() {
       for (const auto& di : droppedItems_) {
         if (di.id == hoveredEntity_.id) {
           hasItem  = true;
+          hoveredItemId = di.itemId;
           itemInst = { static_cast<float>(di.tileX),
                        tileWorldY(map_, di.tileX, di.tileY),
                        static_cast<float>(di.tileY), 0.0f };
@@ -1467,7 +1485,7 @@ void App::renderFrame() {
       if (hasObstacle) obstacles_.renderGeometryAt(outlineMaskShader_, outlineMaskSkinnedShader_,
                                                    map_, htx, hty, depletedTiles_);
       if (hasNpc)      entities_.renderNpcGeometry (outlineMaskShader_, npcInst, hoveredNpcKind);
-      if (hasItem)     entities_.renderItemGeometry(outlineMaskShader_, itemInst);
+      if (hasItem)     entities_.renderItemGeometry(outlineMaskShader_, itemInst, hoveredItemId);
 
       glDepthMask(GL_TRUE);
       glDepthFunc(GL_LESS);

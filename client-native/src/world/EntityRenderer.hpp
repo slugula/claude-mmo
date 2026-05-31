@@ -86,6 +86,31 @@ public:
   // True if any loaded NPC kind is animated (host gates the skinned pass on it).
   bool hasAnimatedNpcs() const { return anyNpcAnimated_; }
 
+  // ---- Dropped-item models (DB-driven via model_dropped) -------------------
+  // Items WITH a model_dropped render that model; items without keep the small
+  // placeholder box (itemBox_).
+  void setItemModelResolver(std::function<std::filesystem::path(const std::string&)> r) {
+    itemResolver_ = r;
+    if (!itemModelsInited_) { itemModels_.init(r, ""); itemModelsInited_ = true; }
+  }
+  // Register a model for an item id. No-op for an empty path (those items keep
+  // the placeholder box rather than a giant unit-cube placeholder).
+  void ensureItemModel(const std::string& itemId, const std::string& modelPath,
+                       int sizeX = 1, int sizeY = 1) {
+    if (modelPath.empty()) return;
+    itemModels_.ensure(itemId, modelPath, sizeX, sizeY);
+    if (itemModels_.isAnimated(itemId)) anyItemAnimated_ = true;
+  }
+  bool itemHasModel(const std::string& itemId) const {
+    return const_cast<ModelLibrary&>(itemModels_).has(itemId);
+  }
+  bool itemAabb(const std::string& itemId, glm::vec3& mn, glm::vec3& mx) const {
+    return const_cast<ModelLibrary&>(itemModels_).aabb(itemId, mn, mx);
+  }
+  bool hasAnimatedItems() const { return anyItemAnimated_; }
+  // Draw animated item models (skinned shader); advances clips once per frame.
+  void renderAnimatedItems(render::Shader& skinnedShader, float dt);
+
   // Animated NPCs into the skinned shadow depth pass (no clip advance).
   void renderNpcAnimatedShadows(render::Shader& skinnedDepthShader);
 
@@ -123,7 +148,8 @@ public:
   // falls back to the humanoid procedural geometry when empty or unknown.
   void renderNpcGeometry (render::Shader& maskShader, const Instance& inst,
                           const std::string& kind = "") const;
-  void renderItemGeometry(render::Shader& maskShader, const Instance& inst) const;
+  void renderItemGeometry(render::Shader& maskShader, const Instance& inst,
+                          const std::string& itemId = "") const;
 
   std::size_t npcCount()  const { return npcCount_;  }
   std::size_t itemCount() const { return itemCount_; }
@@ -162,6 +188,14 @@ private:
   bool anyNpcAnimated_  = false;
 
   Kit itemBox_;
+
+  // Dropped items with a model_dropped are data-driven via the shared
+  // ModelLibrary, keyed by item id. Items without a model use itemBox_.
+  ModelLibrary itemModels_;
+  std::function<std::filesystem::path(const std::string&)> itemResolver_;
+  bool itemModelsInited_ = false;
+  bool anyItemAnimated_  = false;
+  std::unordered_map<std::string, std::vector<ModelLibrary::Instance>> itemModelGroups_;
 
   GLuint itemInstanceVbo_       = 0;
   std::size_t npcCount_         = 0;

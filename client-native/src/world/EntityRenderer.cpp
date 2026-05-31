@@ -252,23 +252,26 @@ void EntityRenderer::rebuildNpcs(const std::vector<shared::NPCState>& npcs,
 
 void EntityRenderer::rebuildItems(const std::vector<shared::DroppedItemState>& items,
                                   const shared::WorldMapFile&                  map) {
-  std::vector<Instance> insts;
-  insts.reserve(items.size());
+  std::vector<Instance> boxInsts;          // items with no model_dropped
+  itemModelGroups_.clear();                // items with a model_dropped, by id
+  boxInsts.reserve(items.size());
   for (const auto& it : items) {
     if (it.tileX < 0 || it.tileY < 0
         || it.tileX >= map.width || it.tileY >= map.height) continue;
-    insts.push_back({
-        static_cast<float>(it.tileX),
-        tileWorldY(map, it.tileX, it.tileY),
-        static_cast<float>(it.tileY),
-        0.0f,
-    });
+    const float y = tileWorldY(map, it.tileX, it.tileY);
+    if (itemModels_.has(it.itemId)) {
+      itemModelGroups_[it.itemId].push_back(ModelLibrary::Instance{
+          static_cast<float>(it.tileX), y, static_cast<float>(it.tileY), 0.0f });
+    } else {
+      boxInsts.push_back({ static_cast<float>(it.tileX), y,
+                           static_cast<float>(it.tileY), 0.0f });
+    }
   }
-  if (insts.size() > kInstanceCap) insts.resize(kInstanceCap);
+  if (boxInsts.size() > kInstanceCap) boxInsts.resize(kInstanceCap);
   glNamedBufferSubData(itemInstanceVbo_, 0,
-                       static_cast<GLsizeiptr>(insts.size() * sizeof(Instance)),
-                       insts.data());
-  itemCount_ = insts.size();
+                       static_cast<GLsizeiptr>(boxInsts.size() * sizeof(Instance)),
+                       boxInsts.data());
+  itemCount_ = boxInsts.size();
 }
 
 void EntityRenderer::setNpcInstances(const std::vector<Instance>& insts,
@@ -290,6 +293,7 @@ void EntityRenderer::setItemInstances(const std::vector<Instance>& insts) {
                          insts.data());
   }
   itemCount_ = n;
+  itemModelGroups_.clear();   // model-backed items are populated only by rebuildItems()
 }
 
 // Group static-NPC instances by kind (animated kinds excluded).
@@ -319,6 +323,23 @@ void EntityRenderer::render(render::Shader& shader) {
                             nullptr, static_cast<GLsizei>(itemCount_));
   }
   glBindVertexArray(0);
+  // Items with a model_dropped (static models) draw via the ModelLibrary.
+  for (auto& [id, insts] : itemModelGroups_) {
+    if (itemModels_.isAnimated(id)) continue;
+    itemModels_.drawStaticInstanced(shader, id, insts);
+  }
+}
+
+void EntityRenderer::renderAnimatedItems(render::Shader& skinnedShader, float dt) {
+  itemModels_.update(dt);   // advance all animated clips once per frame
+  if (!anyItemAnimated_) return;
+  for (auto& [id, insts] : itemModelGroups_) {
+    if (!itemModels_.isAnimated(id)) continue;
+    for (const auto& in : insts) {
+      glm::mat4 m = glm::translate(glm::mat4(1.0f), glm::vec3(in.x, in.y, in.z));
+      itemModels_.drawAnimatedAt(skinnedShader, id, m);
+    }
+  }
 }
 
 void EntityRenderer::renderAnimatedNpcs(render::Shader& skinnedShader, float dt) {
@@ -478,16 +499,26 @@ void EntityRenderer::renderNpcGeometry(render::Shader& maskShader,
   glDepthFunc(GL_LESS);
 }
 
-void EntityRenderer::renderItemGeometry(render::Shader& /*maskShader*/,
-                                        const Instance& inst) const {
-  if (!itemOutlineVao_ || !outlineInstanceVbo_) return;
-  glNamedBufferSubData(outlineInstanceVbo_, 0, sizeof(Instance), &inst);
+void EntityRenderer::renderItemGeometry(render::Shader& maskShader,
+                                        const Instance& inst,
+                                        const std::string& itemId) const {
   glDisable(GL_STENCIL_TEST);
   glDepthFunc(GL_LEQUAL);
   glDepthMask(GL_FALSE);
-  glBindVertexArray(itemOutlineVao_);
-  glDrawElementsInstanced(GL_TRIANGLES, itemBox_.indexCount, GL_UNSIGNED_INT, nullptr, 1);
-  glBindVertexArray(0);
+
+  auto& models = const_cast<ModelLibrary&>(itemModels_);
+  if (!itemId.empty() && models.has(itemId) && !models.isAnimated(itemId)) {
+    // Model-backed item: silhouette its actual model.
+    models.drawStaticInstanced(maskShader, itemId,
+        { ModelLibrary::Instance{ inst.x, inst.y, inst.z, inst.rotY } });
+  } else if (itemOutlineVao_ && outlineInstanceVbo_) {
+    // Placeholder box (or animated model — no skinned mask here).
+    glNamedBufferSubData(outlineInstanceVbo_, 0, sizeof(Instance), &inst);
+    glBindVertexArray(itemOutlineVao_);
+    glDrawElementsInstanced(GL_TRIANGLES, itemBox_.indexCount, GL_UNSIGNED_INT, nullptr, 1);
+    glBindVertexArray(0);
+  }
+
   glDepthMask(GL_TRUE);
   glDepthFunc(GL_LESS);
 }
