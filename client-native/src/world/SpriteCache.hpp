@@ -1,38 +1,42 @@
 #pragma once
-// SpriteCache — pre-renders a 32×32 GL_RGBA8 texture for every known item ID
-// at startup.  The textures are used by ClayHudPanel to display item sprites
-// inside Clay IMAGE commands.
+// SpriteCache — loads a GL texture for every item's sprite PNG (DB-driven via
+// item_definitions.sprite_path). No procedural/placeholder art: the DB is the
+// single source of truth. Items with no sprite (or a failed load) fall back to
+// a neutral square so slots aren't invisible.
 //
-// Ownership: App creates one SpriteCache, calls init() after the GL context is
-// ready, passes a const pointer to clayFrame() so ClayHudPanel can call get().
+// Ownership: App creates one SpriteCache, calls load() after the GL context is
+// ready AND item definitions have been fetched, passes a const pointer to
+// clayFrame() so ClayHudPanel can call get().
 
 #include <glad/glad.h>
+
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 namespace ui {
 
 class SpriteCache {
 public:
-    // Must be called with a valid GL context (after initImGui / after GLAD init).
-    void init();
+    // One item's resolved sprite: its id and an absolute path to a PNG on disk.
+    struct Entry {
+        std::string id;
+        std::string absPath;
+    };
 
-    // Returns the GL texture name for itemId, or the solid-colour fallback if
-    // the id is unknown.  Always valid after init().
+    // (Re)build the cache from the given item sprites. Loads each PNG via
+    // stb_image. Must be called with a valid GL context.
+    void load(const std::vector<Entry>& entries);
+
+    // GL texture for itemId, or the neutral fallback if the id has no sprite.
     GLuint get(const std::string& itemId) const;
 
-    // Deletes all GL textures.  Call before GL context destruction.
+    // Deletes all GL textures. Call before GL context destruction.
     void destroy();
 
 private:
-    // Upload a 32×32 RGBA pixel buffer as a new GL texture and return its name.
-    static GLuint upload(const uint32_t* rgba32);
-
-    // Build every item texture and populate cache_.
-    void buildAll();
-
     std::unordered_map<std::string, GLuint> cache_;
-    GLuint                                  fallback_ = 0;  // grey square
+    GLuint                                  fallback_ = 0;  // neutral "no sprite" square
 };
 
 } // namespace ui

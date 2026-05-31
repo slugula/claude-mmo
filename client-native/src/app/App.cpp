@@ -525,10 +525,11 @@ bool App::init() {
     } catch (const std::exception& e) {
       std::fprintf(stderr, "[App] DB NPC fetch failed (server offline?): %s\n", e.what());
     }
-    // Item definitions — names only.
+    // Item definitions — names + sprite paths (sprites loaded into SpriteCache
+    // below, once we know the GL context is ready).
     try {
-      const auto itemDefs = dbClient.getItems();
-      for (const auto& def : itemDefs)
+      dbItemDefs_ = dbClient.getItems();
+      for (const auto& def : dbItemDefs_)
         if (!def.name.empty()) ui::g_itemNames[def.id] = def.name;
     } catch (const std::exception& e) {
       std::fprintf(stderr, "[App] DB item fetch failed (server offline?): %s\n", e.what());
@@ -600,7 +601,16 @@ bool App::init() {
   initImGui();
 
   { int fw, fh; glfwGetFramebufferSize(window_.handle(), &fw, &fh); ui::clayInit(fw, fh); }
-  spriteCache_.init();
+  // Item sprites are DB-driven: load each item's sprite_path PNG. Items with no
+  // sprite fall back to a neutral square inside SpriteCache.
+  {
+    std::vector<ui::SpriteCache::Entry> spriteEntries;
+    spriteEntries.reserve(dbItemDefs_.size());
+    for (const auto& d : dbItemDefs_)
+      if (!d.spritePath.empty())
+        spriteEntries.push_back({ d.id, resolveFromExe(d.spritePath.c_str()).string() });
+    spriteCache_.load(spriteEntries);
+  }
   minimap_.init();
 
   if (!audio_.init()) {

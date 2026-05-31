@@ -96,6 +96,7 @@ private:
   // the context menu, and rendering are data-driven rather than hardcoded.
   std::vector<editor::ObjectDef>           dbObjectDefs_;
   std::vector<editor::ActionDef>           dbActionDefs_;
+  std::vector<editor::ItemDef>             dbItemDefs_;
 
   // Hover indicator — a small dynamic VAO/VBO holding 4 vertices drawn as
   // GL_LINE_LOOP, repositioned each frame to outline the currently
