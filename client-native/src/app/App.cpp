@@ -38,6 +38,19 @@
 #include <cstring>
 #include <filesystem>
 
+// Entity defs carried in the server's `init` message. Reuses the editor def
+// structs (their glaze metas already map the snake_case DB columns). Parsed via
+// glaze reflection — member names match the init JSON keys. Must have external
+// linkage (namespace scope, not anonymous) for glaze reflection.
+namespace app {
+struct InitDefs {
+  std::vector<editor::NpcDef>    npcs;
+  std::vector<editor::ItemDef>   items;
+  std::vector<editor::ObjectDef> objects;
+  std::vector<editor::ActionDef> actions;
+};
+}
+
 namespace app {
 
 namespace {
@@ -505,79 +518,21 @@ bool App::init() {
   });
   entities_.initGL();
 
-  // Fetch entity definitions from the DB API.
-  // Populates display name registries and loads custom NPC models.
-  // One-time synchronous call at startup (server is always localhost).
-  {
+  // Model resolvers (relative model_path → absolute on disk). Set once.
+  entities_.setNpcModelResolver ([](const std::string& rel){ return resolveFromExe(rel.c_str()); });
+  entities_.setItemModelResolver([](const std::string& rel){ return resolveFromExe(rel.c_str()); });
+
+  // Entity definitions. In a dev build the localhost DB API is available, so we
+  // fetch at startup. In a shared/production build there's no localhost API and
+  // this throws (caught) — the server then supplies defs in the init message
+  // (handled in processNetworkMessages), so applyEntityDefs runs there instead.
+  try {
     editor::EntityClient dbClient;
-    // NPC definitions — names, attackable flag, data-driven models (placeholder
-    // when a kind has no model).
-    entities_.setNpcModelResolver([](const std::string& rel) {
-      return resolveFromExe(rel.c_str());
-    });
-    try {
-      const auto npcDefs = dbClient.getNPCs();
-      for (const auto& def : npcDefs) {
-        if (!def.name.empty())  ui::g_npcNames[def.id]     = def.name;
-        ui::g_npcAttackable[def.id] = def.isAttackable;
-        entities_.ensureNpcModel(def.id, def.modelPath, def.sizeX, def.sizeY);
-      }
-    } catch (const std::exception& e) {
-      std::fprintf(stderr, "[App] DB NPC fetch failed (server offline?): %s\n", e.what());
-    }
-    // Item definitions — names + sprite paths (sprites loaded into SpriteCache
-    // below, once we know the GL context is ready).
-    entities_.setItemModelResolver([](const std::string& rel) {
-      return resolveFromExe(rel.c_str());
-    });
-    try {
-      dbItemDefs_ = dbClient.getItems();
-      for (const auto& def : dbItemDefs_) {
-        if (!def.name.empty()) ui::g_itemNames[def.id] = def.name;
-        // Items with a model_dropped render that model on the ground; the rest
-        // keep the placeholder box.
-        entities_.ensureItemModel(def.id, def.modelDropped, 1, 1);
-      }
-    } catch (const std::exception& e) {
-      std::fprintf(stderr, "[App] DB item fetch failed (server offline?): %s\n", e.what());
-    }
-    // Object definitions — register with the obstacle system so custom objects
-    // (and their models) load and render in-game, not just in the editor.
-    try {
-      dbObjectDefs_ = dbClient.getObjects();
-      std::vector<world::ObstacleSystem::ObjectDefCache> caches;
-      caches.reserve(dbObjectDefs_.size());
-      for (const auto& obj : dbObjectDefs_) {
-        world::ObstacleSystem::ObjectDefCache c;
-        c.id           = obj.id;
-        c.objectType   = obj.objectType;
-        c.collision    = obj.collision;
-        c.sizeX        = obj.sizeX;
-        c.sizeY        = obj.sizeY;
-        c.modelPath    = obj.modelPath;
-        c.actionId     = obj.actionId;
-        c.dropItemId   = obj.dropItemId;
-        c.dropQuantity = obj.dropQuantity;
-        c.respawnTicks = obj.respawnTicks;
-        c.defaultClip  = obj.defaultClip;
-        c.looping      = obj.looping;
-        c.rotationX    = obj.rotationX;
-        c.rotationY    = obj.rotationY;
-        c.rotationZ    = obj.rotationZ;
-        c.depletedObjectId = obj.depletedObjectId;
-        c.pickable     = obj.pickable;
-        caches.push_back(std::move(c));
-      }
-      obstacles_.rebuildFromDefinitions(caches);
-    } catch (const std::exception& e) {
-      std::fprintf(stderr, "[App] DB object fetch failed (server offline?): %s\n", e.what());
-    }
-    // Action definitions — for data-driven context-menu verbs.
-    try {
-      dbActionDefs_ = dbClient.getActions();
-    } catch (const std::exception& e) {
-      std::fprintf(stderr, "[App] DB action fetch failed (server offline?): %s\n", e.what());
-    }
+    applyEntityDefs(dbClient.getNPCs(), dbClient.getItems(),
+                    dbClient.getObjects(), dbClient.getActions());
+  } catch (const std::exception& e) {
+    std::fprintf(stderr, "[App] startup DB def fetch failed (expected for shared builds; "
+                         "defs will arrive via init): %s\n", e.what());
   }
 
   generateAndBuildTerrain();
@@ -608,16 +563,7 @@ bool App::init() {
   initImGui();
 
   { int fw, fh; glfwGetFramebufferSize(window_.handle(), &fw, &fh); ui::clayInit(fw, fh); }
-  // Item sprites are DB-driven: load each item's sprite_path PNG. Items with no
-  // sprite fall back to a neutral square inside SpriteCache.
-  {
-    std::vector<ui::SpriteCache::Entry> spriteEntries;
-    spriteEntries.reserve(dbItemDefs_.size());
-    for (const auto& d : dbItemDefs_)
-      if (!d.spritePath.empty())
-        spriteEntries.push_back({ d.id, resolveFromExe(d.spritePath.c_str()).string() });
-    spriteCache_.load(spriteEntries);
-  }
+  // (Item sprites are loaded inside applyEntityDefs, from the def source.)
   minimap_.init();
 
   if (!audio_.init()) {
@@ -690,6 +636,14 @@ void App::generateAndBuildTerrain() {
                  mapPath.string().c_str(), map_.width, map_.height, map_.waterTiles.size());
   }
 
+  rebuildWorldFromMap();
+}
+
+// Build all GL world resources (terrain mesh, obstacles, minimap, water) from
+// the current map_. Called at startup after loading the local map, and again
+// when the server sends its authoritative map in the init message — so a shared
+// client renders the server's world, not a local/procedural one.
+void App::rebuildWorldFromMap() {
   const auto data = world::buildTerrainMesh(map_);
   terrainMesh_.upload(data.positions, data.colors,
                       data.triangleIndices, data.lineIndices,
@@ -697,22 +651,61 @@ void App::generateAndBuildTerrain() {
   terrainTileW_   = data.width;
   terrainTileH_   = data.height;
   terrainIndexCt_ = static_cast<int>(data.triangleIndices.size());
-  hoveredTile_    = {};  // hover stale after regenerate
+  hoveredTile_    = {};  // hover stale after rebuild
 
   obstacles_.rebuildFromMap(map_);
-
-  // Rebuild minimap base layer for the new map.
   minimap_.buildBaseLayer(map_);
-
-  // Rebuild water mesh from loaded/generated map.
   if (waterRenderer_.valid())
     waterRenderer_.rebuild(map_, waterUniforms_.waterOffset);
 
-  std::fprintf(stdout, "[App] terrain mesh: %d x %d tiles, %zu verts, %zu tri-idx, %zu line-idx\n",
-               data.width, data.height,
-               data.positions.size() / 3,
-               data.triangleIndices.size(),
-               data.lineIndices.size());
+  std::fprintf(stdout, "[App] world built: %d x %d tiles, %zu water tiles\n",
+               data.width, data.height, map_.waterTiles.size());
+}
+
+// Apply entity definitions from whichever source supplied them (localhost DB API
+// at startup in dev, or the server's init message in a shared build). Populates
+// name registries, NPC/item models, item sprites, and object definitions.
+void App::applyEntityDefs(const std::vector<editor::NpcDef>&    npcs,
+                          const std::vector<editor::ItemDef>&   items,
+                          const std::vector<editor::ObjectDef>& objects,
+                          const std::vector<editor::ActionDef>& actions) {
+  // NPCs — names, attackable flag, data-driven models.
+  for (const auto& def : npcs) {
+    if (!def.name.empty()) ui::g_npcNames[def.id] = def.name;
+    ui::g_npcAttackable[def.id] = def.isAttackable;
+    entities_.ensureNpcModel(def.id, def.modelPath, def.sizeX, def.sizeY);
+  }
+
+  // Items — names, dropped models, and sprite textures.
+  dbItemDefs_ = items;
+  std::vector<ui::SpriteCache::Entry> spriteEntries;
+  spriteEntries.reserve(items.size());
+  for (const auto& def : dbItemDefs_) {
+    if (!def.name.empty()) ui::g_itemNames[def.id] = def.name;
+    entities_.ensureItemModel(def.id, def.modelDropped, 1, 1);
+    if (!def.spritePath.empty())
+      spriteEntries.push_back({ def.id, resolveFromExe(def.spritePath.c_str()).string() });
+  }
+  spriteCache_.load(spriteEntries);
+
+  // Objects — register with the obstacle system (models, footprint, depleted
+  // variant, pickable, actions).
+  dbObjectDefs_ = objects;
+  std::vector<world::ObstacleSystem::ObjectDefCache> caches;
+  caches.reserve(objects.size());
+  for (const auto& obj : dbObjectDefs_) {
+    world::ObstacleSystem::ObjectDefCache c;
+    c.id = obj.id; c.objectType = obj.objectType; c.collision = obj.collision;
+    c.sizeX = obj.sizeX; c.sizeY = obj.sizeY; c.modelPath = obj.modelPath;
+    c.actionId = obj.actionId; c.dropItemId = obj.dropItemId; c.dropQuantity = obj.dropQuantity;
+    c.respawnTicks = obj.respawnTicks; c.defaultClip = obj.defaultClip; c.looping = obj.looping;
+    c.rotationX = obj.rotationX; c.rotationY = obj.rotationY; c.rotationZ = obj.rotationZ;
+    c.depletedObjectId = obj.depletedObjectId; c.pickable = obj.pickable;
+    caches.push_back(std::move(c));
+  }
+  obstacles_.rebuildFromDefinitions(caches);
+
+  dbActionDefs_ = actions;
 }
 
 void App::initHoverMesh() {
@@ -2806,7 +2799,28 @@ void App::processNetworkMessages() {
                    init.isNewPlayer ? "(new)" : "(returning)");
       isNewPlayer_ = init.isNewPlayer;
       if (isNewPlayer_) joinNameBuf_[0] = '\0';
-      // We keep our procedural map; server tiles are acknowledged but ignored.
+      // Adopt the server's authoritative map so the client renders the same
+      // world the server simulates (terrain, obstacles, water, walkability) —
+      // essential for shared builds where there's no local worldMap.json.
+      if (!init.tiles.empty()) {
+        map_.height       = static_cast<int>(init.tiles.size());
+        map_.width        = static_cast<int>(init.tiles[0].size());
+        map_.tiles        = std::move(init.tiles);
+        map_.vertexHeights= std::move(init.vertexHeights);
+        map_.waterTiles   = std::move(init.waterTiles);
+        depletedTiles_.clear();
+        rebuildWorldFromMap();
+      }
+      // Entity definitions from the server (shared builds have no localhost DB).
+      // Re-parse the same raw message into the def arrays and apply them.
+      {
+        InitDefs defs;
+        if (!glz::read<kPermissive>(defs, raw) &&
+            (!defs.items.empty() || !defs.objects.empty() ||
+             !defs.npcs.empty()  || !defs.actions.empty())) {
+          applyEntityDefs(defs.npcs, defs.items, defs.objects, defs.actions);
+        }
+      }
       currLocalPlayer_.reset();
       prevLocalPlayer_.reset();
     } else if (hdr.type == "state") {

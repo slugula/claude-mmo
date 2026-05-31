@@ -167,8 +167,9 @@ struct MessageHeader {
 struct InitMessage {
   std::string                        type;            // "init"
   std::string                        playerId;
-  std::vector<std::vector<TileData>> tiles;           // present but unused — we keep our procedural map
-  std::vector<float>                 vertexHeights;   // ditto
+  std::vector<std::vector<TileData>> tiles;           // server's authoritative map
+  std::vector<float>                 vertexHeights;
+  std::vector<WaterTile>             waterTiles;       // water plane tiles
   bool                               isNewPlayer = false;
 };
 

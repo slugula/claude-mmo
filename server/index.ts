@@ -5,6 +5,7 @@ import { parse } from 'url';
 import { GameLoop } from './GameLoop';
 import { authRouter, verifyToken } from './auth/router';
 import { entityRouter } from './db/EntityRouter';
+import { getClientDefs } from './db/EntityLoader';
 import { PlayerRepository } from './db/PlayerRepository';
 import type { GameAction, ServerStatePatch, RespawnEntry } from '../src/shared/types';
 
@@ -176,12 +177,20 @@ wss.on('connection', async (ws: WebSocket, req: IncomingMessage) => {
   const isNewPlayer = savedState === null;
   loop.addPlayer(playerId, username, savedState ?? undefined);
 
+  const defs = getClientDefs();
   ws.send(JSON.stringify({
     type: 'init',
+    waterTiles:    loop.getWaterTiles(),
     playerId,
     tiles:         loop.getWorldTiles(),
     vertexHeights: loop.getVertexHeights(),
     isNewPlayer,
+    // Entity definitions (raw DB rows, incl. client-only sprite/model fields) so
+    // a shared client renders authored content without localhost DB access.
+    items:   defs.items,
+    objects: defs.objects,
+    npcs:    defs.npcs,
+    actions: defs.actions,
   }));
 
   console.log(`[server] ${username} (${playerId}) connected — ${isNewPlayer ? 'new' : 'returning'} player`);
