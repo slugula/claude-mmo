@@ -51,6 +51,7 @@ private:
   void onResize(int width, int height);
 
   void generateAndBuildTerrain();
+  void rebuildWorldFromMap();   // (re)build terrain/obstacles/minimap/water from map_
   void initHoverMesh();
   void destroyHoverMesh();
   void updateHoverMesh(int tx, int ty, int szX = 1, int szY = 1);

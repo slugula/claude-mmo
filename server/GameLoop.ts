@@ -71,6 +71,7 @@ export class GameLoop {
   private timer:     ReturnType<typeof setInterval> | null = null;
   private broadcast: BroadcastFn;
   private worldTiles: TileData[][];
+  private waterTiles: { tileX: number; tileY: number }[] = [];
 
   constructor(broadcast: BroadcastFn) {
     this.broadcast = broadcast;
@@ -81,6 +82,7 @@ export class GameLoop {
 
     const mapData = loadWorldMap();
     this.worldTiles = mapData.tiles;
+    this.waterTiles = mapData.waterTiles ?? [];
 
     const world = createWorldFromTiles(mapData.tiles, mapData.vertexHeights);
 
@@ -222,6 +224,7 @@ export class GameLoop {
   }
 
   getWorldTiles(): TileData[][] { return this.worldTiles; }
+  getWaterTiles(): { tileX: number; tileY: number }[] { return this.waterTiles; }
   getVertexHeights(): number[] { return Array.from(this.state.world.vertexHeights); }
 
   /** Returns a snapshot of all currently-connected players for checkpoint saves. */

@@ -690,6 +690,14 @@ void App::generateAndBuildTerrain() {
                  mapPath.string().c_str(), map_.width, map_.height, map_.waterTiles.size());
   }
 
+  rebuildWorldFromMap();
+}
+
+// Build all GL world resources (terrain mesh, obstacles, minimap, water) from
+// the current map_. Called at startup after loading the local map, and again
+// when the server sends its authoritative map in the init message — so a shared
+// client renders the server's world, not a local/procedural one.
+void App::rebuildWorldFromMap() {
   const auto data = world::buildTerrainMesh(map_);
   terrainMesh_.upload(data.positions, data.colors,
                       data.triangleIndices, data.lineIndices,
@@ -697,22 +705,15 @@ void App::generateAndBuildTerrain() {
   terrainTileW_   = data.width;
   terrainTileH_   = data.height;
   terrainIndexCt_ = static_cast<int>(data.triangleIndices.size());
-  hoveredTile_    = {};  // hover stale after regenerate
+  hoveredTile_    = {};  // hover stale after rebuild
 
   obstacles_.rebuildFromMap(map_);
-
-  // Rebuild minimap base layer for the new map.
   minimap_.buildBaseLayer(map_);
-
-  // Rebuild water mesh from loaded/generated map.
   if (waterRenderer_.valid())
     waterRenderer_.rebuild(map_, waterUniforms_.waterOffset);
 
-  std::fprintf(stdout, "[App] terrain mesh: %d x %d tiles, %zu verts, %zu tri-idx, %zu line-idx\n",
-               data.width, data.height,
-               data.positions.size() / 3,
-               data.triangleIndices.size(),
-               data.lineIndices.size());
+  std::fprintf(stdout, "[App] world built: %d x %d tiles, %zu water tiles\n",
+               data.width, data.height, map_.waterTiles.size());
 }
 
 void App::initHoverMesh() {
@@ -2806,7 +2807,18 @@ void App::processNetworkMessages() {
                    init.isNewPlayer ? "(new)" : "(returning)");
       isNewPlayer_ = init.isNewPlayer;
       if (isNewPlayer_) joinNameBuf_[0] = '\0';
-      // We keep our procedural map; server tiles are acknowledged but ignored.
+      // Adopt the server's authoritative map so the client renders the same
+      // world the server simulates (terrain, obstacles, water, walkability) —
+      // essential for shared builds where there's no local worldMap.json.
+      if (!init.tiles.empty()) {
+        map_.height       = static_cast<int>(init.tiles.size());
+        map_.width        = static_cast<int>(init.tiles[0].size());
+        map_.tiles        = std::move(init.tiles);
+        map_.vertexHeights= std::move(init.vertexHeights);
+        map_.waterTiles   = std::move(init.waterTiles);
+        depletedTiles_.clear();
+        rebuildWorldFromMap();
+      }
       currLocalPlayer_.reset();
       prevLocalPlayer_.reset();
     } else if (hdr.type == "state") {
