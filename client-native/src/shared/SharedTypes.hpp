@@ -128,6 +128,8 @@ struct PlayerState {
   // value rises monotonically when the server validates an attack / chop.
   int                                          lastAttackTick  = -999;
   int                                          lastChopTick    = -999;
+  int                                          lastMineTick    = -999;
+  int                                          lastFishTick    = -999;
   // Set while the server has a pending pick-up queued for this player.
   // Transitions from has_value() → nullopt indicate a completed pickup.
   std::optional<std::string>                   pickupItemId;

@@ -2865,6 +2865,17 @@ void App::processNetworkMessages() {
             ra.oneShotClip    = "Sword_Attack";
             ra.oneShotEndsAt  = nowRem + remDurMs("Sword_Attack");
           }
+          // Mine / Fish — stubbed to the same swing clip as chop for now.
+          if (ps.lastMineTick > ra.seenMineTick) {
+            ra.seenMineTick  = ps.lastMineTick;
+            ra.oneShotClip   = "Sword_Attack";
+            ra.oneShotEndsAt = nowRem + remDurMs("Sword_Attack");
+          }
+          if (ps.lastFishTick > ra.seenFishTick) {
+            ra.seenFishTick  = ps.lastFishTick;
+            ra.oneShotClip   = "Sword_Attack";
+            ra.oneShotEndsAt = nowRem + remDurMs("Sword_Attack");
+          }
           // Chop → Sword_Attack (overwrites attack if both fire same tick).
           if (ps.lastChopTick > ra.seenChopTick) {
             ra.seenChopTick  = ps.lastChopTick;
@@ -2935,6 +2946,17 @@ void App::processNetworkMessages() {
         // Woodcutting — also plays Sword_Attack (axe swing).
         if (cp.lastChopTick > seenChopTick_) {
           seenChopTick_  = cp.lastChopTick;
+          oneShotClip_   = "Sword_Attack";
+          oneShotEndsAt_ = lastTickTime_ + std::chrono::milliseconds(oneShotDurMs("Sword_Attack"));
+        }
+        // Mine / Fish — stubbed to the same swing clip as chop for now.
+        if (cp.lastMineTick > seenMineTick_) {
+          seenMineTick_  = cp.lastMineTick;
+          oneShotClip_   = "Sword_Attack";
+          oneShotEndsAt_ = lastTickTime_ + std::chrono::milliseconds(oneShotDurMs("Sword_Attack"));
+        }
+        if (cp.lastFishTick > seenFishTick_) {
+          seenFishTick_  = cp.lastFishTick;
           oneShotClip_   = "Sword_Attack";
           oneShotEndsAt_ = lastTickTime_ + std::chrono::milliseconds(oneShotDurMs("Sword_Attack"));
         }

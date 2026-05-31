@@ -132,6 +132,8 @@ private:
     // Tick stamps to detect per-tick action events for this remote player.
     int   seenAttackTick   = -999;
     int   seenChopTick     = -999;
+    int   seenMineTick     = -999;
+    int   seenFishTick     = -999;
     int   seenHitTick      = -999;
     bool  prevPickupActive = false;  // was pickupItemId non-empty last tick?
   };
@@ -169,6 +171,8 @@ private:
   // movement state. Triggered when lastAttackTick / lastChopTick rises.
   int                                      seenAttackTick_    = -999;
   int                                      seenChopTick_      = -999;
+  int                                      seenMineTick_      = -999;
+  int                                      seenFishTick_      = -999;
   int                                      seenHitTick_       = -999;
   bool                                     prevPickupActive_  = false; // was pickupItemId non-empty last tick?
   // Per-equip-slot snapshot for detecting equip/unequip events vs the
