@@ -160,6 +160,7 @@ INSERT INTO item_definitions (id, name, stackable, tradable, value, item_type, e
   ('axe',             'Bronze axe',      FALSE, TRUE,  16,  'equipment', 'rightHand',  FALSE, 4,  0, 0, 0, 0, 0, 'woodcutting', 1,    'axe',     NULL,     NULL),
   ('iron_axe',        'Iron axe',        FALSE, TRUE,  8,   'equipment', 'rightHand',  FALSE, -1, 0, 2, 0, 0, 0, 'woodcutting', 1,    'axe',     NULL,     NULL),
   ('pickaxe',         'Iron Pickaxe',    FALSE, TRUE,  25,  'equipment', 'rightHand',  FALSE, 6,  0, 1, 0, 0, 0, 'mining',      1,    'pickaxe', NULL,     'A sturdy iron pickaxe, good for mining.'),
+  ('fishing_rod',     'Fishing rod',     FALSE, TRUE,  5,   'resource',  NULL,         FALSE, 0,  0, 0, 0, 0, 0, 'fishing',     1,    'fishing_rod', NULL, 'Used to catch fish.'),
   ('bronze_sword',    'Bronze sword',    FALSE, TRUE,  40,  'equipment', 'rightHand',  FALSE, 6,  3, 0, 0, 0, 0, NULL,          NULL, NULL,      'melee',  NULL),
   ('iron_sword',      'Iron sword',      FALSE, TRUE,  120, 'equipment', 'rightHand',  FALSE, 10, 5, 0, 0, 0, 0, NULL,          NULL, NULL,      'melee',  NULL),
   ('bronze_shield',   'Bronze shield',   FALSE, TRUE,  30,  'equipment', 'leftHand',   FALSE, 0,  0, 5, 0, 0, 0, NULL,          NULL, NULL,      NULL,     NULL),
