@@ -2772,8 +2772,9 @@ void App::processNetworkMessages() {
       prevLocalPlayer_.reset();
     } else if (hdr.type == "state") {
       shared::StateMessage st;
-      if (glz::read<kPermissive>(st, raw)) {
-        std::fprintf(stderr, "[App] state parse failed\n");
+      if (auto ec = glz::read<kPermissive>(st, raw)) {
+        std::fprintf(stderr, "[App] state parse failed: %s\n",
+                     glz::format_error(ec, raw).c_str());
         continue;
       }
       currentTick_  = st.tick;

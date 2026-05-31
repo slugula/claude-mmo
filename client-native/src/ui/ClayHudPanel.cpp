@@ -375,7 +375,7 @@ static void buildSkillsTab(const shared::PlayerState* player) {
                         auto it = player->skills.find(skillId);
                         if (it != player->skills.end()) {
                             lvl = it->second.level;
-                            xp  = it->second.xp;
+                            xp  = static_cast<int>(it->second.xp);
                         }
                     }
                     int xpThis = xpForLevel(lvl);
@@ -785,7 +785,7 @@ void clayHudHandleInput(const shared::PlayerState* player,
             const char* skillId = kSkillOrder[si];
             int lvl = 1, xp = 0;
             auto it = player->skills.find(skillId);
-            if (it != player->skills.end()) { lvl = it->second.level; xp = it->second.xp; }
+            if (it != player->skills.end()) { lvl = it->second.level; xp = static_cast<int>(it->second.xp); }
             int xpNext    = (lvl < 99) ? xpForLevel(lvl + 1) : xpForLevel(99);
             int remaining = std::max(0, xpNext - xp);
 

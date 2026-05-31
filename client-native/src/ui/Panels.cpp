@@ -332,7 +332,7 @@ void drawSkillsTab(const shared::PlayerState& p) {
     const char* skillId = kSkillOrder[i];
     auto it = p.skills.find(skillId);
     const int  lvl = (it != p.skills.end()) ? it->second.level : 1;
-    const int  xp  = (it != p.skills.end()) ? it->second.xp    : 0;
+    const int  xp  = (it != p.skills.end()) ? static_cast<int>(it->second.xp) : 0;
 
     // XP progress within this level
     const int  xpThisLvl  = xpForLevel(lvl);

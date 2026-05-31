@@ -94,7 +94,10 @@ struct ItemStack {
 // SkillsState in TS is Record<SkillId, SkillState>. We deserialize as a
 // flat map so any future skill the server adds shows up automatically.
 struct SkillState {
-  int xp    = 0;
+  // Server XP is fractional (e.g. mining 17.5/ore, combat hitpoints = dmg×1.33),
+  // so this must be floating point — an int here fails JSON parsing on any
+  // non-integer total ("parse_number_failure").
+  double xp = 0;
   int level = 1;
 };
 
