@@ -87,7 +87,6 @@ private:
   world::WaterUniforms                     waterUniforms_;
   ui::SpriteCache                          spriteCache_;
   world::SkinnedMesh                       playerModel_;
-  world::SkinnedMesh                       fishingSpotMesh_;
   world::EntityRenderer                    entities_;
   camera::GameCamera                       camera_;
 

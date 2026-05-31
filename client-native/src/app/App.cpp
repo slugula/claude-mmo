@@ -65,7 +65,6 @@ constexpr const char* kShadowInstVertPath    = "shaders/shadow_instanced.vert";
 constexpr const char* kShadowSkinnedVertPath = "shaders/shadow_skinned.vert";
 constexpr const char* kShadowFragPath        = "shaders/shadow.frag";
 constexpr const char* kPlayerModelPath       = "assets/models/player.glb";
-constexpr const char* kFishingSpotModelPath  = "assets/models/fishing_spot.glb";
 constexpr const char* kTreeModelPath         = "assets/models/tree.gltf";
 constexpr const char* kWaterVertPath     = "shaders/water.vert";
 constexpr const char* kWaterFragPath     = "shaders/water.frag";
@@ -75,8 +74,6 @@ constexpr int         kShadowMapSize     = 2048;
 
 constexpr glm::vec3 kPlayerColor       { 0.62f, 0.45f, 0.30f};  // skin tone, modulated by Lambert
 constexpr float     kPlayerScale       = 1.0f;
-constexpr glm::vec3 kFishingSpotColor  { 0.50f, 0.75f, 0.90f};  // light blue water tone
-constexpr float     kFishingSpotScale  = 1.0f;                   // tune if model is wrong size
 
 // Convert sun (yaw, pitch) in degrees to a unit "light travel" vector
 // (sun-toward-ground). yaw is around +Y measured from +Z toward +X; pitch
@@ -579,21 +576,6 @@ bool App::init() {
     playerModel_.setClip("Idle_Loop");
   }
 
-  // Fishing spot animated model — loads first animation clip and loops it.
-  if (!fishingSpotMesh_.load(resolveFromExe(kFishingSpotModelPath))) {
-    std::fprintf(stderr, "[App] fishing_spot model load failed — fishing spots will not render\n");
-  } else {
-    std::fprintf(stdout, "[App] fishing_spot model loaded (%d anim(s), %d joint(s))\n",
-                 fishingSpotMesh_.animationCount(), fishingSpotMesh_.jointCount());
-    for (int i = 0; i < fishingSpotMesh_.animationCount(); ++i) {
-      const std::string* n = fishingSpotMesh_.animationNameAt(i);
-      std::fprintf(stdout, "  anim[%d] = \"%s\"  dur=%.3fs\n",
-                   i, n ? n->c_str() : "?", fishingSpotMesh_.clipDuration(i));
-    }
-    fishingSpotMesh_.setClip("");  // falls back to first animation
-    std::fprintf(stdout, "[App] active clip = \"%s\"\n", fishingSpotMesh_.clipName().c_str());
-    fishingSpotMesh_.dumpTrackInfo();
-  }
 
   // Snap the camera to the map center so the first frame isn't mid-lerp.
   camera_.snapTo(followTargetForMap(terrainTileW_, terrainTileH_));
@@ -1283,7 +1265,7 @@ void App::renderFrame() {
   // water shader captures it in sceneColor and renders it as a refracted,
   // depth-tinted underwater object. Normal depth test/write — trees, NPCs, and
   // terrain in front correctly occlude it.
-  if (fishingSpotMesh_.isLoaded() || obstacles_.hasCustomModels() || entities_.hasAnimatedNpcs()) {
+  if (obstacles_.hasCustomModels() || entities_.hasAnimatedNpcs()) {
     skinnedShader_.use();
     skinnedShader_.setMat4 ("u_viewProj",       viewProj);
     skinnedShader_.setMat4 ("u_lightViewProj",  lightVP);
@@ -1308,33 +1290,7 @@ void App::renderFrame() {
     // Animated custom NPCs (uses the same skinned shader state).
     entities_.renderAnimatedNpcs(skinnedShader_, dt);
 
-    if (fishingSpotMesh_.isLoaded()) {
-      fishingSpotMesh_.update(dt);
-      const int   fsW    = map_.width;
-      const int   fsH    = map_.height;
-      const auto& fsVh   = map_.vertexHeights;
-      const bool  fsVhOk = (static_cast<int>(fsVh.size()) == (fsW + 1) * (fsH + 1));
-      for (int fty = 0; fty < fsH; ++fty) {
-        for (int ftx = 0; ftx < fsW; ++ftx) {
-          if (map_.tiles[fty][ftx].obstacle != "fishing_spot") continue;
-          float cy = 0.0f;
-          if (fsVhOk) {
-            const float SW = fsVh[(fsH - fty)     * (fsW + 1) + ftx    ] * shared::kMaxTerrainH;
-            const float SE = fsVh[(fsH - fty)     * (fsW + 1) + ftx + 1] * shared::kMaxTerrainH;
-            const float NW = fsVh[(fsH - fty - 1) * (fsW + 1) + ftx    ] * shared::kMaxTerrainH;
-            const float NE = fsVh[(fsH - fty - 1) * (fsW + 1) + ftx + 1] * shared::kMaxTerrainH;
-            cy = (SW + SE + NW + NE) * 0.25f;
-          }
-          glm::mat4 fsModel = glm::translate(glm::mat4(1.0f),
-                                             glm::vec3(static_cast<float>(ftx), cy,
-                                                       static_cast<float>(fty)));
-          fsModel = glm::scale(fsModel, glm::vec3(kFishingSpotScale));
-          fishingSpotMesh_.render(skinnedShader_, fsModel, /*useMaterialColors=*/true);
-        }
-      }
-    }
-
-    // Data-driven animated custom objects (same skinned shader state).
+    // Data-driven animated custom objects (incl. fishing_spot).
     obstacles_.renderCustomAnimated(skinnedShader_, dt);
   }
 

@@ -52,10 +52,9 @@ std::pair<int,int> ObstacleSystem::footprint(const std::string& id) const {
 void ObstacleSystem::loadCustomModels() {
   models_.clearEntries();
   if (!modelResolver_) return;
-  // Register every object definition. fishing_spot is excluded — it has its own
-  // dedicated animated render path in the host.
+  // Register every object definition with the shared model library. Animated
+  // models (e.g. fishing_spot) are auto-detected and routed to the skinned path.
   for (const auto& [id, def] : defs_) {
-    if (id == "fishing_spot") continue;
     models_.ensure(id, def.modelPath, def.sizeX, def.sizeY);
   }
 }
@@ -73,7 +72,6 @@ void ObstacleSystem::rebuildFromMap(const shared::WorldMapFile& map) {
     for (int tx = 0; tx < W; ++tx) {
       const auto& tile = map.tiles[ty][tx];
       if (tile.obstacle.empty() || tile.obstacle == "none") continue;
-      if (tile.obstacle == "fishing_spot") continue;   // host renders these
       if (!models_.has(tile.obstacle)) continue;
 
       const float y = tileCenterY(vh, W, H, tx, ty);
@@ -126,7 +124,7 @@ bool ObstacleSystem::renderGeometryAt(render::Shader& maskShader,
                                       int tileX, int tileY) {
   if (tileY < 0 || tileY >= map.height || tileX < 0 || tileX >= map.width) return false;
   const auto& obs = map.tiles[tileY][tileX].obstacle;
-  if (obs.empty() || obs == "fishing_spot" || !models_.has(obs)) return false;
+  if (obs.empty() || !models_.has(obs)) return false;
   if (models_.isAnimated(obs)) return false;   // no skinned mask shader yet
 
   const auto& vh = map.vertexHeights;

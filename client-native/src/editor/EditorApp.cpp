@@ -47,7 +47,6 @@ constexpr const char* kSkinnedVertPath   = "shaders/skinned.vert";
 constexpr const char* kSkinnedFragPath   = "shaders/skinned.frag";
 constexpr const char* kShadowInstVertPath= "shaders/shadow_instanced.vert";
 constexpr const char* kShadowFragPath    = "shaders/shadow.frag";
-constexpr const char* kFishingSpotModelPath = "assets/models/fishing_spot.glb";
 constexpr const char* kWaterVertPath     = "shaders/water.vert";
 constexpr const char* kWaterFragPath     = "shaders/water.frag";
 constexpr const char* kWaterNormalPath   = "assets/water_normal.png";
@@ -380,13 +379,6 @@ bool EditorApp::init() {
     return resolveFromExe(rel.c_str());
   });
   entities_.initGL();
-
-  // Fishing spot animated model (non-fatal).
-  if (!fishingSpotMesh_.load(resolveFromExe(kFishingSpotModelPath))) {
-    std::fprintf(stderr, "[Editor] fishing_spot model not found — fishing spots won't render in 3D view\n");
-  } else {
-    fishingSpotMesh_.setClip("");  // first animation
-  }
 
   initNewMap(64, 64);
 
@@ -771,7 +763,7 @@ void EditorApp::render3DViewport(float dt) {
   // ---- Fishing spot animated model — OPAQUE pass -----------------------------
   // Rendered with the opaque scene BEFORE the SSR snapshot so the water shader
   // captures it in sceneColor and draws it as a refracted underwater object.
-  if (fishingSpotMesh_.isLoaded() || obstacles_.hasCustomModels() || entities_.hasAnimatedNpcs()) {
+  if (obstacles_.hasCustomModels() || entities_.hasAnimatedNpcs()) {
     skinnedShader_.use();
     skinnedShader_.setMat4 ("u_viewProj",       viewProj);
     skinnedShader_.setMat4 ("u_lightViewProj",  lightVP);
@@ -792,32 +784,7 @@ void EditorApp::render3DViewport(float dt) {
     skinnedShader_.setFloat("u_fogDensity",      fogDensity_);
     skinnedShader_.setFloat("u_fogStart",        fogStart_);
 
-    if (fishingSpotMesh_.isLoaded()) {
-      fishingSpotMesh_.update(dt);
-      const int   fsW    = map_.width;
-      const int   fsH    = map_.height;
-      const auto& fsVh   = map_.vertexHeights;
-      const bool  fsVhOk = (static_cast<int>(fsVh.size()) == (fsW + 1) * (fsH + 1));
-      for (int fty = 0; fty < fsH; ++fty) {
-        for (int ftx = 0; ftx < fsW; ++ftx) {
-          if (map_.tiles[fty][ftx].obstacle != "fishing_spot") continue;
-          float cy = 0.0f;
-          if (fsVhOk) {
-            const float SW = fsVh[(fsH - fty)     * (fsW + 1) + ftx    ] * shared::kMaxTerrainH;
-            const float SE = fsVh[(fsH - fty)     * (fsW + 1) + ftx + 1] * shared::kMaxTerrainH;
-            const float NW = fsVh[(fsH - fty - 1) * (fsW + 1) + ftx    ] * shared::kMaxTerrainH;
-            const float NE = fsVh[(fsH - fty - 1) * (fsW + 1) + ftx + 1] * shared::kMaxTerrainH;
-            cy = (SW + SE + NW + NE) * 0.25f;
-          }
-          glm::mat4 fsModel = glm::translate(glm::mat4(1.0f),
-              glm::vec3(static_cast<float>(ftx), cy, static_cast<float>(fty)));
-          fsModel = glm::scale(fsModel, glm::vec3(1.0f));
-          fishingSpotMesh_.render(skinnedShader_, fsModel, /*useMaterialColors=*/true);
-        }
-      }
-    }
-
-    // Data-driven animated custom objects (same skinned shader state).
+    // Data-driven animated custom objects (incl. fishing_spot) + NPCs.
     obstacles_.renderCustomAnimated(skinnedShader_, dt);
     entities_.renderAnimatedNpcs(skinnedShader_, dt);  // animated NPCs in editor
   }

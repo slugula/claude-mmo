@@ -82,6 +82,7 @@ void SkinnedMesh::destroy() {
     if (p.ebo)        glDeleteBuffers(1, &p.ebo);
     if (p.vboWeight)  glDeleteBuffers(1, &p.vboWeight);
     if (p.vboJoint)   glDeleteBuffers(1, &p.vboJoint);
+    if (p.vboCol)     glDeleteBuffers(1, &p.vboCol);
     if (p.vboNrm)     glDeleteBuffers(1, &p.vboNrm);
     if (p.vboPos)     glDeleteBuffers(1, &p.vboPos);
     if (p.vao)        glDeleteVertexArrays(1, &p.vao);
@@ -123,9 +124,16 @@ bool SkinnedMesh::load(const std::filesystem::path& glbPath) {
 void SkinnedMesh::uploadPrimitive(const GltfPrimitive& src, PrimitiveGl& dst) {
   glCreateBuffers(1, &dst.vboPos);
   glCreateBuffers(1, &dst.vboNrm);
+  glCreateBuffers(1, &dst.vboCol);
   glCreateBuffers(1, &dst.vboJoint);
   glCreateBuffers(1, &dst.vboWeight);
   glCreateBuffers(1, &dst.ebo);
+
+  // Per-vertex RGBA colour (location 4). Default to white when the mesh carries
+  // none, so the shader's (u_color * v_color) leaves the base colour unchanged.
+  const size_t vcount = src.positions.size() / 3;
+  std::vector<float> colors = src.colors;
+  if (colors.size() != vcount * 4) colors.assign(vcount * 4, 1.0f);
 
   glNamedBufferStorage(dst.vboPos,
                        static_cast<GLsizeiptr>(src.positions.size() * sizeof(float)),
@@ -133,6 +141,9 @@ void SkinnedMesh::uploadPrimitive(const GltfPrimitive& src, PrimitiveGl& dst) {
   glNamedBufferStorage(dst.vboNrm,
                        static_cast<GLsizeiptr>(src.normals.size() * sizeof(float)),
                        src.normals.data(), 0);
+  glNamedBufferStorage(dst.vboCol,
+                       static_cast<GLsizeiptr>(colors.size() * sizeof(float)),
+                       colors.data(), 0);
   glNamedBufferStorage(dst.vboJoint,
                        static_cast<GLsizeiptr>(src.jointIndices.size() * sizeof(uint8_t)),
                        src.jointIndices.data(), 0);
@@ -154,6 +165,11 @@ void SkinnedMesh::uploadPrimitive(const GltfPrimitive& src, PrimitiveGl& dst) {
   glEnableVertexArrayAttrib(dst.vao, 1);
   glVertexArrayAttribFormat(dst.vao, 1, 3, GL_FLOAT, GL_FALSE, 0);
   glVertexArrayAttribBinding(dst.vao, 1, 1);
+  // Attribute 4: per-vertex RGBA colour
+  glVertexArrayVertexBuffer(dst.vao, 4, dst.vboCol, 0, sizeof(float) * 4);
+  glEnableVertexArrayAttrib(dst.vao, 4);
+  glVertexArrayAttribFormat(dst.vao, 4, 4, GL_FLOAT, GL_FALSE, 0);
+  glVertexArrayAttribBinding(dst.vao, 4, 4);
   // Attribute 2: joint indices (uvec4 of u8)
   glVertexArrayVertexBuffer(dst.vao, 2, dst.vboJoint, 0, sizeof(uint8_t) * 4);
   glEnableVertexArrayAttrib(dst.vao, 2);

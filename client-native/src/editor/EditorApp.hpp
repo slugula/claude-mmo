@@ -136,7 +136,6 @@ private:
   render::ShadowMap shadowMap_;
   render::Mesh    terrainMesh_;
   world::ObstacleSystem obstacles_;
-  world::SkinnedMesh    fishingSpotMesh_;  // animated fishing spot
   world::EntityRenderer entities_;   // NPC stand-ins
   camera::GameCamera    camera_;
   world::WaterRenderer  waterRenderer_;

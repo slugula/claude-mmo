@@ -83,7 +83,7 @@ public:
 private:
   struct PrimitiveGl {
     GLuint    vao = 0;
-    GLuint    vboPos = 0, vboNrm = 0, vboJoint = 0, vboWeight = 0, ebo = 0;
+    GLuint    vboPos = 0, vboNrm = 0, vboCol = 0, vboJoint = 0, vboWeight = 0, ebo = 0;
     GLsizei   indexCount = 0;
     int       materialIndex = -1;
     glm::vec3 matColor = glm::vec3(1.0f);  // cached from GltfMaterial.baseColor
