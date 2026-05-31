@@ -650,16 +650,27 @@ int App::run() {
 }
 
 void App::generateAndBuildTerrain() {
-  // Try to load a saved map from worldMap.json (level editor output).
-  // If found, it provides terrain, obstacles, water tiles, and spawn data.
-  // If not found, fall back to procedural generation (no water).
-  const auto mapPath = resolveFromExe(kWorldMapPath);
+  // Load the saved map. Single source of truth = public/maps/worldMap.json —
+  // the same file the server reads and the editor saves to (3 levels above the
+  // exe in a dev tree: Release/ → build/ → client-native/ → repo root). This
+  // keeps client rendering + walk-click gating in sync with server pathing.
+  // Falls back to an exe-relative worldMap.json (shipped builds), then to
+  // procedural generation.
+  std::filesystem::path mapPath;
+  {
+    std::error_code ec;
+    auto canonical = std::filesystem::weakly_canonical(
+        resolveFromExe("../../../public/maps/worldMap.json"), ec);
+    mapPath = (!ec && std::filesystem::exists(canonical))
+                  ? canonical
+                  : resolveFromExe(kWorldMapPath);
+  }
   if (!shared::loadWorldMap(mapPath, map_)) {
     map_ = world::generateMap(kMapWidth, kMapHeight, mapSeed_, noiseFreq_, noiseAmp_);
     std::fprintf(stdout, "[App] no worldMap.json found — using procedural map\n");
   } else {
-    std::fprintf(stdout, "[App] loaded worldMap.json (%dx%d, %zu water tiles)\n",
-                 map_.width, map_.height, map_.waterTiles.size());
+    std::fprintf(stdout, "[App] loaded map %s (%dx%d, %zu water tiles)\n",
+                 mapPath.string().c_str(), map_.width, map_.height, map_.waterTiles.size());
   }
 
   const auto data = world::buildTerrainMesh(map_);
