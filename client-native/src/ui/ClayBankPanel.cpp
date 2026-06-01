@@ -179,7 +179,7 @@ static void buildBankSlot(int idx, const shared::ItemStack* item,
 }
 
 // ── Public: build layout ──────────────────────────────────────────────────────
-void buildBankPanel(float /*screenW*/, float /*screenH*/,
+void buildBankPanel(float screenW, float screenH,
                     const shared::PlayerState* player,
                     net::NetworkClient* netc,
                     const SpriteCache* sprites,
@@ -330,14 +330,20 @@ void buildBankPanel(float /*screenW*/, float /*screenH*/,
         thumbOffsetY   = frac * maxOff;
     }
 
-    // ── Layout — centred on screen ────────────────────────────────────────────
+    // ── Layout — centred on screen, snapped to whole pixels ───────────────────
+    // CENTER_CENTER anchoring can land the panel on a fractional pixel, which
+    // makes the 1:1 item sprites sub-pixel sample and look blurry. Anchor at
+    // LEFT_TOP with a floored centre offset so every sprite lands on an integer
+    // pixel (matching the crisp corner-anchored inventory panel).
+    const float bkX = static_cast<float>(static_cast<int>((screenW - kPanelW) * 0.5f));
+    const float bkY = static_cast<float>(static_cast<int>((screenH - kPanelH) * 0.5f));
     CLAY(CLAY_ID("BkAnchor"), {
         .floating = {
-            .offset   = { 0.f, 0.f },
+            .offset   = { bkX, bkY },
             .zIndex   = 20,
             .attachPoints = {
-                .element = CLAY_ATTACH_POINT_CENTER_CENTER,
-                .parent  = CLAY_ATTACH_POINT_CENTER_CENTER,
+                .element = CLAY_ATTACH_POINT_LEFT_TOP,
+                .parent  = CLAY_ATTACH_POINT_LEFT_TOP,
             },
             .attachTo = CLAY_ATTACH_TO_ROOT,
         }
