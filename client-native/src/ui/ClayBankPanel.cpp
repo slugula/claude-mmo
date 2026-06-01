@@ -1,7 +1,9 @@
 // ClayBankPanel.cpp
 // OSRS-style bank window rendered entirely with Clay.
-// Layout: header (Deposit All / Deposit Equipment / usage) + scrollable bank grid
-// + divider + inventory grid (8-col view). Right-click uses ClayContextMenu.
+// Layout: header (title + usage + X close) + scrollable bank grid (with
+// scrollbar) + footer (Deposit All / Deposit Equipment).
+// The player's real inventory (HUD panel) is used to deposit — the bank window
+// no longer shows a copy of the inventory.
 
 #ifdef _MSC_VER
 #  pragma warning(push, 0)
@@ -41,23 +43,31 @@ static constexpr Clay_Color kBtnHov     = {  60,  37,  13, 255 };
 static constexpr Clay_Color kOrange     = { 255, 152,  31, 255 };
 static constexpr Clay_Color kWhite      = { 255, 255, 255, 255 };
 static constexpr Clay_Color kGrey       = { 160, 160, 160, 200 };
+static constexpr Clay_Color kRed        = { 230,  80,  60, 255 };
 static constexpr Clay_Color kScrollBg   = {   8,   4,   0, 180 };
+static constexpr Clay_Color kSbTrack    = {  20,  12,   4, 200 };
+static constexpr Clay_Color kSbThumb    = {  90,  66,  34, 255 };
 
 // ── Layout constants ──────────────────────────────────────────────────────────
-static constexpr float kPanelW    = 460.f;
-static constexpr float kPanelH    = 440.f;
-static constexpr float kPad       =   8.f;
-static constexpr float kCellSize  =  44.f;
-static constexpr float kCellGap   =   3.f;
-static constexpr int   kCols      =   8;   // 8 columns in bank / inventory-in-bank
-static constexpr int   kMaxBank   = 400;
+static constexpr float kPad         =   8.f;
+static constexpr float kCellSize    =  44.f;
+static constexpr float kCellGap     =   3.f;
+static constexpr int   kCols        =   8;     // bank columns
+static constexpr int   kVisibleRows =   6;     // rows visible before scroll
+static constexpr int   kMaxBank     = 400;
+static constexpr float kSbW         =   8.f;   // scrollbar width
+static constexpr float kHeaderH     =  32.f;
+static constexpr float kFooterH     =  36.f;
 
-// Inventory-in-bank: show up to 2 rows × 8 cols = 16 visible at once.
-static constexpr int kInvBankRows = 2;
+// Grid metrics derived from the constants above.
+static constexpr float kGridContentW = kCols * kCellSize + (kCols - 1) * kCellGap;     // 373
+static constexpr float kGridRowH     = kVisibleRows * kCellSize
+                                     + (kVisibleRows - 1) * kCellGap + 2.f * kPad;       // 295
+static constexpr float kPanelW       = kGridContentW + 2.f * kPad + kSbW;               // 397
+static constexpr float kPanelH       = kHeaderH + 1.f + kGridRowH + 1.f + kFooterH;     // 365
 
 // ── Per-frame hover state ─────────────────────────────────────────────────────
 static int  s_hovBankSlot = -1;   // hovered bank grid slot index
-static int  s_hovInvSlot  = -1;   // hovered inventory slot index (in bank view)
 
 // ── Close flag ────────────────────────────────────────────────────────────────
 static bool s_wantsClose = false;
@@ -96,16 +106,12 @@ static std::string fmtQty(int q) {
     return tmp;
 }
 
-// ── Single item slot element (shared by bank grid and inventory grid) ─────────
-// Suffix 'B' for bank grid slots, 'V' for inventory-in-bank slots.
-static void buildBankSlot(int idx, bool isBankGrid,
-                          const shared::ItemStack* item,
+// ── Single bank slot element ──────────────────────────────────────────────────
+static void buildBankSlot(int idx, const shared::ItemStack* item,
                           const SpriteCache* sprites) {
-    bool hovered = isBankGrid ? (s_hovBankSlot == idx) : (s_hovInvSlot == idx);
+    bool hovered = (s_hovBankSlot == idx);
 
-    Clay_ElementId elemId = isBankGrid ? CLAY_IDI("BkBankSlot", idx)
-                                       : CLAY_IDI("BkInvSlot",  idx);
-    CLAY(elemId, {
+    CLAY(CLAY_IDI("BkBankSlot", idx), {
         .layout = {
             .sizing         = { CLAY_SIZING_FIXED(kCellSize), CLAY_SIZING_FIXED(kCellSize) },
             .childAlignment = { .x = CLAY_ALIGN_X_CENTER, .y = CLAY_ALIGN_Y_CENTER },
@@ -119,13 +125,10 @@ static void buildBankSlot(int idx, bool isBankGrid,
         if (item) {
             if (sprites) {
                 GLuint tex = sprites->get(item->itemId);
-                Clay_ElementId sprId = isBankGrid ? CLAY_IDI("BkBankSprite", idx)
-                                                  : CLAY_IDI("BkInvSprite",  idx);
-                CLAY(sprId, {
+                CLAY(CLAY_IDI("BkBankSprite", idx), {
                     .layout = {
                         // 32×32 sprites drawn 1:1 (crisp, no scaling/filtering).
-                        .sizing = { CLAY_SIZING_FIXED(32.f),
-                                    CLAY_SIZING_FIXED(32.f) },
+                        .sizing = { CLAY_SIZING_FIXED(32.f), CLAY_SIZING_FIXED(32.f) },
                     },
                     .image = {
                         .imageData = reinterpret_cast<void*>(static_cast<uintptr_t>(tex))
@@ -133,18 +136,16 @@ static void buildBankSlot(int idx, bool isBankGrid,
                 }) {}
             }
 
-            // Quantity overlay (top-left floating)
+            // Quantity overlay (top-RIGHT floating) — items always stack in bank.
             if (item->quantity > 1) {
                 std::string qs = fmtQty(item->quantity);
-                Clay_ElementId qtyId = isBankGrid ? CLAY_IDI("BkBankQty", idx)
-                                                  : CLAY_IDI("BkInvQty",  idx);
-                CLAY(qtyId, {
+                CLAY(CLAY_IDI("BkBankQty", idx), {
                     .floating = {
-                        .offset       = { 2.f, 2.f },
+                        .offset       = { -2.f, 2.f },
                         .zIndex       = 10,
                         .attachPoints = {
-                            .element = CLAY_ATTACH_POINT_LEFT_TOP,
-                            .parent  = CLAY_ATTACH_POINT_LEFT_TOP,
+                            .element = CLAY_ATTACH_POINT_RIGHT_TOP,
+                            .parent  = CLAY_ATTACH_POINT_RIGHT_TOP,
                         },
                         .attachTo = CLAY_ATTACH_TO_PARENT,
                     }
@@ -166,42 +167,55 @@ void buildBankPanel(float /*screenW*/, float /*screenH*/,
                     const SpriteCache* sprites,
                     bool bankOpen,
                     bool leftClicked,
-                    bool rightClicked) {
+                    bool rightClicked,
+                    UiHoverState* hover) {
     if (!bankOpen) return;
 
     s_boff = 0;
 
+    int bankCount = player ? static_cast<int>(player->bank.size()) : 0;
+
     // ── Recompute hover from last frame's bounding boxes ─────────────────────
     s_hovBankSlot = -1;
-    s_hovInvSlot  = -1;
-    {
-        int bankCount = player ? static_cast<int>(player->bank.size()) : 0;
-        for (int i = 0; i < bankCount; ++i)
-            if (Clay_PointerOver(CLAY_IDI("BkBankSlot", i))) { s_hovBankSlot = i; break; }
-
-        int invCount = player ? static_cast<int>(player->inventory.size()) : 0;
-        for (int i = 0; i < invCount && i < kCols * kInvBankRows; ++i)
-            if (Clay_PointerOver(CLAY_IDI("BkInvSlot", i))) { s_hovInvSlot = i; break; }
-    }
+    for (int i = 0; i < bankCount; ++i)
+        if (Clay_PointerOver(CLAY_IDI("BkBankSlot", i))) { s_hovBankSlot = i; break; }
 
     // ── Button hover detection ────────────────────────────────────────────────
     bool dAllHov  = Clay_PointerOver(CLAY_ID("BkDepositAll"));
     bool dWornHov = Clay_PointerOver(CLAY_ID("BkDepositWorn"));
+    bool xHov     = Clay_PointerOver(CLAY_ID("BkClose"));
 
-    // ── Close on outside click ────────────────────────────────────────────────
-    if (leftClicked && !Clay_PointerOver(CLAY_ID("BkPanel"))) {
-        s_wantsClose = true;
+    // ── Hover tooltip for a bank item: "Withdraw-1 {Item}" ───────────────────
+    if (hover && s_hovBankSlot >= 0 && s_hovBankSlot < bankCount) {
+        const auto& opt = player->bank[s_hovBankSlot];
+        if (opt.has_value()) {
+            hover->kind     = UiHoverState::Kind::InventoryItem;
+            hover->verb     = "Withdraw-1";
+            hover->itemName = ui::itemName(opt->itemId);
+        }
     }
 
-    // ── Header button actions ─────────────────────────────────────────────────
+    // ── Close handling: X button, or click outside both bank + HUD panels.
+    // Never close while a context menu is up (so clicking a Deposit/Withdraw
+    // entry doesn't also dismiss the bank).
+    if (leftClicked) {
+        if (xHov) {
+            s_wantsClose = true;
+        } else if (!Clay_PointerOver(CLAY_ID("BkPanel")) &&
+                   !Clay_PointerOver(CLAY_ID("HudPanel")) &&
+                   !ctxMenu().open) {
+            s_wantsClose = true;
+        }
+    }
+
+    // ── Footer button actions ─────────────────────────────────────────────────
     if (leftClicked) {
         if (dAllHov  && netc) netc->sendDepositAll();
         if (dWornHov && netc) netc->sendDepositWorn();
     }
 
-    // ── Right-click bank grid slot ────────────────────────────────────────────
-    if (rightClicked && s_hovBankSlot >= 0 && player &&
-        s_hovBankSlot < static_cast<int>(player->bank.size())) {
+    // ── Right-click bank grid slot → Withdraw 1/5/10/All/Examine ─────────────
+    if (rightClicked && s_hovBankSlot >= 0 && s_hovBankSlot < bankCount) {
         const auto& opt = player->bank[s_hovBankSlot];
         if (opt.has_value()) {
             auto& cm = ctxMenu();
@@ -218,36 +232,31 @@ void buildBankPanel(float /*screenW*/, float /*screenH*/,
             cm.entries.clear(); cm.clickedIndex = -1;
             std::string name = ui::itemName(opt->itemId);
             cm.entries.push_back({ "Withdraw 1",   name });
+            cm.entries.push_back({ "Withdraw 5",   name });
+            cm.entries.push_back({ "Withdraw 10",  name });
             cm.entries.push_back({ "Withdraw All", name });
             cm.entries.push_back({ "Examine",      name });
         }
     }
 
-    // ── Right-click inventory slot in bank ────────────────────────────────────
-    if (rightClicked && s_hovInvSlot >= 0 && player &&
-        s_hovInvSlot < static_cast<int>(player->inventory.size())) {
-        const auto& opt = player->inventory[s_hovInvSlot];
-        if (opt.has_value()) {
-            auto& cm = ctxMenu();
-            cm.open             = true;
-            cm.bankInvCtxSlot   = s_hovInvSlot;
-            cm.bankGridCtxSlot  = -1;
-            cm.inventoryCtxSlot = -1;
-            cm.equipCtxSlot.clear();
-            cm.contextItemId    = opt->itemId;
-            ImVec2 mp = ImGui::GetIO().MousePos;
-            cm.x = mp.x; cm.y = mp.y;
-            ImVec2 ds = ImGui::GetIO().DisplaySize;
-            cm.screenW = ds.x; cm.screenH = ds.y;
-            cm.entries.clear(); cm.clickedIndex = -1;
-            std::string name = ui::itemName(opt->itemId);
-            cm.entries.push_back({ "Deposit 1",   name });
-            cm.entries.push_back({ "Deposit All", name });
-        }
+    // ── Scrollbar thumb geometry (from previous-frame scroll data) ───────────
+    Clay_ScrollContainerData sd =
+        Clay_GetScrollContainerData(Clay_GetElementId(CLAY_STRING("BkGridScroll")));
+    const float kTrackH = kGridRowH;
+    float thumbH = kTrackH, thumbOffsetY = 0.f;
+    bool  showSb = false;
+    if (sd.found && sd.contentDimensions.height > sd.scrollContainerDimensions.height) {
+        showSb         = true;
+        float viewH    = sd.scrollContainerDimensions.height;
+        float contentH = sd.contentDimensions.height;
+        thumbH         = std::max(16.f, (viewH / contentH) * kTrackH);
+        float maxOff   = kTrackH - thumbH;
+        float frac     = (-sd.scrollPosition->y) / (contentH - viewH);
+        frac           = std::max(0.f, std::min(1.f, frac));
+        thumbOffsetY   = frac * maxOff;
     }
 
-    // ── Layout ────────────────────────────────────────────────────────────────
-    // Centred on screen via CLAY_ATTACH_POINT_CENTER_CENTER
+    // ── Layout — centred on screen ────────────────────────────────────────────
     CLAY(CLAY_ID("BkAnchor"), {
         .floating = {
             .offset   = { 0.f, 0.f },
@@ -259,7 +268,6 @@ void buildBankPanel(float /*screenW*/, float /*screenH*/,
             .attachTo = CLAY_ATTACH_TO_ROOT,
         }
     }) {
-        // Main panel box
         CLAY(CLAY_ID("BkPanel"), {
             .layout = {
                 .sizing          = { CLAY_SIZING_FIXED(kPanelW), CLAY_SIZING_FIXED(kPanelH) },
@@ -268,26 +276,145 @@ void buildBankPanel(float /*screenW*/, float /*screenH*/,
             },
             .backgroundColor = kBg,
             .cornerRadius    = CLAY_CORNER_RADIUS(4),
-            .border = {
-                .color = kBorder,
-                .width = CLAY_BORDER_ALL(1),
-            }
+            .border = { .color = kBorder, .width = CLAY_BORDER_ALL(1) }
         }) {
-            // ── Header ───────────────────────────────────────────────────────
+            // ── Header: "Bank"  …  "12 / 400"  [X] ───────────────────────────
             CLAY(CLAY_ID("BkHeader"), {
                 .layout = {
-                    .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(36) },
-                    .padding         = { (uint16_t)kPad, (uint16_t)kPad, 8, 8 },
-                    .childGap        = 6,
+                    .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(kHeaderH) },
+                    .padding         = { (uint16_t)kPad, (uint16_t)kPad, 6, 6 },
+                    .childGap        = 8,
                     .childAlignment  = { .x = CLAY_ALIGN_X_LEFT, .y = CLAY_ALIGN_Y_CENTER },
                     .layoutDirection = CLAY_LEFT_TO_RIGHT,
                 },
                 .backgroundColor = kHeaderBg,
             }) {
-                // Deposit All button
+                CLAY_TEXT(CLAY_STRING("Bank"), CLAY_TEXT_CONFIG({
+                    .textColor = kOrange, .fontSize = 0,
+                }));
+
+                // Spacer
+                CLAY(CLAY_ID("BkHeaderSpacer"), {
+                    .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) } }
+                }) {}
+
+                // Usage fraction
+                {
+                    char usageBuf[32];
+                    std::snprintf(usageBuf, sizeof(usageBuf), "%d / %d", bankCount, kMaxBank);
+                    CLAY_TEXT(cs(usageBuf), CLAY_TEXT_CONFIG({
+                        .textColor = kGrey, .fontSize = 0,
+                    }));
+                }
+
+                // Close (X) button
+                CLAY(CLAY_ID("BkClose"), {
+                    .layout = {
+                        .sizing         = { CLAY_SIZING_FIXED(20), CLAY_SIZING_FIXED(20) },
+                        .childAlignment = { .x = CLAY_ALIGN_X_CENTER, .y = CLAY_ALIGN_Y_CENTER },
+                    },
+                    .backgroundColor = xHov ? kBtnHov : kBtnBg,
+                    .cornerRadius    = CLAY_CORNER_RADIUS(2),
+                    .border = { .color = kBorder, .width = CLAY_BORDER_ALL(1) }
+                }) {
+                    CLAY_TEXT(CLAY_STRING("X"), CLAY_TEXT_CONFIG({
+                        .textColor = kRed, .fontSize = 0,
+                    }));
+                }
+            }
+
+            // ── Header/content divider ────────────────────────────────────────
+            CLAY(CLAY_ID("BkTopDivider"), {
+                .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(1) } },
+                .backgroundColor = kDivider,
+            }) {}
+
+            // ── Bank grid row: scrollable grid + scrollbar track ──────────────
+            CLAY(CLAY_ID("BkGridRow"), {
+                .layout = {
+                    .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(kGridRowH) },
+                    .layoutDirection = CLAY_LEFT_TO_RIGHT,
+                },
+            }) {
+                // Scrollable grid (padded on each side)
+                CLAY(CLAY_ID("BkGridScroll"), {
+                    .layout = {
+                        .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) },
+                        .padding         = { (uint16_t)kPad, (uint16_t)kPad,
+                                             (uint16_t)kPad, (uint16_t)kPad },
+                        .childGap        = (uint16_t)kCellGap,
+                        .layoutDirection = CLAY_TOP_TO_BOTTOM,
+                    },
+                    .backgroundColor = kScrollBg,
+                    .clip = { .vertical = true, .childOffset = Clay_GetScrollOffset() },
+                }) {
+                    int rows = std::max(1, (bankCount + kCols - 1) / kCols);
+                    for (int row = 0; row < rows; ++row) {
+                        CLAY(CLAY_IDI("BkBankRow", row), {
+                            .layout = {
+                                .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(kCellSize) },
+                                .childGap        = (uint16_t)kCellGap,
+                                .layoutDirection = CLAY_LEFT_TO_RIGHT,
+                            }
+                        }) {
+                            for (int col = 0; col < kCols; ++col) {
+                                int idx = row * kCols + col;
+                                const shared::ItemStack* item = nullptr;
+                                if (player && idx < bankCount) {
+                                    const auto& opt = player->bank[idx];
+                                    if (opt.has_value()) item = &opt.value();
+                                }
+                                buildBankSlot(idx, item, sprites);
+                            }
+                        }
+                    }
+                }
+
+                // Scrollbar track + thumb
+                CLAY(CLAY_ID("BkSbTrack"), {
+                    .layout = {
+                        .sizing          = { CLAY_SIZING_FIXED(kSbW), CLAY_SIZING_FIXED(kGridRowH) },
+                        .layoutDirection = CLAY_TOP_TO_BOTTOM,
+                    },
+                    .backgroundColor = kSbTrack,
+                }) {
+                    if (showSb) {
+                        if (thumbOffsetY > 0.f) {
+                            CLAY(CLAY_ID("BkSbBefore"), {
+                                .layout = { .sizing = { CLAY_SIZING_FIXED(kSbW),
+                                                        CLAY_SIZING_FIXED(thumbOffsetY) } },
+                            }) {}
+                        }
+                        CLAY(CLAY_ID("BkSbThumb"), {
+                            .layout = { .sizing = { CLAY_SIZING_FIXED(kSbW),
+                                                    CLAY_SIZING_FIXED(thumbH) } },
+                            .backgroundColor = kSbThumb,
+                            .cornerRadius    = CLAY_CORNER_RADIUS(2),
+                        }) {}
+                    }
+                }
+            }
+
+            // ── Footer divider ────────────────────────────────────────────────
+            CLAY(CLAY_ID("BkFooterDivider"), {
+                .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(1) } },
+                .backgroundColor = kDivider,
+            }) {}
+
+            // ── Footer: Deposit All / Deposit Equipment ───────────────────────
+            CLAY(CLAY_ID("BkFooter"), {
+                .layout = {
+                    .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(kFooterH) },
+                    .padding         = { (uint16_t)kPad, (uint16_t)kPad, 6, 6 },
+                    .childGap        = 6,
+                    .childAlignment  = { .x = CLAY_ALIGN_X_CENTER, .y = CLAY_ALIGN_Y_CENTER },
+                    .layoutDirection = CLAY_LEFT_TO_RIGHT,
+                },
+                .backgroundColor = kHeaderBg,
+            }) {
                 CLAY(CLAY_ID("BkDepositAll"), {
                     .layout = {
-                        .sizing         = { CLAY_SIZING_FIT(0), CLAY_SIZING_FIXED(22) },
+                        .sizing         = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(22) },
                         .padding        = { 8, 8, 4, 4 },
                         .childAlignment = { .x = CLAY_ALIGN_X_CENTER, .y = CLAY_ALIGN_Y_CENTER },
                     },
@@ -300,10 +427,9 @@ void buildBankPanel(float /*screenW*/, float /*screenH*/,
                     }));
                 }
 
-                // Deposit Equipment button
                 CLAY(CLAY_ID("BkDepositWorn"), {
                     .layout = {
-                        .sizing         = { CLAY_SIZING_FIT(0), CLAY_SIZING_FIXED(22) },
+                        .sizing         = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(22) },
                         .padding        = { 8, 8, 4, 4 },
                         .childAlignment = { .x = CLAY_ALIGN_X_CENTER, .y = CLAY_ALIGN_Y_CENTER },
                     },
@@ -314,136 +440,6 @@ void buildBankPanel(float /*screenW*/, float /*screenH*/,
                     CLAY_TEXT(CLAY_STRING("Deposit Equipment"), CLAY_TEXT_CONFIG({
                         .textColor = kWhite, .fontSize = 0,
                     }));
-                }
-
-                // Spacer to push usage text right
-                CLAY(CLAY_ID("BkHeaderSpacer"), {
-                    .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) } }
-                }) {}
-
-                // Usage fraction (e.g. "12 / 400")
-                {
-                    int used = player ? static_cast<int>(player->bank.size()) : 0;
-                    char usageBuf[32];
-                    std::snprintf(usageBuf, sizeof(usageBuf), "%d / %d", used, kMaxBank);
-                    CLAY_TEXT(cs(usageBuf), CLAY_TEXT_CONFIG({
-                        .textColor = kGrey, .fontSize = 0,
-                    }));
-                }
-            }
-
-            // ── Header/content divider ────────────────────────────────────────
-            CLAY(CLAY_ID("BkTopDivider"), {
-                .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(1) } },
-                .backgroundColor = kDivider,
-            }) {}
-
-            // ── Bank grid section label ───────────────────────────────────────
-            CLAY(CLAY_ID("BkGridLabel"), {
-                .layout = {
-                    .sizing   = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(20) },
-                    .padding  = { (uint16_t)kPad, (uint16_t)kPad, 4, 4 },
-                    .childAlignment = { .x = CLAY_ALIGN_X_LEFT, .y = CLAY_ALIGN_Y_CENTER },
-                },
-                .backgroundColor = kHeaderBg,
-            }) {
-                CLAY_TEXT(CLAY_STRING("Bank"), CLAY_TEXT_CONFIG({
-                    .textColor = kOrange, .fontSize = 0,
-                }));
-            }
-
-            // ── Scrollable bank grid ──────────────────────────────────────────
-            // Available height = panel - header(36) - divider(1) - label(20)
-            //                  - mid-divider(1) - inv-label(20) - inv-grid(~2*44+3+2*8=107)
-            // We allocate the remaining space for the bank grid.
-            static constexpr float kInvSectionH = 1.f + 20.f + 2 * kCellSize + kCellGap
-                                                   + 2.f * kPad + 1.f;
-            static constexpr float kBankGridH   = kPanelH - 36.f - 1.f - 20.f - kInvSectionH;
-
-            CLAY(CLAY_ID("BkGridScroll"), {
-                .layout = {
-                    .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(kBankGridH) },
-                    .padding         = { (uint16_t)kPad, (uint16_t)kPad,
-                                         (uint16_t)kPad, (uint16_t)kPad },
-                    .childGap        = (uint16_t)kCellGap,
-                    .layoutDirection = CLAY_TOP_TO_BOTTOM,
-                },
-                .backgroundColor = kScrollBg,
-                .clip = { .vertical = true, .childOffset = Clay_GetScrollOffset() },
-            }) {
-                int bankCount = player ? static_cast<int>(player->bank.size()) : 0;
-                // Pad to full row so trailing slots are visible
-                int rows = std::max(1, (bankCount + kCols - 1) / kCols);
-                for (int row = 0; row < rows; ++row) {
-                    CLAY(CLAY_IDI("BkBankRow", row), {
-                        .layout = {
-                            .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(kCellSize) },
-                            .childGap        = (uint16_t)kCellGap,
-                            .layoutDirection = CLAY_LEFT_TO_RIGHT,
-                        }
-                    }) {
-                        for (int col = 0; col < kCols; ++col) {
-                            int idx = row * kCols + col;
-                            const shared::ItemStack* item = nullptr;
-                            if (player && idx < bankCount) {
-                                const auto& opt = player->bank[idx];
-                                if (opt.has_value()) item = &opt.value();
-                            }
-                            buildBankSlot(idx, /*isBankGrid=*/true, item, sprites);
-                        }
-                    }
-                }
-            }
-
-            // ── Mid divider ───────────────────────────────────────────────────
-            CLAY(CLAY_ID("BkMidDivider"), {
-                .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(1) } },
-                .backgroundColor = kDivider,
-            }) {}
-
-            // ── Inventory section label ───────────────────────────────────────
-            CLAY(CLAY_ID("BkInvLabel"), {
-                .layout = {
-                    .sizing   = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(20) },
-                    .padding  = { (uint16_t)kPad, (uint16_t)kPad, 4, 4 },
-                    .childAlignment = { .x = CLAY_ALIGN_X_LEFT, .y = CLAY_ALIGN_Y_CENTER },
-                },
-                .backgroundColor = kHeaderBg,
-            }) {
-                CLAY_TEXT(CLAY_STRING("Inventory  (right-click to deposit)"),
-                    CLAY_TEXT_CONFIG({ .textColor = kGrey, .fontSize = 0 }));
-            }
-
-            // ── Inventory grid (2 rows × 8 cols) ──────────────────────────────
-            CLAY(CLAY_ID("BkInvGrid"), {
-                .layout = {
-                    .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIT(0) },
-                    .padding         = { (uint16_t)kPad, (uint16_t)kPad,
-                                         (uint16_t)kPad, (uint16_t)kPad },
-                    .childGap        = (uint16_t)kCellGap,
-                    .layoutDirection = CLAY_TOP_TO_BOTTOM,
-                },
-                .backgroundColor = kScrollBg,
-            }) {
-                int invCount = player ? static_cast<int>(player->inventory.size()) : 0;
-                for (int row = 0; row < kInvBankRows; ++row) {
-                    CLAY(CLAY_IDI("BkInvRow", row), {
-                        .layout = {
-                            .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(kCellSize) },
-                            .childGap        = (uint16_t)kCellGap,
-                            .layoutDirection = CLAY_LEFT_TO_RIGHT,
-                        }
-                    }) {
-                        for (int col = 0; col < kCols; ++col) {
-                            int idx = row * kCols + col;
-                            const shared::ItemStack* item = nullptr;
-                            if (player && idx < invCount) {
-                                const auto& opt = player->inventory[idx];
-                                if (opt.has_value()) item = &opt.value();
-                            }
-                            buildBankSlot(idx, /*isBankGrid=*/false, item, sprites);
-                        }
-                    }
                 }
             }
         }

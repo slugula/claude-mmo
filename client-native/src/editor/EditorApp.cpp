@@ -802,6 +802,28 @@ void EditorApp::render3DViewport(float dt) {
     entities_.renderAnimatedNpcs(skinnedShader_, dt);  // animated NPCs in editor
   }
 
+  // ---- Placement ghost preview --------------------------------------------
+  // While the Objects tool is active and a tile is hovered, draw the selected
+  // object's model translucent at the cursor so its footprint/orientation is
+  // clear before placing. Constant-alpha blend = no shader change needed.
+  if (activeTool_ == EditorTool::PlaceObstacle && hoveredTileX_ >= 0 &&
+      !obstacleSubtype_.empty()) {
+    glEnable(GL_BLEND);
+    glBlendColor(0.f, 0.f, 0.f, 0.5f);            // 50% ghost transparency
+    glBlendFunc(GL_CONSTANT_ALPHA, GL_ONE_MINUS_CONSTANT_ALPHA);
+    glDepthMask(GL_FALSE);                          // don't pollute depth
+    glDepthFunc(GL_LEQUAL);
+    // obstacleShader_ + skinnedShader_ already have this frame's uniforms set.
+    obstacleShader_.use();
+    obstacles_.renderGhostAt(obstacleShader_, skinnedShader_, map_,
+                             obstacleSubtype_, hoveredTileX_, hoveredTileY_,
+                             placeRotation_);
+    glDepthMask(GL_TRUE);
+    glDepthFunc(GL_LESS);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);   // restore default
+    glDisable(GL_BLEND);
+  }
+
   // ---- Water pass -------------------------------------------------------
   // Resolve colour + depth (full opaque scene incl. submerged fish), then draw
   // depth-based refraction water on top.

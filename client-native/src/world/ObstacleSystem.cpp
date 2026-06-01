@@ -184,4 +184,33 @@ bool ObstacleSystem::renderGeometryAt(render::Shader& maskShader,
   return true;
 }
 
+bool ObstacleSystem::renderGhostAt(render::Shader& obstacleShader,
+                                   render::Shader& skinnedShader,
+                                   const shared::WorldMapFile& map,
+                                   const std::string& id,
+                                   int tileX, int tileY, int rotationQuarter) {
+  if (id.empty() || !models_.has(id)) return false;
+  if (tileY < 0 || tileY >= map.height || tileX < 0 || tileX >= map.width) return false;
+  const auto& vh = map.vertexHeights;
+  if (static_cast<int>(vh.size()) != (map.width + 1) * (map.height + 1)) return false;
+
+  const float cy   = tileCenterY(vh, map.width, map.height, tileX, tileY);
+  const float rotY = static_cast<float>(rotationQuarter & 3) * 1.57079632679f;
+
+  if (models_.isAnimated(id)) {
+    glm::mat4 m = glm::translate(glm::mat4(1.0f),
+        glm::vec3(static_cast<float>(tileX), cy, static_cast<float>(tileY)));
+    m = glm::rotate(m, rotY, glm::vec3(0.0f, 1.0f, 0.0f));
+    skinnedShader.use();
+    models_.drawAnimatedAt(skinnedShader, id, m);
+    obstacleShader.use();
+  } else {
+    obstacleShader.use();
+    models_.drawStaticInstanced(obstacleShader, id,
+        { ModelLibrary::Instance{ static_cast<float>(tileX), cy,
+                                  static_cast<float>(tileY), rotY } });
+  }
+  return true;
+}
+
 }  // namespace world

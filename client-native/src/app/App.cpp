@@ -1862,6 +1862,10 @@ void App::renderFrame() {
         int slot = cm.bankGridCtxSlot;
         if (e.verb == "Withdraw 1") {
           network_.sendWithdrawItem(slot, 1);
+        } else if (e.verb == "Withdraw 5") {
+          network_.sendWithdrawItem(slot, 5);
+        } else if (e.verb == "Withdraw 10") {
+          network_.sendWithdrawItem(slot, 10);
         } else if (e.verb == "Withdraw All") {
           if (currLocalPlayer_ && slot < static_cast<int>(currLocalPlayer_->bank.size())) {
             const auto& opt = currLocalPlayer_->bank[slot];
@@ -1883,10 +1887,20 @@ void App::renderFrame() {
         int slot = cm.bankInvCtxSlot;
         if (e.verb == "Deposit 1") {
           network_.sendDepositItem(slot, 1);
+        } else if (e.verb == "Deposit 5") {
+          network_.sendDepositItem(slot, 5);
+        } else if (e.verb == "Deposit 10") {
+          network_.sendDepositItem(slot, 10);
         } else if (e.verb == "Deposit All") {
           if (currLocalPlayer_ && slot < static_cast<int>(currLocalPlayer_->inventory.size())) {
             const auto& opt = currLocalPlayer_->inventory[slot];
             if (opt.has_value()) network_.sendDepositItem(slot, opt->quantity);
+          }
+        } else if (e.verb == "Examine") {
+          if (!cm.contextItemId.empty()) {
+            const std::string msg = "It's a " + ui::itemName(cm.contextItemId) + ".";
+            chatLog_.appendSystem(msg);
+            ui::chatAppendSystem(msg);
           }
         }
         cm.bankInvCtxSlot = -1;

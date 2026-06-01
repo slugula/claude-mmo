@@ -6,6 +6,7 @@
 // Check bankWantsClose() AFTER clayFrame to send closeBank and clear bankOpen_.
 
 #include "shared/SharedTypes.hpp"
+#include "ui/Panels.hpp"        // UiHoverState
 #include "world/SpriteCache.hpp"
 
 namespace net { class NetworkClient; }
@@ -15,13 +16,15 @@ namespace ui {
 // Build the bank layout element.
 // bankOpen: pass true only when the bank should be shown.
 // leftClicked / rightClicked: per-frame button states.
+// hover: written with "Withdraw-1 {Item}" info when a bank slot is hovered.
 void buildBankPanel(float screenW, float screenH,
                     const shared::PlayerState* player,
                     net::NetworkClient* netc,
                     const SpriteCache* sprites,
                     bool bankOpen,
                     bool leftClicked,
-                    bool rightClicked);
+                    bool rightClicked,
+                    UiHoverState* hover);
 
 // Returns true on the first frame the user closes the bank
 // (clicked outside the panel). Reset automatically after being read.

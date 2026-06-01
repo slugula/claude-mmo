@@ -111,6 +111,7 @@ static constexpr int   kEquipRows =   5;
 static int  s_activeTab      =  0;   // 0=inventory 1=skills 2=equipment
 static int  s_hovInvSlot     = -1;   // inventory slot under pointer
 static int  s_hovEquipIdx    = -1;   // kEquipGrid index under pointer
+static bool s_bankOpen       = false; // when true: lock to inventory tab + deposit mode
 
 // ── Drag-and-drop state ────────────────────────────────────────────────────────
 static int   s_dragSlot      = -1;   // slot being dragged (-1 = none)
@@ -644,11 +645,17 @@ static void buildEquipmentTab(const shared::PlayerState* player,
 void clayHudBuildLayout(const shared::PlayerState* player,
                         const SpriteCache* sprites,
                         float mx, float my,
-                        GLuint minimapTex) {
+                        GLuint minimapTex,
+                        bool   bankOpen) {
     // Reset string scratch buffer every frame.
     s_strOff   = 0;
     s_hovInvSlot  = -1;
     s_hovEquipIdx = -1;
+
+    // While the bank is open the HUD is locked to the inventory tab so the
+    // player can deposit from their real inventory.
+    s_bankOpen = bankOpen;
+    if (bankOpen) s_activeTab = 0;
 
     // Recompute hover state from last frame's bounding boxes before building
     // this frame's layout (Clay uses previous-frame positions for PointerOver).
@@ -773,8 +780,8 @@ void clayHudHandleInput(const shared::PlayerState* player,
                         bool rightClicked,
                         bool mouseDown,
                         float mx, float my) {
-    // ── Tab switching ────────────────────────────────────────────────────────
-    if (leftClicked) {
+    // ── Tab switching (disabled while the bank locks us to inventory) ─────────
+    if (leftClicked && !s_bankOpen) {
         for (int i = 0; i < 3; ++i) {
             if (Clay_PointerOver(CLAY_IDI("HudTab", i))) {
                 s_activeTab = i;
@@ -908,7 +915,8 @@ void clayHudHandleInput(const shared::PlayerState* player,
             const auto& opt = player->inventory[s_hovInvSlot];
             if (opt.has_value()) {
                 hover->kind     = UiHoverState::Kind::InventoryItem;
-                hover->verb     = primaryVerb(opt->itemId);
+                // While banking, the primary action is "Deposit-1".
+                hover->verb     = s_bankOpen ? "Deposit-1" : primaryVerb(opt->itemId);
                 hover->itemName = prettyId(opt->itemId);
             }
         }
@@ -919,8 +927,6 @@ void clayHudHandleInput(const shared::PlayerState* player,
             if (opt.has_value()) {
                 auto& cm = ctxMenu();
                 cm.open             = true;
-                cm.inventoryCtxSlot = s_hovInvSlot;
-                cm.equipCtxSlot.clear();
                 cm.contextItemId    = opt->itemId;
                 ImVec2 mp = ImGui::GetIO().MousePos;
                 cm.x = mp.x;
@@ -931,10 +937,27 @@ void clayHudHandleInput(const shared::PlayerState* player,
                 cm.entries.clear();
                 cm.clickedIndex = -1;
                 std::string name = prettyId(opt->itemId);
-                const char* pv   = primaryVerb(opt->itemId);
-                if (pv[0]) cm.entries.push_back({ pv, name });
-                cm.entries.push_back({ "Drop",    name });
-                cm.entries.push_back({ "Examine", name });
+                if (s_bankOpen) {
+                    // Deposit menu — dispatched via bankInvCtxSlot in App.cpp.
+                    cm.bankInvCtxSlot   = s_hovInvSlot;
+                    cm.inventoryCtxSlot = -1;
+                    cm.bankGridCtxSlot  = -1;
+                    cm.equipCtxSlot.clear();
+                    cm.entries.push_back({ "Deposit 1",   name });
+                    cm.entries.push_back({ "Deposit 5",   name });
+                    cm.entries.push_back({ "Deposit 10",  name });
+                    cm.entries.push_back({ "Deposit All", name });
+                    cm.entries.push_back({ "Examine",     name });
+                } else {
+                    cm.inventoryCtxSlot = s_hovInvSlot;
+                    cm.bankInvCtxSlot   = -1;
+                    cm.bankGridCtxSlot  = -1;
+                    cm.equipCtxSlot.clear();
+                    const char* pv   = primaryVerb(opt->itemId);
+                    if (pv[0]) cm.entries.push_back({ pv, name });
+                    cm.entries.push_back({ "Drop",    name });
+                    cm.entries.push_back({ "Examine", name });
+                }
             }
         }
     }
