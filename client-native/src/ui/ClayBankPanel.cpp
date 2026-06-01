@@ -158,7 +158,9 @@ static void buildBankSlot(int idx, const shared::ItemStack* item,
                     },
                     .floating = {
                         .offset       = { -2.f, 2.f },
-                        .zIndex       = 10,
+                        // Must exceed the panel's own floating zIndex (BkAnchor=20)
+                        // or the panel background/slots paint over the badge.
+                        .zIndex       = 30,
                         .attachPoints = {
                             .element = CLAY_ATTACH_POINT_RIGHT_TOP,
                             .parent  = CLAY_ATTACH_POINT_RIGHT_TOP,
