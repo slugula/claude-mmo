@@ -73,6 +73,11 @@ struct AppSettings {
   float       waterFoamContact     = 0.30f;
   float       waterSpecular        = 0.70f;
   std::string waterCausticMap;                // relative path, e.g. "assets/water_caustic.png" ("" = none)
+
+  // ---- Bank window position (client only) ----
+  // Top-left in screen pixels. -1 = unset → centre on first open.
+  float       bankPosX = -1.0f;
+  float       bankPosY = -1.0f;
 };
 
 inline bool saveSettings(const AppSettings& s, const std::filesystem::path& path) {
@@ -109,6 +114,7 @@ inline bool saveSettings(const AppSettings& s, const std::filesystem::path& path
   std::fprintf(f, "waterOffset=%f\nwaterRefraction=%f\nwaterDepthFade=%f\nwaterFoamContact=%f\nwaterSpecular=%f\n",
                s.waterOffset, s.waterRefraction, s.waterDepthFade, s.waterFoamContact, s.waterSpecular);
   std::fprintf(f, "waterCausticMap=%s\n", s.waterCausticMap.c_str());
+  std::fprintf(f, "bankPosX=%f\nbankPosY=%f\n", s.bankPosX, s.bankPosY);
   std::fclose(f);
   return true;
 }
@@ -160,7 +166,8 @@ inline bool loadSettings(AppSettings& s, const std::filesystem::path& path) {
         fF("waterFoamScale", s.waterFoamScale) || fF("waterParallaxDepth", s.waterParallaxDepth) ||
         fF("waterOffset", s.waterOffset) || fF("waterRefraction", s.waterRefraction) ||
         fF("waterDepthFade", s.waterDepthFade) || fF("waterFoamContact", s.waterFoamContact) ||
-        fF("waterSpecular", s.waterSpecular)) {
+        fF("waterSpecular", s.waterSpecular) ||
+        fF("bankPosX", s.bankPosX) || fF("bankPosY", s.bankPosY)) {
       continue;
     }
     if (std::strcmp(key, "waterCausticMap") == 0) { s.waterCausticMap = val; continue; }

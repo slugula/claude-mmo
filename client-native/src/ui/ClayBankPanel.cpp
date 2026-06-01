@@ -22,6 +22,7 @@
 #include <imgui.h>
 
 #include <algorithm>
+#include <cfloat>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -85,6 +86,23 @@ bool bankWantsClose() {
     return v;
 }
 
+// ── Window position (draggable, persisted) ────────────────────────────────────
+static float s_winPosX   = FLT_MAX;   // FLT_MAX = unset → centre on first open
+static float s_winPosY   = FLT_MAX;
+static bool  s_winPosDirty = false;   // set when a drag finishes (App persists)
+// Drag state
+static bool  s_winDragging = false;
+static float s_winGrabDX   = 0.f;
+static float s_winGrabDY   = 0.f;
+static bool  s_winPrevDown = false;
+
+bool bankPanelGetPosition(float& x, float& y) {
+    if (s_winPosX == FLT_MAX) return false;
+    x = s_winPosX; y = s_winPosY; return true;
+}
+void bankPanelSetPosition(float x, float y) { s_winPosX = x; s_winPosY = y; }
+bool bankPanelPositionChanged() { bool d = s_winPosDirty; s_winPosDirty = false; return d; }
+
 // ── String scratch ────────────────────────────────────────────────────────────
 static char s_buf[4096];
 static int  s_boff = 0;
@@ -118,12 +136,14 @@ static void buildBankSlot(int idx, const shared::ItemStack* item,
                           const SpriteCache* sprites) {
     bool hovered = (s_hovBankSlot == idx);
 
+    static constexpr Clay_Color kTransparent = { 0, 0, 0, 0 };
     CLAY(CLAY_IDI("BkBankSlot", idx), {
         .layout = {
             .sizing         = { CLAY_SIZING_FIXED(kCellSize), CLAY_SIZING_FIXED(kCellSize) },
             .childAlignment = { .x = CLAY_ALIGN_X_CENTER, .y = CLAY_ALIGN_Y_CENTER },
         },
-        .backgroundColor = item ? kSlotFilled : kSlotEmpty,
+        // Transparent fill (matches the inventory) — only the border shows.
+        .backgroundColor = kTransparent,
         .border = {
             .color = hovered ? kSlotHover : kSlotBorder,
             .width = CLAY_BORDER_ALL(1),
@@ -330,13 +350,40 @@ void buildBankPanel(float screenW, float screenH,
         thumbOffsetY   = frac * maxOff;
     }
 
-    // ── Layout — centred on screen, snapped to whole pixels ───────────────────
-    // CENTER_CENTER anchoring can land the panel on a fractional pixel, which
-    // makes the 1:1 item sprites sub-pixel sample and look blurry. Anchor at
-    // LEFT_TOP with a floored centre offset so every sprite lands on an integer
-    // pixel (matching the crisp corner-anchored inventory panel).
-    const float bkX = static_cast<float>(static_cast<int>((screenW - kPanelW) * 0.5f));
-    const float bkY = static_cast<float>(static_cast<int>((screenH - kPanelH) * 0.5f));
+    // ── Window position + header drag ─────────────────────────────────────────
+    // On first open (or unset persisted pos), centre it. The header is a drag
+    // handle: press it (not the X) and move to reposition; App persists the
+    // position on drag-end. LEFT_TOP anchoring at an integer offset also keeps
+    // the 1:1 item sprites crisp (CENTER_CENTER could land on a half-pixel).
+    if (s_winPosX == FLT_MAX) {
+        s_winPosX = static_cast<float>(static_cast<int>((screenW - kPanelW) * 0.5f));
+        s_winPosY = static_cast<float>(static_cast<int>((screenH - kPanelH) * 0.5f));
+    }
+    {
+        const bool wasDown  = s_winPrevDown;
+        s_winPrevDown       = mouseDown;
+        const bool downEdge = mouseDown && !wasDown;
+        const bool upEdge   = !mouseDown && wasDown;
+        const bool headerHover = Clay_PointerOver(CLAY_ID("BkHeader")) && !xHov;
+
+        if (downEdge && headerHover) {
+            s_winDragging = true;
+            s_winGrabDX = mx - s_winPosX;
+            s_winGrabDY = my - s_winPosY;
+        }
+        if (s_winDragging && mouseDown) {
+            s_winPosX = mx - s_winGrabDX;
+            s_winPosY = my - s_winGrabDY;
+            s_winPosX = std::max(0.f, std::min(s_winPosX, screenW - kPanelW));
+            s_winPosY = std::max(0.f, std::min(s_winPosY, screenH - kPanelH));
+        }
+        if (upEdge && s_winDragging) {
+            s_winDragging = false;
+            s_winPosDirty = true;   // App persists the new position
+        }
+    }
+    const float bkX = static_cast<float>(static_cast<int>(s_winPosX));
+    const float bkY = static_cast<float>(static_cast<int>(s_winPosY));
     CLAY(CLAY_ID("BkAnchor"), {
         .floating = {
             .offset   = { bkX, bkY },
@@ -390,7 +437,6 @@ void buildBankPanel(float screenW, float screenH,
                     .childAlignment  = { .x = CLAY_ALIGN_X_LEFT, .y = CLAY_ALIGN_Y_CENTER },
                     .layoutDirection = CLAY_LEFT_TO_RIGHT,
                 },
-                .backgroundColor = kHeaderBg,
             }) {
                 CLAY_TEXT(CLAY_STRING("Bank"), CLAY_TEXT_CONFIG({
                     .textColor = kOrange, .fontSize = 0,
@@ -448,7 +494,6 @@ void buildBankPanel(float screenW, float screenH,
                         .childGap        = (uint16_t)kCellGap,
                         .layoutDirection = CLAY_TOP_TO_BOTTOM,
                     },
-                    .backgroundColor = kScrollBg,
                     .clip = { .vertical = true, .childOffset = Clay_GetScrollOffset() },
                 }) {
                     for (int row = 0; row < rows; ++row) {
@@ -512,7 +557,6 @@ void buildBankPanel(float screenW, float screenH,
                     .childAlignment  = { .x = CLAY_ALIGN_X_CENTER, .y = CLAY_ALIGN_Y_CENTER },
                     .layoutDirection = CLAY_LEFT_TO_RIGHT,
                 },
-                .backgroundColor = kHeaderBg,
             }) {
                 CLAY(CLAY_ID("BkDepositAll"), {
                     .layout = {

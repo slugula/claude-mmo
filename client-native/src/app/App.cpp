@@ -609,6 +609,9 @@ bool App::init() {
       applyWaterSettings(s, waterUniforms_);
       if (!waterUniforms_.causticMapPath.empty())
         waterRenderer_.loadCausticMap(resolveFromExe(waterUniforms_.causticMapPath.c_str()).string());
+      // Persisted bank window position (-1 = unset → centre on first open).
+      if (s.bankPosX >= 0.f && s.bankPosY >= 0.f)
+        ui::bankPanelSetPosition(s.bankPosX, s.bankPosY);
     }
   }
 
@@ -2049,6 +2052,9 @@ void App::renderFrame() {
     network_.sendCloseBank();
   }
 
+  // Persist the bank window position after the user finishes dragging it.
+  if (showClayUi_ && ui::bankPanelPositionChanged()) saveSettings();
+
   if (connected && currLocalPlayer_) {
     // Bank panel is now rendered by Clay when Clay UI is on.
     // Fall back to ImGui bank only when Clay UI is disabled.
@@ -3261,6 +3267,7 @@ void App::saveSettings() {
   s.hoverTileR = hoverTileColor_.r; s.hoverTileG = hoverTileColor_.g;
   s.hoverTileB = hoverTileColor_.b; s.hoverTileA = hoverTileColor_.a;
   storeWaterSettings(waterUniforms_, s);
+  { float bx, by; if (ui::bankPanelGetPosition(bx, by)) { s.bankPosX = bx; s.bankPosY = by; } }
   ::saveSettings(s, resolveFromExe("settings.cfg"));
 }
 

@@ -32,4 +32,12 @@ void buildBankPanel(float screenW, float screenH,
 // (clicked outside the panel). Reset automatically after being read.
 bool bankWantsClose();
 
+// ── Bank window position persistence ──────────────────────────────────────────
+// The window is draggable by its header; App persists the position via settings.
+// getPosition returns false until the user has moved/positioned the window.
+bool bankPanelGetPosition(float& x, float& y);
+void bankPanelSetPosition(float x, float y);
+// True for one read after the user finishes dragging — App saves settings then.
+bool bankPanelPositionChanged();
+
 } // namespace ui
