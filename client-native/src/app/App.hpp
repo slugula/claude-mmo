@@ -171,6 +171,10 @@ private:
   ui::WorldOverlays                        overlays_;
   bool                                     loginAnnounced_ = false;
   bool                                     bankOpen_       = false;
+  // Chest the player walked toward to bank: the bank opens once the
+  // server-authoritative position is adjacent. -1 = no pending bank.
+  int                                      pendingBankTileX_ = -1;
+  int                                      pendingBankTileY_ = -1;
   net::Connection                          lastNetStatus_  = net::Connection::Disconnected;
   // Phase 5e — one-shot player animations. While `oneShotEndsAt_` is in
   // the future, clipForPlayer returns `oneShotClip_` regardless of the
