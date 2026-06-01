@@ -194,14 +194,15 @@ inline bool saveWorldMap(const std::filesystem::path& path,
       std::fprintf(f,
         "%s{\"x\":%d,\"y\":%d,\"walkable\":%s,"
         "\"type\":\"%s\",\"obstacle\":\"%s\","
-        "\"blocksRanged\":%s,\"groundColor\":\"%s\",\"height\":%.6f}",
+        "\"blocksRanged\":%s,\"groundColor\":\"%s\",\"height\":%.6f,"
+        "\"obstacleRotation\":%d}",
         tx == 0 ? "" : ",",
         t.x, t.y,
         t.walkable     ? "true" : "false",
         typeStr(), t.obstacle.c_str(),
         t.blocksRanged ? "true" : "false",
         hexOf(t.groundColor).c_str(),
-        t.height);
+        t.height, t.obstacleRotation);
     }
     std::fprintf(f, "]%s\n", ty + 1 < map.height ? "," : "");
   }

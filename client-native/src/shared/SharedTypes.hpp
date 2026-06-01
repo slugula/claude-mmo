@@ -41,6 +41,7 @@ struct TileData {
   bool         blocksRanged = false;
   std::string  groundColor  = "#7ec850";
   float        height       = 0.0f;
+  int          obstacleRotation = 0;   // 90° steps about Y (0..3), CCW positive
 };
 
 // ---- NPC spawn descriptor (used by the level editor + server) ------------

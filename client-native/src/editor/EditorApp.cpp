@@ -483,6 +483,19 @@ void EditorApp::renderFrame(float dt) {
     const bool sNow = (ctrl && glfwGetKey(win, GLFW_KEY_S) == GLFW_PRESS);
     if (sNow && !sS) saveCurrentFile();
     sS = sNow;
+
+    // Q / E rotate the placement brush in 90° steps about the up axis when the
+    // Objects tool is active. Q = counter-clockwise, E = clockwise (viewed from
+    // above). Suppressed while a text field is focused so typing IDs is safe.
+    static bool sQ = false, sE = false;
+    const bool canRotate = (activeTool_ == EditorTool::PlaceObstacle)
+                        && !ImGui::GetIO().WantTextInput && !ctrl;
+    const bool qNow = canRotate && glfwGetKey(win, GLFW_KEY_Q) == GLFW_PRESS;
+    if (qNow && !sQ) placeRotation_ = (placeRotation_ + 1) & 3;   // CCW
+    sQ = qNow;
+    const bool eNow = canRotate && glfwGetKey(win, GLFW_KEY_E) == GLFW_PRESS;
+    if (eNow && !sE) placeRotation_ = (placeRotation_ + 3) & 3;   // CW
+    sE = eNow;
   }
 
   // ---- Camera cursor ----------------------------------------------------
@@ -787,6 +800,28 @@ void EditorApp::render3DViewport(float dt) {
     // Data-driven animated custom objects (incl. fishing_spot) + NPCs.
     obstacles_.renderCustomAnimated(skinnedShader_, dt);
     entities_.renderAnimatedNpcs(skinnedShader_, dt);  // animated NPCs in editor
+  }
+
+  // ---- Placement ghost preview --------------------------------------------
+  // While the Objects tool is active and a tile is hovered, draw the selected
+  // object's model translucent at the cursor so its footprint/orientation is
+  // clear before placing. Constant-alpha blend = no shader change needed.
+  if (activeTool_ == EditorTool::PlaceObstacle && hoveredTileX_ >= 0 &&
+      !obstacleSubtype_.empty()) {
+    glEnable(GL_BLEND);
+    glBlendColor(0.f, 0.f, 0.f, 0.5f);            // 50% ghost transparency
+    glBlendFunc(GL_CONSTANT_ALPHA, GL_ONE_MINUS_CONSTANT_ALPHA);
+    glDepthMask(GL_FALSE);                          // don't pollute depth
+    glDepthFunc(GL_LEQUAL);
+    // obstacleShader_ + skinnedShader_ already have this frame's uniforms set.
+    obstacleShader_.use();
+    obstacles_.renderGhostAt(obstacleShader_, skinnedShader_, map_,
+                             obstacleSubtype_, hoveredTileX_, hoveredTileY_,
+                             placeRotation_);
+    glDepthMask(GL_TRUE);
+    glDepthFunc(GL_LESS);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);   // restore default
+    glDisable(GL_BLEND);
   }
 
   // ---- Water pass -------------------------------------------------------
@@ -1130,6 +1165,13 @@ void EditorApp::drawProperties() {
       obstBtn("Fence",        "fence");
       obstBtn("Fishing Spot", "fishing_spot");
     }
+    ImGui::Separator();
+    ImGui::TextDisabled("Rotation (Q / E)");
+    ImGui::Text("%d\xC2\xB0", (placeRotation_ & 3) * 90);
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Q -90")) placeRotation_ = (placeRotation_ + 1) & 3;
+    ImGui::SameLine();
+    if (ImGui::SmallButton("E +90")) placeRotation_ = (placeRotation_ + 3) & 3;
   }
   else if (activeTool_ == EditorTool::PlaceNPC) {
     ImGui::TextDisabled("NPC type");
@@ -1861,6 +1903,8 @@ void EditorApp::setObstacleAtTile(int tx, int ty, const std::string& obs) {
 
   // The obstacle marker lives only on the anchor tile (one rendered instance).
   anchor.obstacle = obs;
+  // Stamp the current placement rotation (Q/E) onto the anchor; reset on clear.
+  anchor.obstacleRotation = obs.empty() ? 0 : (placeRotation_ & 3);
 
   // Apply walkability across the footprint block (anchor + covered tiles).
   for (int dy = 0; dy < sy; ++dy) {

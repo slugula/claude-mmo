@@ -18,7 +18,8 @@ namespace ui {
 void clayHudBuildLayout(const shared::PlayerState* player,
                         const SpriteCache*         sprites,
                         float mx, float my,
-                        GLuint minimapTex = 0);
+                        GLuint minimapTex = 0,
+                        bool   bankOpen   = false);
 
 // Called after Clay_EndLayout().
 // Resolves pointer-over hits, fires network actions, writes hover state,

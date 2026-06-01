@@ -293,6 +293,14 @@ void NetworkClient::sendMoveSlot(int fromSlot, int toSlot) {
   sendActionRaw(buf);
 }
 
+void NetworkClient::sendMoveBankSlot(int fromSlot, int toSlot) {
+  char buf[96];
+  std::snprintf(buf, sizeof(buf),
+                "{\"type\":\"MOVE_BANK_SLOT\",\"fromSlot\":%d,\"toSlot\":%d}",
+                fromSlot, toSlot);
+  sendActionRaw(buf);
+}
+
 void NetworkClient::sendEquipItem(int slotIndex) {
   char buf[64];
   std::snprintf(buf, sizeof(buf),

@@ -97,9 +97,10 @@ void ObstacleSystem::rebuildFromMap(const shared::WorldMapFile& map,
       if (modelId.empty() || !models_.has(modelId)) continue;
 
       const float y = tileCenterY(vh, W, H, tx, ty);
+      const float rotY = static_cast<float>(tile.obstacleRotation) * 1.57079632679f; // n*90°
       customInstances_[modelId].push_back(
           ModelLibrary::Instance{ static_cast<float>(tx), y,
-                                  static_cast<float>(ty), 0.0f });  // orientation in model
+                                  static_cast<float>(ty), rotY });
     }
   }
 }
@@ -157,8 +158,10 @@ bool ObstacleSystem::renderGeometryAt(render::Shader& maskShader,
   const auto& vh = map.vertexHeights;
   if (static_cast<int>(vh.size()) != (map.width + 1) * (map.height + 1)) return false;
   const float cy = tileCenterY(vh, map.width, map.height, tileX, tileY);
-  const glm::mat4 m = glm::translate(glm::mat4(1.0f),
+  const float rotY = static_cast<float>(map.tiles[tileY][tileX].obstacleRotation) * 1.57079632679f;
+  glm::mat4 m = glm::translate(glm::mat4(1.0f),
       glm::vec3(static_cast<float>(tileX), cy, static_cast<float>(tileY)));
+  m = glm::rotate(m, rotY, glm::vec3(0.0f, 1.0f, 0.0f));
 
   glDisable(GL_STENCIL_TEST);
   glDepthFunc(GL_LEQUAL);
@@ -174,10 +177,39 @@ bool ObstacleSystem::renderGeometryAt(render::Shader& maskShader,
     maskShader.use();
     models_.drawStaticInstanced(maskShader, id,
         { ModelLibrary::Instance{ static_cast<float>(tileX), cy,
-                                  static_cast<float>(tileY), 0.0f } });
+                                  static_cast<float>(tileY), rotY } });
   }
   glDepthMask(GL_TRUE);
   glDepthFunc(GL_LESS);
+  return true;
+}
+
+bool ObstacleSystem::renderGhostAt(render::Shader& obstacleShader,
+                                   render::Shader& skinnedShader,
+                                   const shared::WorldMapFile& map,
+                                   const std::string& id,
+                                   int tileX, int tileY, int rotationQuarter) {
+  if (id.empty() || !models_.has(id)) return false;
+  if (tileY < 0 || tileY >= map.height || tileX < 0 || tileX >= map.width) return false;
+  const auto& vh = map.vertexHeights;
+  if (static_cast<int>(vh.size()) != (map.width + 1) * (map.height + 1)) return false;
+
+  const float cy   = tileCenterY(vh, map.width, map.height, tileX, tileY);
+  const float rotY = static_cast<float>(rotationQuarter & 3) * 1.57079632679f;
+
+  if (models_.isAnimated(id)) {
+    glm::mat4 m = glm::translate(glm::mat4(1.0f),
+        glm::vec3(static_cast<float>(tileX), cy, static_cast<float>(tileY)));
+    m = glm::rotate(m, rotY, glm::vec3(0.0f, 1.0f, 0.0f));
+    skinnedShader.use();
+    models_.drawAnimatedAt(skinnedShader, id, m);
+    obstacleShader.use();
+  } else {
+    obstacleShader.use();
+    models_.drawStaticInstanced(obstacleShader, id,
+        { ModelLibrary::Instance{ static_cast<float>(tileX), cy,
+                                  static_cast<float>(tileY), rotY } });
+  }
   return true;
 }
 

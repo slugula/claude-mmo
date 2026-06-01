@@ -196,7 +196,7 @@ void clayFrame(const shared::PlayerState* player,
     Clay_UpdateScrollContainers(false, { 0.f, wheelDelta * 3.f }, dt);
     Clay_BeginLayout();
 
-    clayHudBuildLayout(player, sprites, mx, my, minimapTex);
+    clayHudBuildLayout(player, sprites, mx, my, minimapTex, bankOpen);
     buildChatLog(screenW, screenH, player, netc);
     buildContextMenu();
     buildClickFeedback(dt);
@@ -205,7 +205,7 @@ void clayFrame(const shared::PlayerState* player,
 
     // Bank panel (rendered above HUD, below modals)
     buildBankPanel(screenW, screenH, player, netc, sprites,
-                   bankOpen, leftClicked, rightClicked);
+                   bankOpen, leftClicked, rightClicked, mouseDown, mx, my, hover);
 
     // Modals render last (highest z-index — cover all other UI)
     if (showJoinModal)  buildJoinModal(screenW, screenH, leftClicked);

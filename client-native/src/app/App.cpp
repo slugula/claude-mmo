@@ -1750,6 +1750,10 @@ void App::renderFrame() {
           && !ui::ctxMenu().open) {
         bool dispatched = false;
 
+        // Any fresh click cancels a pending walk-to-bank; the chest branch
+        // below re-arms it.
+        pendingBankTileX_ = pendingBankTileY_ = -1;
+
         // 1. Entity AABB hit
         if (hoveredEntity_.kind == HoveredEntity::Kind::Npc) {
           for (const auto& n : npcs_) {
@@ -1786,9 +1790,13 @@ void App::renderFrame() {
               oneShotClip_.clear();
               dispatched = true; clickFeedbackColor_ = 1;
             } else if (obs == "chest") {
-              network_.sendOpenBank();
-              bankOpen_ = true;
-              dispatched = true; clickFeedbackColor_ = 1;
+              // Walk to the chest; the bank opens once we're adjacent (the
+              // server reroutes the unwalkable chest tile to a walkable one).
+              network_.sendMoveTo(tx, ty);
+              pendingBankTileX_ = tx;
+              pendingBankTileY_ = ty;
+              oneShotClip_.clear();
+              dispatched = true; clickFeedbackColor_ = 0;
             }
           }
         }
@@ -1862,6 +1870,10 @@ void App::renderFrame() {
         int slot = cm.bankGridCtxSlot;
         if (e.verb == "Withdraw 1") {
           network_.sendWithdrawItem(slot, 1);
+        } else if (e.verb == "Withdraw 5") {
+          network_.sendWithdrawItem(slot, 5);
+        } else if (e.verb == "Withdraw 10") {
+          network_.sendWithdrawItem(slot, 10);
         } else if (e.verb == "Withdraw All") {
           if (currLocalPlayer_ && slot < static_cast<int>(currLocalPlayer_->bank.size())) {
             const auto& opt = currLocalPlayer_->bank[slot];
@@ -1883,10 +1895,19 @@ void App::renderFrame() {
         int slot = cm.bankInvCtxSlot;
         if (e.verb == "Deposit 1") {
           network_.sendDepositItem(slot, 1);
+        } else if (e.verb == "Deposit 5") {
+          network_.sendDepositItem(slot, 5);
+        } else if (e.verb == "Deposit 10") {
+          network_.sendDepositItem(slot, 10);
         } else if (e.verb == "Deposit All") {
-          if (currLocalPlayer_ && slot < static_cast<int>(currLocalPlayer_->inventory.size())) {
-            const auto& opt = currLocalPlayer_->inventory[slot];
-            if (opt.has_value()) network_.sendDepositItem(slot, opt->quantity);
+          // Large count → server deposits every unit of this item across all
+          // inventory slots (handles non-stackable items spanning many slots).
+          network_.sendDepositItem(slot, 1000000000);
+        } else if (e.verb == "Examine") {
+          if (!cm.contextItemId.empty()) {
+            const std::string msg = "It's a " + ui::itemName(cm.contextItemId) + ".";
+            chatLog_.appendSystem(msg);
+            ui::chatAppendSystem(msg);
           }
         }
         cm.bankInvCtxSlot = -1;
@@ -1901,7 +1922,11 @@ void App::renderFrame() {
       } else if (e.verb == "Fish") {
         network_.sendFish(ctxMenuTileX_, ctxMenuTileY_); oneShotClip_.clear();
       } else if (e.verb == "Bank") {
-        network_.sendOpenBank(); bankOpen_ = true;
+        // Walk to the chest; the bank opens once adjacent.
+        network_.sendMoveTo(ctxMenuTileX_, ctxMenuTileY_);
+        pendingBankTileX_ = ctxMenuTileX_;
+        pendingBankTileY_ = ctxMenuTileY_;
+        oneShotClip_.clear();
       } else if (e.verb == "Attack") {
         for (const auto& n : npcs_)
           if (n.tileX == ctxMenuTileX_ && n.tileY == ctxMenuTileY_ && !n.dying)
@@ -2940,6 +2965,18 @@ void App::processNetworkMessages() {
         prevLocalPlayer_ = currLocalPlayer_;
         currLocalPlayer_ = it->second;
         lastTickTime_    = std::chrono::steady_clock::now();
+
+        // Walk-to-bank: open the bank once we've arrived adjacent to the chest.
+        if (pendingBankTileX_ >= 0) {
+          const int ddx = std::abs(currLocalPlayer_->tileX - pendingBankTileX_);
+          const int ddy = std::abs(currLocalPlayer_->tileY - pendingBankTileY_);
+          const bool adjacent = ddx <= 1 && ddy <= 1 && !(ddx == 0 && ddy == 0);
+          if (adjacent && currLocalPlayer_->path.empty()) {
+            network_.sendOpenBank();
+            bankOpen_ = true;
+            pendingBankTileX_ = pendingBankTileY_ = -1;
+          }
+        }
         // Phase 5e — per-tick one-shot animation triggers. We only react
         // when the server-authoritative tick stamp moves forward, so
         // late state arrivals or rewinds can't double-fire the clip.

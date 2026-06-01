@@ -97,6 +97,17 @@ public:
                         int tileX, int tileY,
                         const std::unordered_set<std::string>& depletedKeys = {});
 
+  // Render a single object id's model at a tile as a placement preview (the
+  // editor wraps this in translucent blend state). `rotationQuarter` is the
+  // 0..3 quarter-turn about Y. Uses the obstacle shader for static models and
+  // the skinned shader for animated ones; the caller must have both set up.
+  // Returns false if the id is unknown / the map has no vertex heights.
+  bool renderGhostAt(render::Shader& obstacleShader,
+                     render::Shader& skinnedShader,
+                     const shared::WorldMapFile& map,
+                     const std::string& id,
+                     int tileX, int tileY, int rotationQuarter);
+
   // World-space AABB for an object id (model bounds ∪ footprint), in model
   // space centred on its tile. Returns false for unknown ids.
   bool customAabb(const std::string& id, glm::vec3& outMin, glm::vec3& outMax) const {

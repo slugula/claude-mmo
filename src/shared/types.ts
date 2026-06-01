@@ -83,6 +83,7 @@ export interface TileData {
   blocksRanged: boolean;
   groundColor: string;  // hex color for terrain texture, e.g. '#7ec850'
   height: number;       // legacy: per-tile average height kept for backward-compat migration
+  obstacleRotation?: number;  // 90° steps about Y (0..3); client renders the obstacle rotated
 }
 
 // ---------- Map file format (editor output) ----------
@@ -257,6 +258,7 @@ export interface TalkToAction      { type: 'TALK_TO';     npcId: string; }
 export interface TakeItemAction    { type: 'TAKE_ITEM';   droppedItemId: string; }
 export interface DropItemAction    { type: 'DROP_ITEM';   slotIndex: number; }
 export interface MoveSlotAction    { type: 'MOVE_SLOT';   fromSlot: number; toSlot: number; }
+export interface MoveBankSlotAction { type: 'MOVE_BANK_SLOT'; fromSlot: number; toSlot: number; }
 export interface EquipItemAction   { type: 'EQUIP_ITEM';  slotIndex: number; }
 export interface UnequipItemAction { type: 'UNEQUIP_ITEM'; slot: EquipSlot; }
 export interface SendChatAction       { type: 'SEND_CHAT';      message: string; }
@@ -270,7 +272,7 @@ export interface WithdrawItemAction   { type: 'WITHDRAW_ITEM'; bankSlot: number;
 export type GameAction =
   | MoveToAction | ChopTreeAction | MineRockAction | FishAction
   | AttackNPCAction | TalkToAction | TakeItemAction
-  | DropItemAction | MoveSlotAction
+  | DropItemAction | MoveSlotAction | MoveBankSlotAction
   | EquipItemAction | UnequipItemAction | SendChatAction
   | SetAppearanceAction
   | OpenBankAction | DepositItemAction | DepositAllAction | DepositWornAction | WithdrawItemAction;
