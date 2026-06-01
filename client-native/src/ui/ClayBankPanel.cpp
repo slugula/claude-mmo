@@ -123,8 +123,9 @@ static void buildBankSlot(int idx, bool isBankGrid,
                                                   : CLAY_IDI("BkInvSprite",  idx);
                 CLAY(sprId, {
                     .layout = {
-                        .sizing = { CLAY_SIZING_FIXED(kCellSize - 6),
-                                    CLAY_SIZING_FIXED(kCellSize - 6) },
+                        // 32×32 sprites drawn 1:1 (crisp, no scaling/filtering).
+                        .sizing = { CLAY_SIZING_FIXED(32.f),
+                                    CLAY_SIZING_FIXED(32.f) },
                     },
                     .image = {
                         .imageData = reinterpret_cast<void*>(static_cast<uintptr_t>(tex))

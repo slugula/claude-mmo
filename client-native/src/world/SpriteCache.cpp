@@ -17,15 +17,14 @@ GLuint uploadRGBA(const unsigned char* rgba, int w, int h) {
     GLuint tex = 0;
     glGenTextures(1, &tex);
     glBindTexture(GL_TEXTURE_2D, tex);
-    // Trilinear minification + mipmaps so high-res sprites (e.g. 64×64) downscale
-    // cleanly into the small inventory slots instead of aliasing/looking rough.
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    // Nearest, no mipmaps — sprites are authored at slot resolution (32×32) and
+    // drawn 1:1, so any filtering would only blur them. Keep them crisp.
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0,
                  GL_RGBA, GL_UNSIGNED_BYTE, rgba);
-    glGenerateMipmap(GL_TEXTURE_2D);
     glBindTexture(GL_TEXTURE_2D, 0);
     return tex;
 }

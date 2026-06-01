@@ -101,6 +101,7 @@ static constexpr int   kTabH      =  28;
 static constexpr int   kPad       =   8;
 static constexpr int   kCellSize  =  44;
 static constexpr int   kCellGap   =   3;
+static constexpr int   kSpritePx  =  32;  // sprites authored 32×32 — draw 1:1, crisp
 static constexpr int   kInvCols   =   4;
 static constexpr int   kInvRows   =   7;
 static constexpr int   kEquipCols =   3;
@@ -205,7 +206,7 @@ static void buildInventoryTab(const shared::PlayerState* player,
                 if (opt.has_value()) dragItem = &opt.value();
             }
             if (dragItem) {
-                constexpr int kGhostSize = 28;
+                constexpr int kGhostSize = kSpritePx;  // dragged sprite 1:1, crisp
                 CLAY(CLAY_ID("DragGhost"), {
                     .floating = {
                         .offset  = { mx - kGhostSize / 2.f, my - kGhostSize / 2.f },
@@ -291,8 +292,8 @@ static void buildInventoryTab(const shared::PlayerState* player,
                                 GLuint tex = sprites->get(item->itemId);
                                 CLAY(CLAY_IDI("InvSprite", idx), {
                                     .layout = {
-                                        .sizing = { CLAY_SIZING_FIXED(kCellSize - 6),
-                                                    CLAY_SIZING_FIXED(kCellSize - 6) },
+                                        .sizing = { CLAY_SIZING_FIXED(kSpritePx),
+                                                    CLAY_SIZING_FIXED(kSpritePx) },
                                     },
                                     .image = {
                                         .imageData = reinterpret_cast<void*>(
@@ -547,8 +548,8 @@ static void buildEquipmentTab(const shared::PlayerState* player,
                                 GLuint tex = sprites->get(item->itemId);
                                 CLAY(CLAY_IDI("EqSprite", gridIdx), {
                                     .layout = {
-                                        .sizing = { CLAY_SIZING_FIXED(kCellSize - 6),
-                                                    CLAY_SIZING_FIXED(kCellSize - 6) },
+                                        .sizing = { CLAY_SIZING_FIXED(kSpritePx),
+                                                    CLAY_SIZING_FIXED(kSpritePx) },
                                     },
                                     .image = {
                                         .imageData = reinterpret_cast<void*>(
