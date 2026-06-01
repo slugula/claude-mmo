@@ -222,11 +222,8 @@ export function processCombat(
       const spot = findReachableAdjacent(pos(nextPlayer), pos(target), world, true);
       if (!spot) { messages.push(`I can’t reach that.`); continue; }
       nextPlayer = {
-        ...nextPlayer,
+        ...clearActionIntents(nextPlayer),
         attackTargetId: target.id,
-        talkTargetId: null,
-        chopTargetX: null,
-        chopTargetY: null,
         path: spot.path,
         destinationX: spot.pos.x,
         destinationY: spot.pos.y,
