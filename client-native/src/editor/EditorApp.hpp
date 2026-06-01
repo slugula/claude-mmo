@@ -180,6 +180,7 @@ private:
   // Sub-selection within tools
   std::string           obstacleSubtype_ = "tree";  // DB object ID of selected obstacle type
   std::string           npcSubtype_      = "chicken";
+  int                   placeRotation_   = 0;        // 0..3 quarter-turns (Q=CCW, E=CW) for placed objects
 
   // Active terrain colour (PaintTerrain tool)
   float paletteR_ = 0.49f, paletteG_ = 0.78f, paletteB_ = 0.31f;

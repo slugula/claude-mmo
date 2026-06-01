@@ -83,6 +83,7 @@ export interface TileData {
   blocksRanged: boolean;
   groundColor: string;  // hex color for terrain texture, e.g. '#7ec850'
   height: number;       // legacy: per-tile average height kept for backward-compat migration
+  obstacleRotation?: number;  // 90° steps about Y (0..3); client renders the obstacle rotated
 }
 
 // ---------- Map file format (editor output) ----------
