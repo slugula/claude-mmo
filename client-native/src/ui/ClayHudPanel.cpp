@@ -28,7 +28,7 @@
 namespace ui {
 
 // ── Palette ───────────────────────────────────────────────────────────────────
-static constexpr Clay_Color kPanelBg      = {  18,  10,   3, 150 };
+static constexpr Clay_Color kPanelBg      = {  18,  10,   3, 200 };  // alpha matches chat window
 static constexpr Clay_Color kPanelBorder  = { 107,  79,  41, 200 };
 static constexpr Clay_Color kTabActive    = {  55,  38,  12, 255 };
 static constexpr Clay_Color kTabInactive  = {  28,  18,   5, 255 };

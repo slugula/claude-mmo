@@ -29,7 +29,7 @@
 namespace ui {
 
 // ── Palette ───────────────────────────────────────────────────────────────────
-static constexpr Clay_Color kBg         = {  18,  10,   3, 240 };
+static constexpr Clay_Color kBg         = {  18,  10,   3, 200 };  // alpha matches chat window
 static constexpr Clay_Color kBorder     = { 107,  79,  41, 200 };
 static constexpr Clay_Color kHeaderBg   = {  10,   6,   2, 255 };
 static constexpr Clay_Color kDivider    = {  70,  50,  20, 200 };
