@@ -2,6 +2,7 @@ import type { PlayerState, WorldState, GameAction, Direction } from '../shared/t
 import { getItem } from '../items/ItemRegistry';
 import { addXP } from './SkillSystem';
 import { findReachableAdjacent } from './CombatSystem';
+import { clearActionIntents } from './ActionIntent';
 
 // Fishing spots are inexhaustible (no depletion/respawn) — simpler than
 // woodcutting/mining. Stand adjacent, roll on an interval, get a fish + XP.
@@ -76,13 +77,12 @@ export function processFishing(
     // --- Process new FISH actions ---
     for (const action of actions) {
       if (action.type !== 'FISH') continue;
+      // Starting to fish cancels every other action intent (attack, chop, mine,
+      // talk, pickup) so they can't run concurrently, then sets the fish target.
       p = {
-        ...p,
+        ...clearActionIntents(p),
         fishTargetX: action.tileX,
         fishTargetY: action.tileY,
-        attackTargetId: null,
-        talkTargetId: null,
-        pickupItemId: null,
       };
     }
 

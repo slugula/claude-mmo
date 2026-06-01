@@ -6,6 +6,7 @@ import { findPath } from '../world/Pathfinder';
 import { getNPCDef } from '../npcs/NPCRegistry';
 import { getItem } from '../items/ItemRegistry';
 import { addXP } from './SkillSystem';
+import { clearActionIntents } from './ActionIntent';
 import {
   PLAYER_DEATH_TICKS, PLAYER_REGEN_INTERVAL_TICKS, RESPAWN_X, RESPAWN_Y,
   GUNNER_ATTACK_SPEED, GUNNER_ATTACK_RANGE,
@@ -151,6 +152,10 @@ export function processCombat(
         talkTargetId: null,
         chopTargetX: null,
         chopTargetY: null,
+        mineTargetX: null,
+        mineTargetY: null,
+        fishTargetX: null,
+        fishTargetY: null,
       };
       messages.push('Your mortal coil has perished.');
     } else {
@@ -188,11 +193,8 @@ export function processCombat(
       const hasLOS = hasLineOfSight(world, pos(nextPlayer), pos(target));
       if (dist <= GUNNER_ATTACK_RANGE && hasLOS) {
         nextPlayer = {
-          ...nextPlayer,
+          ...clearActionIntents(nextPlayer),
           attackTargetId: target.id,
-          talkTargetId: null,
-          chopTargetX: null,
-          chopTargetY: null,
           path: [],
           facing: directionTo(pos(nextPlayer), pos(target)),
         };
@@ -200,11 +202,8 @@ export function processCombat(
         const spot = findReachableAdjacent(pos(nextPlayer), pos(target), world, true);
         if (!spot) { messages.push(`I can’t reach that.`); continue; }
         nextPlayer = {
-          ...nextPlayer,
+          ...clearActionIntents(nextPlayer),
           attackTargetId: target.id,
-          talkTargetId: null,
-          chopTargetX: null,
-          chopTargetY: null,
           path: spot.path,
           destinationX: spot.pos.x,
           destinationY: spot.pos.y,
@@ -213,11 +212,8 @@ export function processCombat(
     } else {
       if (is4Adjacent(pos(nextPlayer), pos(target))) {
         nextPlayer = {
-          ...nextPlayer,
+          ...clearActionIntents(nextPlayer),
           attackTargetId: target.id,
-          talkTargetId: null,
-          chopTargetX: null,
-          chopTargetY: null,
           path: [],
           facing: directionTo(pos(nextPlayer), pos(target)),
         };
@@ -456,6 +452,10 @@ export function processCombat(
         talkTargetId: null,
         chopTargetX: null,
         chopTargetY: null,
+        mineTargetX: null,
+        mineTargetY: null,
+        fishTargetX: null,
+        fishTargetY: null,
         path: [],
       };
     } else {

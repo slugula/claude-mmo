@@ -2,6 +2,7 @@ import type { PlayerState, WorldState, GameAction, Direction } from '../shared/t
 import { getItem } from '../items/ItemRegistry';
 import { addXP } from './SkillSystem';
 import { findReachableAdjacent } from './CombatSystem';
+import { clearActionIntents } from './ActionIntent';
 
 const CHOP_INTERVAL = 12;   // ticks between each success roll
 const SUCCESS_CHANCE = 0.5; // base success probability per roll
@@ -92,13 +93,12 @@ export function processWoodcutting(
     // --- Process new CHOP_TREE actions ---
     for (const action of actions) {
       if (action.type !== 'CHOP_TREE') continue;
+      // Starting to chop cancels every other action intent so they can't run
+      // concurrently, then sets the chop target.
       p = {
-        ...p,
+        ...clearActionIntents(p),
         chopTargetX: action.tileX,
         chopTargetY: action.tileY,
-        attackTargetId: null,
-        talkTargetId: null,
-        pickupItemId: null,
       };
     }
 

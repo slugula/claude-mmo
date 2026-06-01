@@ -2,6 +2,7 @@ import type { PlayerState, WorldState, GameAction, Direction } from '../shared/t
 import { getItem } from '../items/ItemRegistry';
 import { addXP } from './SkillSystem';
 import { findReachableAdjacent } from './CombatSystem';
+import { clearActionIntents } from './ActionIntent';
 
 // Mirrors WoodcuttingSystem: rocks deplete with active mining, then respawn.
 const MINE_INTERVAL = 12;    // ticks between each success roll
@@ -92,13 +93,12 @@ export function processMining(
     // --- Process new MINE_ROCK actions ---
     for (const action of actions) {
       if (action.type !== 'MINE_ROCK') continue;
+      // Starting to mine cancels every other action intent so they can't run
+      // concurrently, then sets the mine target.
       p = {
-        ...p,
+        ...clearActionIntents(p),
         mineTargetX: action.tileX,
         mineTargetY: action.tileY,
-        attackTargetId: null,
-        talkTargetId: null,
-        pickupItemId: null,
       };
     }
 
