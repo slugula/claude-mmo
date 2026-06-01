@@ -143,10 +143,19 @@ static void buildBankSlot(int idx, const shared::ItemStack* item,
                 }) {}
             }
 
-            // Quantity overlay (top-RIGHT floating) — items always stack in bank.
+            // Stack count overlay (top-RIGHT). Items always stack in the bank,
+            // so show the count for any stack > 1. A fixed-width, right-aligned
+            // wrapper makes the RIGHT_TOP attach exact (a bare text element has
+            // an unknown width at attach time and lands off the slot edge).
             if (item->quantity > 1) {
                 std::string qs = fmtQty(item->quantity);
                 CLAY(CLAY_IDI("BkBankQty", idx), {
+                    .layout = {
+                        .sizing         = { CLAY_SIZING_FIXED(kCellSize - 4.f),
+                                            CLAY_SIZING_FIT(0) },
+                        .childAlignment = { .x = CLAY_ALIGN_X_RIGHT,
+                                            .y = CLAY_ALIGN_Y_TOP },
+                    },
                     .floating = {
                         .offset       = { -2.f, 2.f },
                         .zIndex       = 10,
