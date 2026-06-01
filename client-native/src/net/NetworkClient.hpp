@@ -59,6 +59,7 @@ public:
   void sendTakeItem    (const std::string& droppedItemId);
   void sendDropItem    (int slotIndex);
   void sendMoveSlot    (int fromSlot, int toSlot);
+  void sendMoveBankSlot(int fromSlot, int toSlot);
   void sendEquipItem   (int slotIndex);
   void sendUnequipItem (const std::string& equipSlot);
   void sendChat        (const std::string& message);

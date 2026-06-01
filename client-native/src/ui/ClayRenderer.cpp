@@ -205,7 +205,7 @@ void clayFrame(const shared::PlayerState* player,
 
     // Bank panel (rendered above HUD, below modals)
     buildBankPanel(screenW, screenH, player, netc, sprites,
-                   bankOpen, leftClicked, rightClicked, hover);
+                   bankOpen, leftClicked, rightClicked, mouseDown, mx, my, hover);
 
     // Modals render last (highest z-index — cover all other UI)
     if (showJoinModal)  buildJoinModal(screenW, screenH, leftClicked);

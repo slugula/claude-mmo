@@ -163,15 +163,41 @@ export function processItems(
     // ---- Banking actions -------------------------------------------------------
 
     if (action.type === 'DEPOSIT_ITEM') {
-      const slot = nextPlayer.inventory[action.slotIndex];
-      if (!slot) continue;
-      const qty = Math.min(action.quantity, slot.quantity);
-      const bankResult = bankAddItem(nextPlayer.bank ?? createEmptyBank(), slot.itemId, qty);
-      if (!bankResult.added) {
-        messages.push('Your bank is full.');
-      } else {
-        const newInv = removeItem(nextPlayer.inventory, action.slotIndex, qty);
-        nextPlayer = { ...nextPlayer, inventory: newInv, bank: bankResult.bank };
+      const start = nextPlayer.inventory[action.slotIndex];
+      if (!start) continue;
+      const itemId = start.itemId;
+      // Deposit up to `quantity` units of this item type, pulling from the
+      // clicked slot first, then any other inventory slots holding the same
+      // item (so "Deposit 10" of 5 non-stackable eggs deposits all 5).
+      let inv  = [...nextPlayer.inventory];
+      let bank = nextPlayer.bank ?? createEmptyBank();
+      let remaining = action.quantity;
+      let deposited = false;
+      const order = [action.slotIndex,
+                     ...inv.map((_, i) => i).filter(i => i !== action.slotIndex)];
+      for (const i of order) {
+        if (remaining <= 0) break;
+        const s = inv[i];
+        if (!s || s.itemId !== itemId) continue;
+        const take = Math.min(remaining, s.quantity);
+        const res  = bankAddItem(bank, itemId, take);
+        if (!res.added) { messages.push('Your bank is full.'); break; }
+        bank      = res.bank;
+        inv       = removeItem(inv, i, take);
+        remaining -= take;
+        deposited = true;
+      }
+      if (deposited) nextPlayer = { ...nextPlayer, inventory: inv, bank };
+    }
+
+    if (action.type === 'MOVE_BANK_SLOT') {
+      const bank = [...(nextPlayer.bank ?? createEmptyBank())];
+      if (action.fromSlot >= 0 && action.fromSlot < bank.length &&
+          action.toSlot   >= 0 && action.toSlot   < bank.length) {
+        const tmp = bank[action.fromSlot];
+        bank[action.fromSlot] = bank[action.toSlot];
+        bank[action.toSlot]   = tmp;
+        nextPlayer = { ...nextPlayer, bank };
       }
     }
 

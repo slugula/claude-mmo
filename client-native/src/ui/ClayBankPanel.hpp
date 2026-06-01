@@ -24,6 +24,8 @@ void buildBankPanel(float screenW, float screenH,
                     bool bankOpen,
                     bool leftClicked,
                     bool rightClicked,
+                    bool mouseDown,
+                    float mx, float my,
                     UiHoverState* hover);
 
 // Returns true on the first frame the user closes the bank

@@ -54,7 +54,7 @@ static constexpr float kCellSize    =  44.f;
 static constexpr float kCellGap     =   3.f;
 static constexpr int   kCols        =   8;     // bank columns
 static constexpr int   kVisibleRows =   6;     // rows visible before scroll
-static constexpr int   kMaxBank     = 400;
+static constexpr int   kMaxBank     = 100;     // BANK_SLOTS (mirror of server)
 static constexpr float kSbW         =   8.f;   // scrollbar width
 static constexpr float kHeaderH     =  32.f;
 static constexpr float kFooterH     =  36.f;
@@ -68,6 +68,13 @@ static constexpr float kPanelH       = kHeaderH + 1.f + kGridRowH + 1.f + kFoote
 
 // ── Per-frame hover state ─────────────────────────────────────────────────────
 static int  s_hovBankSlot = -1;   // hovered bank grid slot index
+
+// ── Drag-and-drop state (bank grid reorder) ───────────────────────────────────
+static int   s_bkDragSlot   = -1;   // slot being dragged (-1 = none)
+static int   s_bkPressSlot  = -1;   // slot pressed but not yet dragged
+static float s_bkPressX     =  0.f;
+static float s_bkPressY     =  0.f;
+static bool  s_bkPrevDown   = false;
 
 // ── Close flag ────────────────────────────────────────────────────────────────
 static bool s_wantsClose = false;
@@ -168,16 +175,33 @@ void buildBankPanel(float /*screenW*/, float /*screenH*/,
                     bool bankOpen,
                     bool leftClicked,
                     bool rightClicked,
+                    bool mouseDown,
+                    float mx, float my,
                     UiHoverState* hover) {
-    if (!bankOpen) return;
+    if (!bankOpen) {
+        s_bkDragSlot = s_bkPressSlot = -1;
+        s_bkPrevDown = false;
+        return;
+    }
 
     s_boff = 0;
 
-    int bankCount = player ? static_cast<int>(player->bank.size()) : 0;
+    // Total bank slots (padded array, e.g. 100) and the filled/last-filled count.
+    int bankLen = player ? static_cast<int>(player->bank.size()) : 0;
+    int filled = 0, lastFilled = -1;
+    for (int i = 0; i < bankLen; ++i)
+        if (player->bank[i].has_value()) { ++filled; lastFilled = i; }
+
+    // Render enough rows to cover all items plus one spare row for drop targets,
+    // so the window stays compact instead of showing all 100 empty slots.
+    const int totalRows  = (bankLen + kCols - 1) / kCols;
+    const int usedRows   = (lastFilled + kCols) / kCols;   // ceil((lastFilled+1)/kCols)
+    const int rows       = std::max(1, std::min(usedRows + 1, std::max(1, totalRows)));
+    const int renderSlots = std::min(bankLen, rows * kCols);
 
     // ── Recompute hover from last frame's bounding boxes ─────────────────────
     s_hovBankSlot = -1;
-    for (int i = 0; i < bankCount; ++i)
+    for (int i = 0; i < renderSlots; ++i)
         if (Clay_PointerOver(CLAY_IDI("BkBankSlot", i))) { s_hovBankSlot = i; break; }
 
     // ── Button hover detection ────────────────────────────────────────────────
@@ -186,7 +210,7 @@ void buildBankPanel(float /*screenW*/, float /*screenH*/,
     bool xHov     = Clay_PointerOver(CLAY_ID("BkClose"));
 
     // ── Hover tooltip for a bank item: "Withdraw-1 {Item}" ───────────────────
-    if (hover && s_hovBankSlot >= 0 && s_hovBankSlot < bankCount) {
+    if (hover && s_hovBankSlot >= 0 && s_hovBankSlot < bankLen && s_bkDragSlot < 0) {
         const auto& opt = player->bank[s_hovBankSlot];
         if (opt.has_value()) {
             hover->kind     = UiHoverState::Kind::InventoryItem;
@@ -215,7 +239,8 @@ void buildBankPanel(float /*screenW*/, float /*screenH*/,
     }
 
     // ── Right-click bank grid slot → Withdraw 1/5/10/All/Examine ─────────────
-    if (rightClicked && s_hovBankSlot >= 0 && s_hovBankSlot < bankCount) {
+    if (rightClicked && s_hovBankSlot >= 0 && s_hovBankSlot < bankLen) {
+        s_bkDragSlot = s_bkPressSlot = -1;   // cancel any drag
         const auto& opt = player->bank[s_hovBankSlot];
         if (opt.has_value()) {
             auto& cm = ctxMenu();
@@ -236,6 +261,44 @@ void buildBankPanel(float /*screenW*/, float /*screenH*/,
             cm.entries.push_back({ "Withdraw 10",  name });
             cm.entries.push_back({ "Withdraw All", name });
             cm.entries.push_back({ "Examine",      name });
+        }
+    }
+
+    // ── Drag-to-reorder + left-click withdraw-1 ──────────────────────────────
+    // Mirrors the inventory: press → (move>threshold) drag → drop swaps slots;
+    // a plain click (no drag) withdraws 1 of the item to the inventory.
+    {
+        const bool wasDown  = s_bkPrevDown;
+        s_bkPrevDown        = mouseDown;
+        const bool downEdge = (mouseDown && !wasDown);
+        const bool upEdge   = (!mouseDown && wasDown);
+
+        // Press on a filled slot records it.
+        if (downEdge && s_hovBankSlot >= 0 && s_hovBankSlot < bankLen &&
+            player->bank[s_hovBankSlot].has_value()) {
+            s_bkPressSlot = s_hovBankSlot;
+            s_bkPressX = mx; s_bkPressY = my;
+        }
+
+        // Promote to drag once the cursor moves beyond a small threshold.
+        constexpr float kDragThresh = 5.f;
+        if (mouseDown && s_bkPressSlot >= 0 && s_bkDragSlot < 0) {
+            float dx = mx - s_bkPressX, dy = my - s_bkPressY;
+            if (dx*dx + dy*dy > kDragThresh*kDragThresh) s_bkDragSlot = s_bkPressSlot;
+        }
+
+        if (upEdge) {
+            if (s_bkDragSlot >= 0) {
+                // Drop: swap onto the hovered slot (if different).
+                if (s_hovBankSlot >= 0 && s_hovBankSlot != s_bkDragSlot && netc)
+                    netc->sendMoveBankSlot(s_bkDragSlot, s_hovBankSlot);
+                s_bkDragSlot = -1;
+            } else if (s_bkPressSlot >= 0 && s_bkPressSlot == s_hovBankSlot &&
+                       !ctxMenu().open && netc) {
+                // Plain click → withdraw 1.
+                netc->sendWithdrawItem(s_bkPressSlot, 1);
+            }
+            s_bkPressSlot = -1;
         }
     }
 
@@ -268,6 +331,29 @@ void buildBankPanel(float /*screenW*/, float /*screenH*/,
             .attachTo = CLAY_ATTACH_TO_ROOT,
         }
     }) {
+        // Drag ghost — the dragged item's sprite follows the cursor.
+        if (s_bkDragSlot >= 0 && s_bkDragSlot < bankLen &&
+            player->bank[s_bkDragSlot].has_value() && sprites) {
+            GLuint tex = sprites->get(player->bank[s_bkDragSlot]->itemId);
+            CLAY(CLAY_ID("BkDragGhost"), {
+                .floating = {
+                    .offset  = { mx - 16.f, my - 16.f },
+                    .zIndex  = 60,
+                    .attachPoints = {
+                        .element = CLAY_ATTACH_POINT_LEFT_TOP,
+                        .parent  = CLAY_ATTACH_POINT_LEFT_TOP,
+                    },
+                    .pointerCaptureMode = CLAY_POINTER_CAPTURE_MODE_PASSTHROUGH,
+                    .attachTo = CLAY_ATTACH_TO_ROOT,
+                }
+            }) {
+                CLAY(CLAY_ID("BkDragGhostSprite"), {
+                    .layout = { .sizing = { CLAY_SIZING_FIXED(32.f), CLAY_SIZING_FIXED(32.f) } },
+                    .image  = { .imageData = reinterpret_cast<void*>(static_cast<uintptr_t>(tex)) }
+                }) {}
+            }
+        }
+
         CLAY(CLAY_ID("BkPanel"), {
             .layout = {
                 .sizing          = { CLAY_SIZING_FIXED(kPanelW), CLAY_SIZING_FIXED(kPanelH) },
@@ -298,10 +384,10 @@ void buildBankPanel(float /*screenW*/, float /*screenH*/,
                     .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) } }
                 }) {}
 
-                // Usage fraction
+                // Usage fraction — number of filled slots out of the bank max.
                 {
                     char usageBuf[32];
-                    std::snprintf(usageBuf, sizeof(usageBuf), "%d / %d", bankCount, kMaxBank);
+                    std::snprintf(usageBuf, sizeof(usageBuf), "%d / %d", filled, kMaxBank);
                     CLAY_TEXT(cs(usageBuf), CLAY_TEXT_CONFIG({
                         .textColor = kGrey, .fontSize = 0,
                     }));
@@ -348,7 +434,6 @@ void buildBankPanel(float /*screenW*/, float /*screenH*/,
                     .backgroundColor = kScrollBg,
                     .clip = { .vertical = true, .childOffset = Clay_GetScrollOffset() },
                 }) {
-                    int rows = std::max(1, (bankCount + kCols - 1) / kCols);
                     for (int row = 0; row < rows; ++row) {
                         CLAY(CLAY_IDI("BkBankRow", row), {
                             .layout = {
@@ -360,7 +445,7 @@ void buildBankPanel(float /*screenW*/, float /*screenH*/,
                             for (int col = 0; col < kCols; ++col) {
                                 int idx = row * kCols + col;
                                 const shared::ItemStack* item = nullptr;
-                                if (player && idx < bankCount) {
+                                if (player && idx < bankLen && idx != s_bkDragSlot) {
                                     const auto& opt = player->bank[idx];
                                     if (opt.has_value()) item = &opt.value();
                                 }

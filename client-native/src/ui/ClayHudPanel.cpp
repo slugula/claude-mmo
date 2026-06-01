@@ -893,10 +893,16 @@ void clayHudHandleInput(const shared::PlayerState* player,
                     s_dragSlot = -1;
                 } else if (s_pressedSlot >= 0 && !ctxMenu().open && netc && player &&
                            s_pressedSlot < static_cast<int>(player->inventory.size())) {
-                    // Click: equip if equippable
                     const auto& opt = player->inventory[s_pressedSlot];
-                    if (opt.has_value() && equipSlotForItem(opt->itemId)[0])
-                        netc->sendEquipItem(s_pressedSlot);
+                    if (opt.has_value()) {
+                        if (s_bankOpen) {
+                            // Bank open: a plain click deposits 1.
+                            netc->sendDepositItem(s_pressedSlot, 1);
+                        } else if (equipSlotForItem(opt->itemId)[0]) {
+                            // Otherwise equip if equippable.
+                            netc->sendEquipItem(s_pressedSlot);
+                        }
+                    }
                 }
                 s_pressedSlot = -1;
             }

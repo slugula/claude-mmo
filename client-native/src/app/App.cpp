@@ -1892,10 +1892,9 @@ void App::renderFrame() {
         } else if (e.verb == "Deposit 10") {
           network_.sendDepositItem(slot, 10);
         } else if (e.verb == "Deposit All") {
-          if (currLocalPlayer_ && slot < static_cast<int>(currLocalPlayer_->inventory.size())) {
-            const auto& opt = currLocalPlayer_->inventory[slot];
-            if (opt.has_value()) network_.sendDepositItem(slot, opt->quantity);
-          }
+          // Large count → server deposits every unit of this item across all
+          // inventory slots (handles non-stackable items spanning many slots).
+          network_.sendDepositItem(slot, 1000000000);
         } else if (e.verb == "Examine") {
           if (!cm.contextItemId.empty()) {
             const std::string msg = "It's a " + ui::itemName(cm.contextItemId) + ".";
