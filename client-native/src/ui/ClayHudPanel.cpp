@@ -279,12 +279,12 @@ static void buildInventoryTab(const shared::PlayerState* player,
                                                  .y = CLAY_ALIGN_Y_CENTER },
                             .layoutDirection = CLAY_TOP_TO_BOTTOM,
                         },
-                        // Fully invisible grid: no background, no border on any
-                        // slot — items just float on the panel.
+                        // Transparent fill, but every slot (empty or filled)
+                        // shows a grid border.
                         .backgroundColor = kTransparent,
                         .border = {
                             .color = hovered ? kSlotHover : kSlotBorder,
-                            .width = CLAY_BORDER_ALL(0),
+                            .width = CLAY_BORDER_ALL(1),
                         }
                     }) {
                         if (filled) {
