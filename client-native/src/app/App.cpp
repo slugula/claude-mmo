@@ -54,6 +54,19 @@ struct InitDefs {
 namespace app {
 
 namespace {
+// Bank-specific: the tile directly in front of a chest, honouring its 90°
+// rotation. Base front (rotation 0) faces south (+tileY); each quarter-turn
+// rotates the offset with the same Y-rotation the renderer applies to the
+// model, giving south → east → north → west for rotations 0..3. This is
+// intentionally bank-only — other interactables still use generic adjacency.
+inline void bankFrontTile(int tx, int ty, int rot, int& outX, int& outY) {
+  static const int fx[4] = { 0, 1, 0, -1 };   // S, E, N, W
+  static const int fy[4] = { 1, 0, -1, 0 };
+  const int r = ((rot % 4) + 4) % 4;
+  outX = tx + fx[r];
+  outY = ty + fy[r];
+}
+
 constexpr int kInitialWidth  = 1280;
 constexpr int kInitialHeight = 720;
 constexpr int kMsaaSamples   = 4;
@@ -1790,9 +1803,11 @@ void App::renderFrame() {
               oneShotClip_.clear();
               dispatched = true; clickFeedbackColor_ = 1;
             } else if (obs == "chest") {
-              // Walk to the chest; the bank opens once we're adjacent (the
-              // server reroutes the unwalkable chest tile to a walkable one).
-              network_.sendMoveTo(tx, ty);
+              // Walk to the tile in front of the chest (respecting rotation);
+              // the bank opens once we're adjacent.
+              int fx2, fy2;
+              bankFrontTile(tx, ty, map_.tiles[ty][tx].obstacleRotation, fx2, fy2);
+              network_.sendMoveTo(fx2, fy2);
               pendingBankTileX_ = tx;
               pendingBankTileY_ = ty;
               oneShotClip_.clear();
@@ -1922,8 +1937,15 @@ void App::renderFrame() {
       } else if (e.verb == "Fish") {
         network_.sendFish(ctxMenuTileX_, ctxMenuTileY_); oneShotClip_.clear();
       } else if (e.verb == "Bank") {
-        // Walk to the chest; the bank opens once adjacent.
-        network_.sendMoveTo(ctxMenuTileX_, ctxMenuTileY_);
+        // Walk to the tile in front of the chest (respecting rotation); the
+        // bank opens once adjacent.
+        int rot = 0;
+        if (ctxMenuTileY_ >= 0 && ctxMenuTileY_ < static_cast<int>(map_.tiles.size()) &&
+            ctxMenuTileX_ >= 0 && ctxMenuTileX_ < static_cast<int>(map_.tiles[ctxMenuTileY_].size()))
+          rot = map_.tiles[ctxMenuTileY_][ctxMenuTileX_].obstacleRotation;
+        int fx2, fy2;
+        bankFrontTile(ctxMenuTileX_, ctxMenuTileY_, rot, fx2, fy2);
+        network_.sendMoveTo(fx2, fy2);
         pendingBankTileX_ = ctxMenuTileX_;
         pendingBankTileY_ = ctxMenuTileY_;
         oneShotClip_.clear();
