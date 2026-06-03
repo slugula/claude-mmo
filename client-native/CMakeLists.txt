@@ -44,6 +44,7 @@ add_library(game_core STATIC
   src/render/GlDebug.cpp
   src/render/Mesh.cpp
   src/render/MsaaFramebuffer.cpp
+  src/render/PostFx.cpp
   src/render/Shader.cpp
   src/render/ShadowMap.cpp
   src/world/EntityRenderer.cpp

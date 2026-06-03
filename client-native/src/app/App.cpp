@@ -243,7 +243,8 @@ bool App::init() {
   render::installGlDebugCallback();
 
   msaa_ = std::make_unique<render::MsaaFramebuffer>(
-      window_.framebufferWidth(), window_.framebufferHeight(), kMsaaSamples);
+      window_.framebufferWidth(), window_.framebufferHeight(), kMsaaSamples,
+      /*hdr=*/true);
 
   window_.onFramebufferResize = [this](int w, int h) { onResize(w, h); };
   // ImGui's GLFW backend chains these — its handlers run first, then ours.
@@ -579,6 +580,10 @@ bool App::init() {
   // (Item sprites are loaded inside applyEntityDefs, from the def source.)
   minimap_.init();
 
+  // HDR post-processing (bloom + tonemap). Resolver maps relative shader paths.
+  postfx_.init([this](const std::string& rel) { return resolveFromExe(rel.c_str()); });
+  { int fw, fh; glfwGetFramebufferSize(window_.handle(), &fw, &fh); postfx_.resize(fw, fh); }
+
   if (!audio_.init()) {
     std::fprintf(stderr, "[App] audio init failed — proceeding without sound\n");
   }
@@ -612,6 +617,16 @@ bool App::init() {
       // Persisted bank window position (-1 = unset → centre on first open).
       if (s.bankPosX >= 0.f && s.bankPosY >= 0.f)
         ui::bankPanelSetPosition(s.bankPosX, s.bankPosY);
+      // HDR post-processing params.
+      postParams_.exposure       = s.ppExposure;
+      postParams_.tonemap        = s.ppTonemap;
+      postParams_.gamma          = s.ppGamma;
+      postParams_.bloomEnabled   = s.ppBloomEnabled;
+      postParams_.bloomThreshold = s.ppBloomThreshold;
+      postParams_.bloomKnee      = s.ppBloomKnee;
+      postParams_.bloomIntensity = s.ppBloomIntensity;
+      postParams_.bloomRadius    = s.ppBloomRadius;
+      postParams_.bloomMips      = s.ppBloomMips;
     }
   }
 
@@ -1524,9 +1539,14 @@ void App::renderFrame() {
     }
   }
 
-  // ---- Resolve to single-sample + blit to window ----------------------------
+  // ---- Resolve HDR scene, then bloom + tonemap to the window ----------------
   msaa_->resolve();
-  msaa_->blitToDefault(fbW, fbH);
+  if (postfx_.valid()) {
+    postfx_.resize(msaa_->width(), msaa_->height());
+    postfx_.render(msaa_->resolveColorTexture(), fbW, fbH, postParams_);
+  } else {
+    msaa_->blitToDefault(fbW, fbH);   // fallback if post shaders failed to load
+  }
 
   // ---- ImGui UI pass on default framebuffer ----------------------------------
   ImGui_ImplOpenGL3_NewFrame();
@@ -2376,6 +2396,25 @@ void App::renderFrame() {
     ImGui::Separator();
     ImGui::EndDisabled();
     if (aoEnabled_) ImGui::TextDisabled("AO baked into terrain mesh — regen to update");
+
+    ImGui::Separator();
+    if (ImGui::CollapsingHeader("HDR / Bloom / Tonemap", ImGuiTreeNodeFlags_DefaultOpen)) {
+      auto& pp = postParams_;
+      const char* kTonemaps[] = { "None", "Reinhard", "ACES" };
+      ImGui::Combo("Tonemap", &pp.tonemap, kTonemaps, IM_ARRAYSIZE(kTonemaps));
+      ImGui::SliderFloat("Exposure", &pp.exposure, 0.1f, 4.0f, "%.2f");
+      ImGui::SliderFloat("Gamma",    &pp.gamma,    1.0f, 2.4f, "%.2f");
+      ImGui::Separator();
+      ImGui::Checkbox("Bloom", &pp.bloomEnabled);
+      ImGui::BeginDisabled(!pp.bloomEnabled);
+      ImGui::SliderFloat("Threshold", &pp.bloomThreshold, 0.0f, 3.0f, "%.2f");
+      ImGui::SliderFloat("Knee",      &pp.bloomKnee,      0.0f, 1.0f, "%.2f");
+      ImGui::SliderFloat("Intensity", &pp.bloomIntensity, 0.0f, 2.0f, "%.2f");
+      ImGui::SliderFloat("Radius",    &pp.bloomRadius,    0.5f, 4.0f, "%.2f");
+      ImGui::SliderInt  ("Width (mips)", &pp.bloomMips,   1,    7);
+      ImGui::EndDisabled();
+      if (ImGui::SmallButton("Post defaults")) pp = render::PostFxParams{};
+    }
 
     ImGui::Separator();
     if (ImGui::Button("Save as default")) saveSettings();
@@ -3268,6 +3307,15 @@ void App::saveSettings() {
   s.hoverTileB = hoverTileColor_.b; s.hoverTileA = hoverTileColor_.a;
   storeWaterSettings(waterUniforms_, s);
   { float bx, by; if (ui::bankPanelGetPosition(bx, by)) { s.bankPosX = bx; s.bankPosY = by; } }
+  s.ppExposure       = postParams_.exposure;
+  s.ppTonemap        = postParams_.tonemap;
+  s.ppGamma          = postParams_.gamma;
+  s.ppBloomEnabled   = postParams_.bloomEnabled;
+  s.ppBloomThreshold = postParams_.bloomThreshold;
+  s.ppBloomKnee      = postParams_.bloomKnee;
+  s.ppBloomIntensity = postParams_.bloomIntensity;
+  s.ppBloomRadius    = postParams_.bloomRadius;
+  s.ppBloomMips      = postParams_.bloomMips;
   ::saveSettings(s, resolveFromExe("settings.cfg"));
 }
 

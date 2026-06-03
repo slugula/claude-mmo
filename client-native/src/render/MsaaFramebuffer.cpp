@@ -4,8 +4,8 @@
 
 namespace render {
 
-MsaaFramebuffer::MsaaFramebuffer(int width, int height, int samples)
-    : samples_(samples) {
+MsaaFramebuffer::MsaaFramebuffer(int width, int height, int samples, bool hdr)
+    : samples_(samples), hdr_(hdr) {
   resize(width, height);
 }
 
@@ -35,9 +35,10 @@ void MsaaFramebuffer::resize(int width, int height) {
   glGenFramebuffers(1, &fboMs_);
   glBindFramebuffer(GL_FRAMEBUFFER, fboMs_);
 
+  const GLenum colorFormat = hdr_ ? GL_RGBA16F : GL_RGBA8;
   glGenRenderbuffers(1, &colorRboMs_);
   glBindRenderbuffer(GL_RENDERBUFFER, colorRboMs_);
-  glRenderbufferStorageMultisample(GL_RENDERBUFFER, samples_, GL_RGBA8, width_, height_);
+  glRenderbufferStorageMultisample(GL_RENDERBUFFER, samples_, colorFormat, width_, height_);
   glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, colorRboMs_);
 
   glGenRenderbuffers(1, &depthRboMs_);
@@ -55,7 +56,8 @@ void MsaaFramebuffer::resize(int width, int height) {
 
   glGenTextures(1, &resolveColor_);
   glBindTexture(GL_TEXTURE_2D, resolveColor_);
-  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width_, height_, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+  glTexImage2D(GL_TEXTURE_2D, 0, colorFormat, width_, height_, 0, GL_RGBA,
+               hdr_ ? GL_HALF_FLOAT : GL_UNSIGNED_BYTE, nullptr);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
