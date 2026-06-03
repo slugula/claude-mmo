@@ -31,6 +31,9 @@ public:
     // GL texture for itemId, or the neutral fallback if the id has no sprite.
     GLuint get(const std::string& itemId) const;
 
+    // True if a real (non-fallback) sprite was loaded for this id.
+    bool has(const std::string& itemId) const { return cache_.count(itemId) > 0; }
+
     // Deletes all GL textures. Call before GL context destruction.
     void destroy();
 

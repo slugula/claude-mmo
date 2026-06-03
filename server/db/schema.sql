@@ -107,7 +107,25 @@ CREATE TABLE IF NOT EXISTS item_definitions (
   model_equipped  TEXT
 );
 
+-- Skill definitions — fixed set of SkillIds; the editor only authors the icon.
+CREATE TABLE IF NOT EXISTS skill_definitions (
+  id         TEXT PRIMARY KEY,   -- mirrors SkillId (warrior, defence, …)
+  name       TEXT NOT NULL,
+  icon_path  TEXT,               -- assets/sprites/skills/<id>.png ("" = none)
+  sort_order INT  NOT NULL DEFAULT 0
+);
+
 -- ---- Seed data (idempotent) ------------------------------------------------
+
+INSERT INTO skill_definitions (id, name, icon_path, sort_order) VALUES
+  ('hitpoints',   'Hitpoints',   NULL, 0),
+  ('defence',     'Defence',     NULL, 1),
+  ('warrior',     'Warrior',     NULL, 2),
+  ('gunner',      'Gunner',      NULL, 3),
+  ('woodcutting', 'Woodcutting', NULL, 4),
+  ('mining',      'Mining',      NULL, 5),
+  ('fishing',     'Fishing',     NULL, 6)
+ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO action_definitions (id, display_name, handler_type) VALUES
   ('chop',    'Chop',    'gather_resource'),

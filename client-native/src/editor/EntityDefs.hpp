@@ -10,6 +10,13 @@ struct ActionDef {
   std::string handlerType;  // gather_resource | production_facility | equip | eat | talk | bank | examine
 };
 
+struct SkillDef {
+  std::string id;            // mirrors SkillId (warrior, defence, …)
+  std::string name;
+  std::string iconPath;      // assets/sprites/skills/<id>.png ("" = none)
+  int         sortOrder = 0;
+};
+
 struct ObjectDef {
   std::string id;
   std::string name;

@@ -71,7 +71,8 @@ let clientDefs: {
   objects: Record<string, unknown>[];
   npcs:    Record<string, unknown>[];
   actions: Record<string, unknown>[];
-} = { items: [], objects: [], npcs: [], actions: [] };
+  skills:  Record<string, unknown>[];
+} = { items: [], objects: [], npcs: [], actions: [], skills: [] };
 
 export function getClientDefs() { return clientDefs; }
 
@@ -84,11 +85,21 @@ export async function loadEntitiesFromDB(): Promise<void> {
       pool.query('SELECT * FROM object_definitions ORDER BY id'),
       pool.query('SELECT * FROM action_definitions ORDER BY id'),
     ]);
+    // Skills are queried separately and tolerantly: if the skill_definitions
+    // table hasn't been migrated yet, skill icons just stay empty instead of
+    // breaking the load of every other definition.
+    let skillRows: { rows: Record<string, unknown>[] } = { rows: [] };
+    try {
+      skillRows = await pool.query('SELECT * FROM skill_definitions ORDER BY sort_order, id');
+    } catch {
+      console.warn('[EntityLoader] skill_definitions not found — run schema.sql to enable skill icons');
+    }
     clientDefs = {
       items:   itemRows.rows,
       objects: objectRows.rows,
       npcs:    npcRows.rows,
       actions: actionRows.rows,
+      skills:  skillRows.rows,
     };
     if (itemRows.rows.length > 0) {
       reloadItems(itemRows.rows.map(rowToItemDef));

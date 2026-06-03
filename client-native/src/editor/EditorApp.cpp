@@ -2398,6 +2398,7 @@ void EditorApp::dbLoadAll() {
     dbNPCs_    = dbClient_.getNPCs();
     dbObjects_ = dbClient_.getObjects();
     dbActions_ = dbClient_.getActions();
+    dbSkills_  = dbClient_.getSkills();
     dbLoaded_  = true;
     dbStatus_  = "Loaded from server.";
 
@@ -2619,6 +2620,66 @@ void EditorApp::dbDrawItemsTab() {
     }
   } else {
     ImGui::TextDisabled("Select an item or click '+ New Item'.");
+  }
+  ImGui::EndChild();
+}
+
+// ---- Skills tab ------------------------------------------------------------
+// Skills are a fixed set (mirrors SkillId); the editor only authors the icon
+// and display name, so there is no create/delete — just select + Save (PUT).
+
+void EditorApp::dbDrawSkillsTab() {
+  ImGui::BeginChild("##skill_list", ImVec2(200, 0), true);
+  for (int i = 0; i < (int)dbSkills_.size(); ++i) {
+    bool sel = (dbSelSkill_ == i);
+    const auto& s = dbSkills_[i];
+    const char* label = s.name.empty() ? s.id.c_str() : s.name.c_str();
+    if (ImGui::Selectable(label, sel)) {
+      dbSelSkill_  = i;
+      dbEditSkill_ = dbSkills_[i];
+    }
+  }
+  ImGui::EndChild();
+
+  ImGui::SameLine();
+
+  ImGui::BeginChild("##skill_edit", ImVec2(0, 0), false);
+  if (dbSelSkill_ >= 0) {
+    SkillDef& d = dbEditSkill_;
+
+    ImGui::TextDisabled("Skill ID (fixed)");
+    ImGui::TextUnformatted(d.id.c_str());
+    ImGui::TextUnformatted("Name");
+    ImGui::SetNextItemWidth(-1); dbInputText("##skill_name", d.name);
+
+    ImGui::Separator();
+    ImGui::TextColored({1.f,0.55f,0.f,1.f}, "Icon");
+    ImGui::TextUnformatted("Icon Path");
+    ImGui::SetNextItemWidth(-1); dbInputText("##skill_icon", d.iconPath);
+    if (ImGui::Button("Browse Icon...##skill_icon", ImVec2(-1, 0))) {
+      std::string rel = dbBrowseCopyAsset(L"PNG Image (*.png)\0*.png\0All Files\0*.*\0",
+                                          "assets/sprites/skills/");
+      if (!rel.empty()) d.iconPath = rel;
+    }
+    ImGui::TextDisabled("Authored as a 32x32 PNG (like item sprites).");
+
+    ImGui::Separator();
+    if (!dbStatus_.empty()) ImGui::TextDisabled("%s", dbStatus_.c_str());
+
+    if (ImGui::Button("Save##skill")) {
+      if (dbClient_.saveSkill(d)) {
+        dbStatus_ = "Saved.";
+        dbLoadAll();
+        for (int i = 0; i < (int)dbSkills_.size(); ++i)
+          if (dbSkills_[i].id == d.id) { dbSelSkill_ = i; break; }
+      } else { dbStatus_ = "Save failed: " + dbClient_.lastError; }
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Revert##skill")) {
+      if (dbSelSkill_ >= 0) dbEditSkill_ = dbSkills_[dbSelSkill_];
+    }
+  } else {
+    ImGui::TextDisabled("Select a skill to set its icon.");
   }
   ImGui::EndChild();
 }
@@ -3073,6 +3134,10 @@ void EditorApp::drawDatabaseWindow() {
     }
     if (ImGui::BeginTabItem("Actions")) {
       dbDrawActionsTab();
+      ImGui::EndTabItem();
+    }
+    if (ImGui::BeginTabItem("Skills")) {
+      dbDrawSkillsTab();
       ImGui::EndTabItem();
     }
     ImGui::EndTabBar();

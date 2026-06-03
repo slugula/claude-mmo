@@ -76,6 +76,30 @@ entityRouter.delete('/actions/:id', async (req, res) => {
   } catch (e) { err(res, e); }
 });
 
+// ---- Skills (fixed set; the editor only authors name + icon) ----------------
+
+entityRouter.get('/skills', async (_req, res) => {
+  try {
+    const r = await pool.query(`
+      SELECT id,
+        COALESCE(name, '')      AS name,
+        COALESCE(icon_path, '') AS icon_path,
+        sort_order
+      FROM skill_definitions ORDER BY sort_order, id`);
+    ok(res, r.rows);
+  } catch (e) { err(res, e); }
+});
+
+entityRouter.put('/skills/:id', async (req, res) => {
+  try {
+    const b = req.body;
+    await pool.query(
+      'UPDATE skill_definitions SET name=$1, icon_path=$2 WHERE id=$3',
+      [b.name, nullIfEmpty(b.icon_path), req.params.id]);
+    ok(res, { ok: true });
+  } catch (e) { err(res, e); }
+});
+
 // ---- Objects ----------------------------------------------------------------
 
 entityRouter.get('/objects', async (_req, res) => {

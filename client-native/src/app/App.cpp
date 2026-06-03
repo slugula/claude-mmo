@@ -48,6 +48,7 @@ struct InitDefs {
   std::vector<editor::ItemDef>   items;
   std::vector<editor::ObjectDef> objects;
   std::vector<editor::ActionDef> actions;
+  std::vector<editor::SkillDef>  skills;
 };
 }
 
@@ -542,7 +543,8 @@ bool App::init() {
   try {
     editor::EntityClient dbClient;
     applyEntityDefs(dbClient.getNPCs(), dbClient.getItems(),
-                    dbClient.getObjects(), dbClient.getActions());
+                    dbClient.getObjects(), dbClient.getActions(),
+                    dbClient.getSkills());
   } catch (const std::exception& e) {
     std::fprintf(stderr, "[App] startup DB def fetch failed (expected for shared builds; "
                          "defs will arrive via init): %s\n", e.what());
@@ -684,7 +686,8 @@ void App::rebuildWorldFromMap() {
 void App::applyEntityDefs(const std::vector<editor::NpcDef>&    npcs,
                           const std::vector<editor::ItemDef>&   items,
                           const std::vector<editor::ObjectDef>& objects,
-                          const std::vector<editor::ActionDef>& actions) {
+                          const std::vector<editor::ActionDef>& actions,
+                          const std::vector<editor::SkillDef>&  skills) {
   // NPCs — names, attackable flag, data-driven models.
   for (const auto& def : npcs) {
     if (!def.name.empty()) ui::g_npcNames[def.id] = def.name;
@@ -701,6 +704,12 @@ void App::applyEntityDefs(const std::vector<editor::NpcDef>&    npcs,
     entities_.ensureItemModel(def.id, def.modelDropped, 1, 1);
     if (!def.spritePath.empty())
       spriteEntries.push_back({ def.id, resolveFromExe(def.spritePath.c_str()).string() });
+  }
+  // Skill icons share the sprite cache, keyed by skill id (no collision with
+  // item ids). The skills panel calls sprites->get(skillId).
+  for (const auto& def : skills) {
+    if (!def.iconPath.empty())
+      spriteEntries.push_back({ def.id, resolveFromExe(def.iconPath.c_str()).string() });
   }
   spriteCache_.load(spriteEntries);
 
@@ -2870,8 +2879,8 @@ void App::processNetworkMessages() {
         InitDefs defs;
         if (!glz::read<kPermissive>(defs, raw) &&
             (!defs.items.empty() || !defs.objects.empty() ||
-             !defs.npcs.empty()  || !defs.actions.empty())) {
-          applyEntityDefs(defs.npcs, defs.items, defs.objects, defs.actions);
+             !defs.npcs.empty()  || !defs.actions.empty() || !defs.skills.empty())) {
+          applyEntityDefs(defs.npcs, defs.items, defs.objects, defs.actions, defs.skills);
         }
       }
       currLocalPlayer_.reset();

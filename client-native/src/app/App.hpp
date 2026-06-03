@@ -56,7 +56,8 @@ private:
   void applyEntityDefs(const std::vector<editor::NpcDef>&    npcs,
                        const std::vector<editor::ItemDef>&   items,
                        const std::vector<editor::ObjectDef>& objects,
-                       const std::vector<editor::ActionDef>& actions);
+                       const std::vector<editor::ActionDef>& actions,
+                       const std::vector<editor::SkillDef>&  skills = {});
   void initHoverMesh();
   void destroyHoverMesh();
   void updateHoverMesh(int tx, int ty, int szX = 1, int szY = 1);

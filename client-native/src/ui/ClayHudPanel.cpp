@@ -339,7 +339,10 @@ static void buildInventoryTab(const shared::PlayerState* player,
 }
 
 // ── Skills tab ────────────────────────────────────────────────────────────────
-static void buildSkillsTab(const shared::PlayerState* player) {
+// OSRS-style 3-column grid. Each card: a row of [icon | level] with the XP bar
+// underneath. Card height fits the contents with a little padding.
+static void buildSkillsTab(const shared::PlayerState* player,
+                           const SpriteCache* sprites) {
     int totalLevel = 0;
     for (const char* id : kSkillOrder) {
         if (!player) { ++totalLevel; continue; }
@@ -355,12 +358,13 @@ static void buildSkillsTab(const shared::PlayerState* player) {
             .layoutDirection = CLAY_TOP_TO_BOTTOM,
         }
     }) {
-        // 2-column card grid.  Build rows of 2 manually (5 skills → 3 rows).
-        static constexpr int kSkillCols = 2;
+        static constexpr int   kSkillCols = 3;
+        static constexpr float kCardH     = 38.f;   // icon row + xp bar + padding
+        static constexpr float kIconPx    = 22.f;
         for (int row = 0; row * kSkillCols < static_cast<int>(kSkillOrder.size()); ++row) {
             CLAY(CLAY_IDI("SkillRow", row), {
                 .layout = {
-                    .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(66) },
+                    .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(kCardH) },
                     .childGap        = (uint16_t)kCellGap,
                     .layoutDirection = CLAY_LEFT_TO_RIGHT,
                 }
@@ -368,7 +372,7 @@ static void buildSkillsTab(const shared::PlayerState* player) {
                 for (int col = 0; col < kSkillCols; ++col) {
                     int si = row * kSkillCols + col;
                     if (si >= static_cast<int>(kSkillOrder.size())) {
-                        // Spacer to balance last row
+                        // Spacer to balance the last row
                         CLAY(CLAY_IDI("SkillSpacer", si), {
                             .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) } }
                         }) {}
@@ -390,49 +394,65 @@ static void buildSkillsTab(const shared::PlayerState* player) {
                     float progress = (lvl >= 99) ? 1.0f :
                         std::clamp(float(xp - xpThis) / float(xpRange), 0.0f, 1.0f);
 
-                    // Card — background colour distinguishes it; no individual border
                     CLAY(CLAY_IDI("SkillCard", si), {
                         .layout = {
                             .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) },
-                            .padding         = { 5, 5, 4, 4 },
-                            .childGap        = 0,
-                            .childAlignment  = { .x = CLAY_ALIGN_X_CENTER,
-                                                 .y = CLAY_ALIGN_Y_CENTER },
+                            .padding         = { 4, 4, 3, 3 },
+                            .childGap        = 2,
                             .layoutDirection = CLAY_TOP_TO_BOTTOM,
                         },
                         .backgroundColor = kSkillCard,
                         .cornerRadius    = CLAY_CORNER_RADIUS(2),
                     }) {
-                        // Colored icon
-                        CLAY(CLAY_IDI("SkillIcon", si), {
+                        // Top row: icon (left) + level (right)
+                        CLAY(CLAY_IDI("SkillTop", si), {
                             .layout = {
-                                .sizing = { CLAY_SIZING_FIXED(14), CLAY_SIZING_FIXED(14) }
-                            },
-                            .backgroundColor = kSkillColors[si],
-                        }) {}
+                                .sizing          = { CLAY_SIZING_GROW(0),
+                                                     CLAY_SIZING_FIXED(kIconPx) },
+                                .childGap        = 3,
+                                .childAlignment  = { .x = CLAY_ALIGN_X_LEFT,
+                                                     .y = CLAY_ALIGN_Y_CENTER },
+                                .layoutDirection = CLAY_LEFT_TO_RIGHT,
+                            }
+                        }) {
+                            // Icon: uploaded sprite if present, else colored square.
+                            if (sprites && sprites->has(skillId)) {
+                                GLuint tex = sprites->get(skillId);
+                                CLAY(CLAY_IDI("SkillIcon", si), {
+                                    .layout = { .sizing = { CLAY_SIZING_FIXED(kIconPx),
+                                                            CLAY_SIZING_FIXED(kIconPx) } },
+                                    .image  = { .imageData = reinterpret_cast<void*>(
+                                                    static_cast<uintptr_t>(tex)) }
+                                }) {}
+                            } else {
+                                CLAY(CLAY_IDI("SkillIcon", si), {
+                                    .layout = { .sizing = { CLAY_SIZING_FIXED(14),
+                                                            CLAY_SIZING_FIXED(14) } },
+                                    .backgroundColor = kSkillColors[si],
+                                    .cornerRadius    = CLAY_CORNER_RADIUS(2),
+                                }) {}
+                            }
 
-                        // Skill name
-                        CLAY_TEXT(clayStr(prettyId(skillId)), CLAY_TEXT_CONFIG({
-                            .textColor = { 200, 170, 90, 255 },
-                            .fontSize  = 0,
-                        }));
+                            // Spacer pushes the level to the right edge.
+                            CLAY(CLAY_IDI("SkillIconSpacer", si), {
+                                .layout = { .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_GROW(0) } }
+                            }) {}
 
-                        // Level number
-                        char lvlBuf[8];
-                        std::snprintf(lvlBuf, sizeof(lvlBuf), "%d", lvl);
-                        CLAY_TEXT(clayStr(lvlBuf), CLAY_TEXT_CONFIG({
-                            .textColor = kItemText,
-                            .fontSize  = 0,
-                        }));
+                            char lvlBuf[8];
+                            std::snprintf(lvlBuf, sizeof(lvlBuf), "%d", lvl);
+                            CLAY_TEXT(clayStr(lvlBuf), CLAY_TEXT_CONFIG({
+                                .textColor = kItemText,
+                                .fontSize  = 0,
+                            }));
+                        }
 
-                        // XP bar background (grows to fill remaining width)
+                        // XP bar underneath
                         CLAY(CLAY_IDI("XpBarBg", si), {
                             .layout = {
                                 .sizing = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(4) },
                             },
                             .backgroundColor = kXpBarBg,
                         }) {
-                            // XP fill
                             CLAY(CLAY_IDI("XpBarFill", si), {
                                 .layout = {
                                     .sizing = { CLAY_SIZING_PERCENT(progress),
@@ -728,7 +748,7 @@ void clayHudBuildLayout(const shared::PlayerState* player,
 
             // ── Tab content ───────────────────────────────────────────────────
             if      (s_activeTab == 0) buildInventoryTab(player, sprites, mx, my);
-            else if (s_activeTab == 1) buildSkillsTab(player);
+            else if (s_activeTab == 1) buildSkillsTab(player, sprites);
             else                       buildEquipmentTab(player, sprites);
         }
     }

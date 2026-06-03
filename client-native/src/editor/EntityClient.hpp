@@ -20,6 +20,15 @@ template<> struct glz::meta<editor::ActionDef> {
     "handler_type", &T::handlerType);
 };
 
+template<> struct glz::meta<editor::SkillDef> {
+  using T = editor::SkillDef;
+  static constexpr auto value = glz::object(
+    "id",         &T::id,
+    "name",       &T::name,
+    "icon_path",  &T::iconPath,
+    "sort_order", &T::sortOrder);
+};
+
 template<> struct glz::meta<editor::DropEntry> {
   using T = editor::DropEntry;
   static constexpr auto value = glz::object(
@@ -187,6 +196,23 @@ struct EntityClient {
   bool deleteObject(const std::string& id) {
     try { entityHttpRequest(L"DELETE", entityToWide("/api/db/objects/" + id)); lastError.clear(); return true; }
     catch (const std::exception& e) { lastError = e.what(); return false; }
+  }
+
+  // ---- Skills (fixed set; only the icon/name are editable, so update via PUT)
+  std::vector<SkillDef> getSkills() {
+    auto json = entityHttpRequest(L"GET", L"/api/db/skills");
+    std::vector<SkillDef> out;
+    (void)glz::read_json(out, json);
+    return out;
+  }
+  bool saveSkill(const SkillDef& d) {
+    if (d.id.empty()) { lastError = "ID is required."; return false; }
+    auto json = glz::write_json(d);
+    if (!json) { lastError = "JSON serialization failed."; return false; }
+    try {
+      entityHttpRequest(L"PUT", entityToWide("/api/db/skills/" + d.id), *json);
+      lastError.clear(); return true;
+    } catch (const std::exception& e) { lastError = e.what(); return false; }
   }
 
   // ---- Actions

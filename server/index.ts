@@ -191,6 +191,7 @@ wss.on('connection', async (ws: WebSocket, req: IncomingMessage) => {
     objects: defs.objects,
     npcs:    defs.npcs,
     actions: defs.actions,
+    skills:  defs.skills,
   }));
 
   console.log(`[server] ${username} (${playerId}) connected — ${isNewPlayer ? 'new' : 'returning'} player`);
