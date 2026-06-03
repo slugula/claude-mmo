@@ -43,12 +43,20 @@ bool clayMinimapHovered()  { return s_minimapHovered; }
 
 void claySetDebugMode(bool enabled) { Clay_SetDebugModeEnabled(enabled); }
 
+// Resolve a Clay fontId to a loaded ImGui font (0 = UI, 1 = large pixel font).
+// Falls back to the current font if the id is out of range.
+static ImFont* fontForId(uint16_t id) {
+    ImGuiIO& io = ImGui::GetIO();
+    if (id < io.Fonts->Fonts.Size && io.Fonts->Fonts[id]) return io.Fonts->Fonts[id];
+    return ImGui::GetFont();
+}
+
 // ── Text measurement callback (called by Clay during layout) ──────────────────
 static Clay_Dimensions measureText(Clay_StringSlice text,
                                    Clay_TextElementConfig* cfg,
                                    void* /*userData*/)
 {
-    ImFont* font = ImGui::GetFont();
+    ImFont* font = fontForId(cfg ? cfg->fontId : 0);
     if (!font) return { 0.f, 0.f };
     float size = (cfg && cfg->fontSize > 0) ? static_cast<float>(cfg->fontSize)
                                              : ImGui::GetFontSize();
@@ -140,7 +148,7 @@ static void clayRenderInternal(Clay_RenderCommandArray commands)
 
         case CLAY_RENDER_COMMAND_TYPE_TEXT: {
             const auto& t = cmd->renderData.text;
-            ImFont* font  = ImGui::GetFont();
+            ImFont* font  = fontForId(t.fontId);
             float size    = (t.fontSize > 0) ? static_cast<float>(t.fontSize)
                                              : ImGui::GetFontSize();
             dl->AddText(font, size, p0, toImU32(t.textColor),

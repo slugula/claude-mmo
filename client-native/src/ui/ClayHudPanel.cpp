@@ -93,9 +93,10 @@ static int xpForLevel(int lvl) {
 }
 
 // ── Layout constants ──────────────────────────────────────────────────────────
-// kPanelW:  1px border + 8px pad + 4×44 slots + 3×3 gaps + 8px pad + 1px border = 203
+// kPanelW widened to fit a 3-column skills grid with full 32×32 icons + a large
+// level number. The inventory (4×44) is centred within the extra width.
 // kPanelH:  28px tab bar + 8px pad + 7×44 rows + 6×3 gaps + 8px pad + 2px border = 372
-static constexpr int   kPanelW    = 203;
+static constexpr int   kPanelW    = 232;
 static constexpr int   kPanelH    = 372;
 static constexpr int   kTabH      =  28;
 static constexpr int   kPad       =   8;
@@ -254,6 +255,7 @@ static void buildInventoryTab(const shared::PlayerState* player,
                 .layout = {
                     .sizing          = { CLAY_SIZING_GROW(0), CLAY_SIZING_FIXED(kCellSize) },
                     .childGap        = (uint16_t)kCellGap,
+                    .childAlignment  = { .x = CLAY_ALIGN_X_CENTER, .y = CLAY_ALIGN_Y_CENTER },
                     .layoutDirection = CLAY_LEFT_TO_RIGHT,
                 }
             }) {
@@ -359,8 +361,8 @@ static void buildSkillsTab(const shared::PlayerState* player,
         }
     }) {
         static constexpr int   kSkillCols = 3;
-        static constexpr float kCardH     = 38.f;   // icon row + xp bar + padding
-        static constexpr float kIconPx    = 22.f;
+        static constexpr float kCardH     = 48.f;   // 32px icon row + xp bar + padding
+        static constexpr float kIconPx    = 32.f;   // full-resolution skill icon
         for (int row = 0; row * kSkillCols < static_cast<int>(kSkillOrder.size()); ++row) {
             CLAY(CLAY_IDI("SkillRow", row), {
                 .layout = {
@@ -442,7 +444,8 @@ static void buildSkillsTab(const shared::PlayerState* player,
                             std::snprintf(lvlBuf, sizeof(lvlBuf), "%d", lvl);
                             CLAY_TEXT(clayStr(lvlBuf), CLAY_TEXT_CONFIG({
                                 .textColor = kItemText,
-                                .fontSize  = 0,
+                                .fontId    = 1,    // large pixel font (loaded at 26px)
+                                .fontSize  = 26,
                             }));
                         }
 
