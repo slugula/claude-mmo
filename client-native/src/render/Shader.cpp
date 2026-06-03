@@ -97,6 +97,33 @@ bool Shader::fromFiles(const std::filesystem::path& vert, const std::filesystem:
   return true;
 }
 
+bool Shader::fromCompute(const std::filesystem::path& comp) {
+  destroy();
+  const std::string csrc = readFile(comp);
+  if (csrc.empty()) return false;
+
+  GLuint cs = compileStage(GL_COMPUTE_SHADER, csrc, comp.filename().string().c_str());
+  if (!cs) return false;
+
+  program_ = glCreateProgram();
+  glAttachShader(program_, cs);
+  glLinkProgram(program_);
+  glDeleteShader(cs);
+
+  GLint ok = 0;
+  glGetProgramiv(program_, GL_LINK_STATUS, &ok);
+  if (!ok) {
+    GLint len = 0;
+    glGetProgramiv(program_, GL_INFO_LOG_LENGTH, &len);
+    std::string log(static_cast<size_t>(len), '\0');
+    glGetProgramInfoLog(program_, len, nullptr, log.data());
+    std::fprintf(stderr, "[Shader] compute link failed:\n%s\n", log.c_str());
+    destroy();
+    return false;
+  }
+  return true;
+}
+
 void Shader::setMat4(const char* name, const glm::mat4& v) {
   GLint loc = glGetUniformLocation(program_, name);
   if (loc < 0) return;

@@ -24,6 +24,9 @@ public:
   // (logs the compile/link errors to stderr).
   bool fromFiles(const std::filesystem::path& vert, const std::filesystem::path& frag);
 
+  // Load + compile + link a single compute shader (GL 4.3+). Returns false on error.
+  bool fromCompute(const std::filesystem::path& comp);
+
   bool isValid() const { return program_ != 0; }
   GLuint id()    const { return program_; }
   void use()    const { glUseProgram(program_); }
