@@ -295,12 +295,9 @@ private:
   bool                                     showImguiUi_     = false;
   bool                                     showClayUi_      = true;
   bool                                     showClayDebug_   = false;
-  // Debug panel visibility — hidden by default in PRODUCTION_BUILD; F12 toggles it.
-#ifdef PRODUCTION_BUILD
+  // Debug panel hidden by default; F12 toggles it.
   bool                                     showDebugPanel_  = false;
-#else
-  bool                                     showDebugPanel_  = true;
-#endif
+  int                                      debugCategory_   = 0;   // left-list category
 };
 
 }  // namespace app

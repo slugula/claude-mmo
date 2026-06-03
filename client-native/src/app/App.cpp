@@ -2248,185 +2248,126 @@ void App::renderFrame() {
   }
 
   if (showDebugPanel_) {
-    ImGui::Begin("Debug");
-    ImGui::Text("GL %s", glGetString(GL_VERSION));
-    ImGui::Text("Framebuffer: %d x %d", fbW, fbH);
-    ImGui::Text("MSAA: %dx", msaa_->samples());
-    ImGui::Separator();
-    ImGui::Text("Map: %d x %d tiles  (seed %u)", terrainTileW_, terrainTileH_, mapSeed_);
-    ImGui::Text("Tris/tile: 2   Indices: %d", terrainIndexCt_);
-    ImGui::Text("Objects: %s (data-driven models)",
-                obstacles_.hasCustomModels() ? "placed" : "none");
-    ImGui::Text("Entities: %zu NPCs, %zu dropped items",
-                entities_.npcCount(), entities_.itemCount());
-    if (ImGui::Button("Regenerate (next seed)")) {
-      ++mapSeed_;
-      generateAndBuildTerrain();
-    }
-    if (ImGui::SliderFloat("Noise frequency", &noiseFreq_,
-                           0.005f, 0.30f, "%.3f",
-                           ImGuiSliderFlags_Logarithmic)) {
-      generateAndBuildTerrain();
-    }
-    if (ImGui::SliderFloat("Noise amplitude", &noiseAmp_,
-                           0.0f, 4.0f, "%.2f")) {
-      generateAndBuildTerrain();
-    }
-    ImGui::Checkbox("Wireframe overlay", &wireframe_);
-    ImGui::Separator();
-    ImGui::TextUnformatted("Camera");
-    if (hoveredTile_.hit) {
-      ImGui::Text("Hover: tile (%d, %d)  world (%.2f, %.2f, %.2f)",
-                  hoveredTile_.tileX, hoveredTile_.tileY,
-                  hoveredTile_.worldPos.x, hoveredTile_.worldPos.y, hoveredTile_.worldPos.z);
-    } else {
-      ImGui::TextUnformatted("Hover: (cursor off terrain)");
-    }
-    const glm::vec3 eye = camera_.cameraPosition();
-    ImGui::Text("Eye:  %.1f %.1f %.1f  %s", eye.x, eye.y, eye.z,
-                camera_.isDragging() ? "(rotating)" : "");
-    ImGui::TextUnformatted("Middle-drag: rotate, wheel: zoom, arrows: rotate");
+    ImGui::SetNextWindowSize(ImVec2(430.0f, 470.0f), ImGuiCond_FirstUseEver);
+    ImGui::Begin("Debug", &showDebugPanel_);
 
-    ImGui::Separator();
-    ImGui::TextUnformatted("Audio (Phase 9)");
-    {
-      float vol = audio_.masterVolume();
-      if (ImGui::SliderFloat("Master volume", &vol, 0.0f, 1.0f, "%.2f")) {
-        audio_.setMasterVolume(vol);
+    // Left category list (mirrors the level editor's Preferences window).
+    constexpr const char* kCats[] = {
+      "Lighting", "Fog", "Ambient Occlusion", "Rendering", "Outline", "System"
+    };
+    constexpr int kNumCat = 6;
+    ImGui::BeginChild("##dbg_cats", ImVec2(130.0f, 0.0f), true);
+    for (int i = 0; i < kNumCat; ++i)
+      if (ImGui::Selectable(kCats[i], debugCategory_ == i)) debugCategory_ = i;
+    ImGui::EndChild();
+
+    ImGui::SameLine();
+    ImGui::BeginChild("##dbg_content", ImVec2(0.0f, 0.0f), false);
+
+    switch (debugCategory_) {
+      case 0: {  // Lighting
+        ImGui::SeparatorText("Sun Direction");
+        ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("Yaw##l",   &sunYawDeg_,   0.0f, 360.0f, "%.0f°");
+        ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("Pitch##l", &sunPitchDeg_, 0.0f,  90.0f, "%.0f°");
+        ImGui::SeparatorText("Intensity");
+        ImGui::Checkbox("Directional lighting", &lightingEnabled_);
+        ImGui::BeginDisabled(!lightingEnabled_);
+        ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("Ambient##l", &ambient_, 0.0f, 1.0f,  "%.2f");
+        ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("Diffuse##l", &diffuse_, 0.0f, 1.5f,  "%.2f");
+        ImGui::EndDisabled();
+        ImGui::SeparatorText("Shadows");
+        ImGui::Checkbox("Enable shadows", &shadowsEnabled_);
+        ImGui::BeginDisabled(!shadowsEnabled_);
+        ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("Darkness##sh",    &shadowDarkness_,   0.0f,    1.0f,  "%.2f");
+        ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("Bias##sh",        &shadowBias_,       0.0001f, 0.02f, "%.4f");
+        ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("Half-extent##sh", &shadowHalfExtent_, 10.0f,   80.0f, "%.0f");
+        ImGui::EndDisabled();
+        if (ImGui::Button("Reset Lighting Defaults")) {
+          sunYawDeg_ = 200.0f; sunPitchDeg_ = 58.0f; ambient_ = 0.45f; diffuse_ = 0.55f;
+          shadowDarkness_ = 0.55f; shadowBias_ = 0.0025f; shadowHalfExtent_ = 40.0f;
+        }
+        break;
       }
-      ImGui::SameLine();
-      if (ImGui::SmallButton("Test")) audio_.playHit();
-      ImGui::Text("Status: %s", audio_.isReady() ? "ready" : "unavailable");
-    }
-
-    ImGui::Separator();
-    ImGui::TextUnformatted("Lighting (Phase 6)");
-    ImGui::Checkbox("Directional lighting", &lightingEnabled_);
-    ImGui::BeginDisabled(!lightingEnabled_);
-    ImGui::SliderFloat("Sun yaw (deg)",   &sunYawDeg_,   0.0f, 360.0f, "%.0f");
-    ImGui::SliderFloat("Sun pitch (deg)", &sunPitchDeg_, 0.0f,  90.0f, "%.0f");
-    ImGui::SliderFloat("Ambient",         &ambient_,     0.0f,   1.0f, "%.2f");
-    ImGui::SliderFloat("Diffuse",         &diffuse_,     0.0f,   1.5f, "%.2f");
-    if (ImGui::SmallButton("Defaults")) {
-      sunYawDeg_   = 200.0f;
-      sunPitchDeg_ = 58.0f;
-      ambient_     = 0.45f;
-      diffuse_     = 0.55f;
-    }
-    ImGui::EndDisabled();
-
-    ImGui::Separator();
-    ImGui::TextUnformatted("Shadows (Phase 6b)");
-    ImGui::Checkbox("Directional shadow map", &shadowsEnabled_);
-    ImGui::BeginDisabled(!shadowsEnabled_);
-    ImGui::SliderFloat("Darkness",     &shadowDarkness_,   0.0f, 1.0f, "%.2f");
-    ImGui::SliderFloat("Bias",         &shadowBias_,    0.0001f, 0.02f, "%.4f");
-    ImGui::SliderFloat("Half-extent",  &shadowHalfExtent_, 10.0f, 80.0f, "%.0f");
-    ImGui::Text("Resolution: %d x %d", shadowMap_.size(), shadowMap_.size());
-    if (ImGui::SmallButton("Shadow defaults")) {
-      shadowDarkness_   = 0.55f;
-      shadowBias_       = 0.0025f;
-      shadowHalfExtent_ = 40.0f;
-    }
-    ImGui::EndDisabled();
-
-    ImGui::Separator();
-    ImGui::TextUnformatted("HSL palette (Phase 7)");
-    ImGui::Checkbox("Quantize", &palette_);
-    ImGui::BeginDisabled(!palette_);
-    ImGui::SliderInt("Hue levels",   &paletteHues_, 1, 64);
-    ImGui::SliderInt("Sat levels",   &paletteSats_, 1, 32);
-    ImGui::SliderInt("Lum levels",   &paletteLums_, 1, 64);
-    if (ImGui::SmallButton("Default (64/16/48)")) {
-      paletteHues_ = 64; paletteSats_ = 16; paletteLums_ = 48;
-    }
-    ImGui::SameLine();
-    if (ImGui::SmallButton("Crunchy (8/4/6)")) {
-      paletteHues_ = 8;  paletteSats_ = 4;  paletteLums_ = 6;
-    }
-    ImGui::SameLine();
-    if (ImGui::SmallButton("Smooth (64/16/64)")) {
-      paletteHues_ = 64; paletteSats_ = 16; paletteLums_ = 64;
-    }
-    ImGui::EndDisabled();
-
-    ImGui::Separator();
-    ImGui::TextUnformatted("Hover Outline");
-    ImGui::SliderFloat("Outline radius (px)", &outlineRadius_,    1.0f, 10.0f, "%.1f");
-    ImGui::SliderFloat("Depth bias",          &outlineDepthBias_, 0.0f,  0.01f, "%.4f");
-    ImGui::ColorEdit4("Outline color",  reinterpret_cast<float*>(&outlineColor_));
-    ImGui::ColorEdit4("Tile hover color", reinterpret_cast<float*>(&hoverTileColor_));
-    if (ImGui::SmallButton("Reset outline defaults")) {
-      outlineRadius_    = 3.0f;
-      outlineDepthBias_ = 0.002f;
-      outlineColor_     = {0.0f, 0.9f, 0.9f, 0.95f};
-      hoverTileColor_   = {1.0f, 0.85f, 0.10f, 1.0f};
-    }
-
-    ImGui::Separator();
-    ImGui::TextUnformatted("Fog");
-    ImGui::Checkbox("Enable fog",      &fogEnabled_);
-    ImGui::BeginDisabled(!fogEnabled_);
-    ImGui::SliderFloat("Density",      &fogDensity_, 0.0f,  0.1f,  "%.4f");
-    ImGui::SliderFloat("Start dist",   &fogStart_,   0.0f,  120.0f, "%.1f");
-    ImGui::ColorEdit3("Fog color",     reinterpret_cast<float*>(&fogColor_));
-    if (ImGui::SmallButton("Fog defaults")) {
-      fogDensity_ = 0.015f; fogStart_ = 5.0f;
-      fogColor_ = {0.58f, 0.67f, 0.78f};
-    }
-    ImGui::EndDisabled();
-
-    ImGui::Separator();
-    ImGui::TextUnformatted("Ambient Occlusion");
-    ImGui::Checkbox("Enable AO",       &aoEnabled_);
-    ImGui::BeginDisabled(!aoEnabled_);
-    ImGui::SliderFloat("AO strength",  &aoStrength_, 0.0f,  1.0f,  "%.2f");
-    if (ImGui::SmallButton("AO defaults")) { aoStrength_ = 0.50f; }
-    ImGui::Separator();
-    ImGui::EndDisabled();
-    if (aoEnabled_) ImGui::TextDisabled("AO baked into terrain mesh — regen to update");
-
-    ImGui::Separator();
-    if (ImGui::Button("Save as default")) saveSettings();
-    ImGui::SameLine();
-    ImGui::TextDisabled("Writes settings.cfg next to exe");
-
-    ImGui::Separator();
-    ImGui::TextUnformatted("UI Layer");
-    ImGui::Checkbox("ImGui UI", &showImguiUi_);
-    ImGui::SameLine();
-    ImGui::Checkbox("Clay UI", &showClayUi_);
-
-    ImGui::Separator();
-    ImGui::TextUnformatted("Network (Phase 4)");
-    const auto status = network_.status();
-    const char* statusText = "Disconnected";
-    switch (status) {
-      case net::Connection::LoggingIn:    statusText = "Logging in...";  break;
-      case net::Connection::Connecting:   statusText = "Connecting...";  break;
-      case net::Connection::Connected:    statusText = "Connected";      break;
-      case net::Connection::Failed:       statusText = "Failed";         break;
-      case net::Connection::Disconnected: statusText = "Disconnected";   break;
-    }
-    ImGui::Text("Status: %s", statusText);
-    if (!network_.lastError().empty() && status == net::Connection::Failed) {
-      ImGui::TextWrapped("Error: %s", network_.lastError().c_str());
-    }
-    if (status == net::Connection::Connected) {
-      if (ImGui::Button(bankOpen_ ? "Close bank" : "Open bank")) {
-        bankOpen_ = !bankOpen_;
-        if (bankOpen_) network_.sendOpenBank();
+      case 1: {  // Fog
+        ImGui::Checkbox("Enable Fog", &fogEnabled_);
+        ImGui::BeginDisabled(!fogEnabled_);
+        ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("Density##fog", &fogDensity_, 0.0f, 0.1f,   "%.4f");
+        ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("Start##fog",   &fogStart_,   0.0f, 120.0f, "%.1f");
+        ImGui::ColorEdit3("Color##fog", reinterpret_cast<float*>(&fogColor_));
+        if (ImGui::Button("Reset Fog Defaults")) {
+          fogDensity_ = 0.015f; fogStart_ = 5.0f; fogColor_ = {0.58f, 0.67f, 0.78f};
+        }
+        ImGui::EndDisabled();
+        break;
       }
-      ImGui::Text("Player: %s  (tick %d)", network_.playerName().c_str(), currentTick_);
-      if (currLocalPlayer_) {
-        ImGui::Text("Tile: (%d, %d)  hp %d/%d",
-                    currLocalPlayer_->tileX, currLocalPlayer_->tileY,
-                    currLocalPlayer_->hp, currLocalPlayer_->maxHp);
-        ImGui::TextUnformatted("Left-click a tile to walk there.");
-      } else {
-        ImGui::TextUnformatted("Waiting for first state tick...");
+      case 2: {  // Ambient Occlusion
+        ImGui::Checkbox("Enable AO", &aoEnabled_);
+        ImGui::BeginDisabled(!aoEnabled_);
+        ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("Strength##ao", &aoStrength_, 0.0f, 1.0f, "%.2f");
+        if (ImGui::Button("Reset AO Defaults")) aoStrength_ = 0.50f;
+        ImGui::EndDisabled();
+        if (aoEnabled_) ImGui::TextDisabled("AO is baked — rebuild terrain to update.");
+        break;
+      }
+      case 3: {  // Rendering
+        ImGui::Checkbox("Palette Quantisation", &palette_);
+        if (palette_) {
+          ImGui::SetNextItemWidth(-1); ImGui::SliderInt("Hues##pal", &paletteHues_, 2, 64);
+          ImGui::SetNextItemWidth(-1); ImGui::SliderInt("Sats##pal", &paletteSats_, 2, 32);
+          ImGui::SetNextItemWidth(-1); ImGui::SliderInt("Lums##pal", &paletteLums_, 2, 64);
+        }
+        ImGui::Checkbox("Wireframe overlay", &wireframe_);
+        break;
+      }
+      case 4: {  // Outline
+        ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("Radius##ol",     &outlineRadius_,    1.0f, 10.0f, "%.1f");
+        ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("Depth bias##ol", &outlineDepthBias_, 0.0f, 0.01f, "%.4f");
+        ImGui::ColorEdit4("Outline color",  reinterpret_cast<float*>(&outlineColor_));
+        ImGui::ColorEdit4("Hover tile color", reinterpret_cast<float*>(&hoverTileColor_));
+        if (ImGui::Button("Reset Outline Defaults")) {
+          outlineRadius_ = 3.0f; outlineDepthBias_ = 0.002f;
+          outlineColor_   = {0.0f, 0.9f, 0.9f, 0.95f};
+          hoverTileColor_ = {1.0f, 0.85f, 0.10f, 1.0f};
+        }
+        break;
+      }
+      case 5: {  // System
+        ImGui::SeparatorText("UI Layer");
+        ImGui::Checkbox("ImGui UI", &showImguiUi_);
+        ImGui::SameLine();
+        ImGui::Checkbox("Clay UI",  &showClayUi_);
+        ImGui::SeparatorText("Audio");
+        {
+          float vol = audio_.masterVolume();
+          ImGui::SetNextItemWidth(-1);
+          if (ImGui::SliderFloat("Volume##aud", &vol, 0.0f, 1.0f, "%.2f")) audio_.setMasterVolume(vol);
+          if (ImGui::SmallButton("Test sound")) audio_.playHit();
+        }
+        ImGui::SeparatorText("Info");
+        ImGui::Text("GL %s", glGetString(GL_VERSION));
+        ImGui::Text("Framebuffer %d x %d  (MSAA %dx)", fbW, fbH, msaa_->samples());
+        const char* statusText =
+          network_.status() == net::Connection::Connected    ? "Connected"   :
+          network_.status() == net::Connection::Connecting    ? "Connecting"  :
+          network_.status() == net::Connection::LoggingIn     ? "Logging in"  :
+          network_.status() == net::Connection::Failed        ? "Failed"      : "Disconnected";
+        ImGui::Text("Network: %s", statusText);
+        if (currLocalPlayer_) {
+          ImGui::Text("Tile (%d, %d)  hp %d/%d  tick %d",
+                      currLocalPlayer_->tileX, currLocalPlayer_->tileY,
+                      currLocalPlayer_->hp, currLocalPlayer_->maxHp, currentTick_);
+        }
+        break;
       }
     }
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    if (ImGui::Button("Save as Default")) saveSettings();
+    ImGui::SameLine();
+    ImGui::TextDisabled("Writes settings.cfg");
+
+    ImGui::EndChild();
     ImGui::End();
   }
 
