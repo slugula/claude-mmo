@@ -9,7 +9,6 @@
 #include "net/NetworkClient.hpp"
 #include "render/Mesh.hpp"
 #include "render/MsaaFramebuffer.hpp"
-#include "render/PostFx.hpp"
 #include "render/Shader.hpp"
 #include "render/ShadowMap.hpp"
 #include "shared/SharedTypes.hpp"
@@ -79,8 +78,6 @@ private:
 
   Window                                   window_;
   std::unique_ptr<render::MsaaFramebuffer> msaa_;
-  render::PostFx                           postfx_;
-  render::PostFxParams                     postParams_;
   render::Shader                           terrainShader_;
   render::Shader                           wireframeShader_;
   render::Shader                           obstacleShader_;

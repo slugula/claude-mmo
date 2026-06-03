@@ -78,17 +78,6 @@ struct AppSettings {
   // Top-left in screen pixels. -1 = unset → centre on first open.
   float       bankPosX = -1.0f;
   float       bankPosY = -1.0f;
-
-  // ---- HDR post-processing (client only) ----
-  float       ppExposure       = 1.0f;
-  int         ppTonemap        = 2;      // 0 none, 1 Reinhard, 2 ACES
-  float       ppGamma          = 2.2f;
-  bool        ppBloomEnabled   = true;
-  float       ppBloomThreshold = 1.0f;
-  float       ppBloomKnee      = 0.5f;
-  float       ppBloomIntensity = 0.5f;
-  float       ppBloomRadius    = 1.0f;
-  int         ppBloomMips      = 6;
 };
 
 inline bool saveSettings(const AppSettings& s, const std::filesystem::path& path) {
@@ -126,12 +115,6 @@ inline bool saveSettings(const AppSettings& s, const std::filesystem::path& path
                s.waterOffset, s.waterRefraction, s.waterDepthFade, s.waterFoamContact, s.waterSpecular);
   std::fprintf(f, "waterCausticMap=%s\n", s.waterCausticMap.c_str());
   std::fprintf(f, "bankPosX=%f\nbankPosY=%f\n", s.bankPosX, s.bankPosY);
-  std::fprintf(f, "ppExposure=%f\nppTonemap=%d\nppGamma=%f\n",
-               s.ppExposure, s.ppTonemap, s.ppGamma);
-  std::fprintf(f, "ppBloomEnabled=%d\nppBloomThreshold=%f\nppBloomKnee=%f\n",
-               B(s.ppBloomEnabled), s.ppBloomThreshold, s.ppBloomKnee);
-  std::fprintf(f, "ppBloomIntensity=%f\nppBloomRadius=%f\nppBloomMips=%d\n",
-               s.ppBloomIntensity, s.ppBloomRadius, s.ppBloomMips);
   std::fclose(f);
   return true;
 }
@@ -184,12 +167,7 @@ inline bool loadSettings(AppSettings& s, const std::filesystem::path& path) {
         fF("waterOffset", s.waterOffset) || fF("waterRefraction", s.waterRefraction) ||
         fF("waterDepthFade", s.waterDepthFade) || fF("waterFoamContact", s.waterFoamContact) ||
         fF("waterSpecular", s.waterSpecular) ||
-        fF("bankPosX", s.bankPosX) || fF("bankPosY", s.bankPosY) ||
-        fF("ppExposure", s.ppExposure) || fI("ppTonemap", s.ppTonemap) ||
-        fF("ppGamma", s.ppGamma) || fB("ppBloomEnabled", s.ppBloomEnabled) ||
-        fF("ppBloomThreshold", s.ppBloomThreshold) || fF("ppBloomKnee", s.ppBloomKnee) ||
-        fF("ppBloomIntensity", s.ppBloomIntensity) || fF("ppBloomRadius", s.ppBloomRadius) ||
-        fI("ppBloomMips", s.ppBloomMips)) {
+        fF("bankPosX", s.bankPosX) || fF("bankPosY", s.bankPosY)) {
       continue;
     }
     if (std::strcmp(key, "waterCausticMap") == 0) { s.waterCausticMap = val; continue; }

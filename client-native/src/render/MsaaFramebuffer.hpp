@@ -18,9 +18,7 @@ namespace render {
 class MsaaFramebuffer {
 public:
   MsaaFramebuffer() = default;
-  // hdr = true uses an RGBA16F color target (linear HDR scene for tonemapping +
-  // bloom); false keeps RGBA8 (e.g. the level editor, which displays directly).
-  MsaaFramebuffer(int width, int height, int samples = 4, bool hdr = false);
+  MsaaFramebuffer(int width, int height, int samples = 4);
   ~MsaaFramebuffer();
 
   MsaaFramebuffer(const MsaaFramebuffer&)            = delete;
@@ -54,10 +52,9 @@ public:
 private:
   void destroy();
 
-  int  width_   = 0;
-  int  height_  = 0;
-  int  samples_ = 0;
-  bool hdr_     = false;
+  int width_   = 0;
+  int height_  = 0;
+  int samples_ = 0;
 
   GLuint fboMs_        = 0;
   GLuint colorRboMs_   = 0;
