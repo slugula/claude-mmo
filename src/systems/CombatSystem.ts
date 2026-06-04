@@ -339,7 +339,7 @@ export function processCombat(
                   skills: { ...nextPlayer.skills, gunner: gunnerXp.skill, hitpoints: hpXp.skill },
                 };
                 if (gunnerXp.levelsGained > 0) {
-                  messages.push(`Level up! Gunner is now level ${gunnerXp.skill.level}.`);
+                  messages.push(`Level up! Cowboy is now level ${gunnerXp.skill.level}.`);
                 }
                 if (hpXp.levelsGained > 0) {
                   nextPlayer = {

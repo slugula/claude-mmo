@@ -121,7 +121,7 @@ INSERT INTO skill_definitions (id, name, icon_path, sort_order) VALUES
   ('hitpoints',   'Hitpoints',   NULL, 0),
   ('defence',     'Defence',     NULL, 1),
   ('warrior',     'Warrior',     NULL, 2),
-  ('gunner',      'Gunner',      NULL, 3),
+  ('gunner',      'Cowboy',      NULL, 3),
   ('woodcutting', 'Woodcutting', NULL, 4),
   ('mining',      'Mining',      NULL, 5),
   ('fishing',     'Fishing',     NULL, 6)

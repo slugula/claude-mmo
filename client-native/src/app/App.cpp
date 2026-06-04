@@ -706,8 +706,10 @@ void App::applyEntityDefs(const std::vector<editor::NpcDef>&    npcs,
       spriteEntries.push_back({ def.id, resolveFromExe(def.spritePath.c_str()).string() });
   }
   // Skill icons share the sprite cache, keyed by skill id (no collision with
-  // item ids). The skills panel calls sprites->get(skillId).
+  // item ids). The skills panel calls sprites->get(skillId). Names feed the
+  // skill-name registry so editor renames (e.g. gunner → "Cowboy") propagate.
   for (const auto& def : skills) {
+    if (!def.name.empty()) ui::g_skillNames[def.id] = def.name;
     if (!def.iconPath.empty())
       spriteEntries.push_back({ def.id, resolveFromExe(def.iconPath.c_str()).string() });
   }

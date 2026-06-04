@@ -831,7 +831,7 @@ void clayHudHandleInput(const shared::PlayerState* player,
 
             // Line 1: skill name in skill color + " (level X)" in white
             {
-                std::string name = prettyId(skillId);
+                std::string name = ui::skillName(skillId);
                 std::string lvlStr = " (level " + std::to_string(lvl) + ")";
                 lines.push_back({ { name, skillTip }, { lvlStr, TipColor::White() } });
             }

@@ -14,6 +14,7 @@ namespace ui {
 
 inline std::unordered_map<std::string, std::string> g_npcNames;   // kind  → "Chicken"
 inline std::unordered_map<std::string, std::string> g_itemNames;  // id    → "Bronze sword"
+inline std::unordered_map<std::string, std::string> g_skillNames; // id    → "Cowboy"
 inline std::unordered_map<std::string, bool>        g_npcAttackable; // kind → isAttackable
 
 // ---- Fallback prettification (id/kind → human-readable) --------------------
@@ -44,6 +45,13 @@ inline std::string npcName(const std::string& kind) {
 inline std::string itemName(const std::string& id) {
     auto it = g_itemNames.find(id);
     return (it != g_itemNames.end() && !it->second.empty()) ? it->second : prettifyId(id);
+}
+
+// Returns the DB display name for a skill id (editor-authored), or a
+// prettified fallback. Lets renames like gunner→"Cowboy" propagate everywhere.
+inline std::string skillName(const std::string& id) {
+    auto it = g_skillNames.find(id);
+    return (it != g_skillNames.end() && !it->second.empty()) ? it->second : prettifyId(id);
 }
 
 // Returns true when the NPC kind is flagged as attackable in the DB.

@@ -372,7 +372,7 @@ void drawSkillsTab(const shared::PlayerState& p) {
                 IM_COL32(0, 0, 0, 160));
 
     // Skill name (centered, clipped to card width)
-    const std::string name = prettyItemId(skillId);
+    const std::string name = ui::skillName(skillId);
     ImVec2 nameSz = ImGui::CalcTextSize(name.c_str());
     dl->AddText(ImVec2(cardPos.x + (kCardW - nameSz.x) * 0.5f,
                        iconY + kIconSz + 2.0f),
