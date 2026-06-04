@@ -35,12 +35,6 @@ static void miniaudioCallback(ma_device* device, void* output,
   }
 }
 
-void AudioEngine::onAudio(void* /*device*/, void* /*output*/,
-                          const void* /*input*/, unsigned int /*frameCount*/) {
-  // Unused — the real callback is miniaudioCallback above. Kept as a
-  // member to keep the header API stable.
-}
-
 bool AudioEngine::init() {
   impl_ = std::make_unique<Impl>();
 

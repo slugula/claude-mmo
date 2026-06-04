@@ -56,8 +56,6 @@ private:
                  float filterFreq, bool highpass,
                  float gainStart) const;
 
-  // miniaudio's callback. Trampolines to instance impl.
-  static void onAudio(void* device, void* output, const void* input, unsigned int frameCount);
 public:
   // Called from the audio thread. Public so the C-style miniaudio
   // callback in the .cpp can dispatch into it without needing friendship.

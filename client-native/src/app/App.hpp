@@ -65,7 +65,6 @@ private:
   void renderPlayer(const glm::mat4& viewProj, float dt);
   void processNetworkMessages();
   void drawWorldContextMenu();
-  void exportWorldMap();
   void saveSettings();
   void loadSettings();
 
@@ -83,7 +82,6 @@ private:
   render::Shader                           wireframeShader_;
   render::Shader                           obstacleShader_;
   render::Shader                           skinnedShader_;
-  render::Shader                           outlineShader_;          // (kept, unused after SS-outline)
   render::Shader                           outlineMaskShader_;      // renders silhouette to mask FBO
   render::Shader                           outlineMaskSkinnedShader_; // skinned silhouette (animated objects)
   render::Shader                           outlineCompositeShader_; // composites border over scene
@@ -251,7 +249,6 @@ private:
   float                                    noiseAmp_        = 1.0f;
   int                                      terrainTileW_    = 0;
   int                                      terrainTileH_    = 0;
-  int                                      terrainIndexCt_  = 0;
   bool                                     wireframe_       = false;
   // Screen-space outline settings
   float     outlineRadius_    = 3.0f;

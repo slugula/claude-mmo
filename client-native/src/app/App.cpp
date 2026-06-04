@@ -82,8 +82,6 @@ constexpr const char* kObstacleVertPath  = "shaders/obstacle.vert";
 constexpr const char* kObstacleFragPath  = "shaders/obstacle.frag";
 constexpr const char* kSkinnedVertPath   = "shaders/skinned.vert";
 constexpr const char* kSkinnedFragPath   = "shaders/skinned.frag";
-constexpr const char* kOutlineVertPath        = "shaders/outline.vert";
-constexpr const char* kOutlineFragPath        = "shaders/outline.frag";
 constexpr const char* kOutlineMaskVertPath    = "shaders/outline_mask.vert";
 constexpr const char* kOutlineMaskFragPath    = "shaders/outline_mask.frag";
 constexpr const char* kOutlineMaskSkinnedVertPath = "shaders/outline_mask_skinned.vert";
@@ -481,11 +479,6 @@ bool App::init() {
     std::fprintf(stderr, "[App] skinned shader load failed\n");
     return false;
   }
-  if (!outlineShader_.fromFiles(resolveFromExe(kOutlineVertPath),
-                                resolveFromExe(kOutlineFragPath))) {
-    std::fprintf(stderr, "[App] outline shader load failed\n");
-    return false;
-  }
   if (!outlineMaskShader_.fromFiles(resolveFromExe(kOutlineMaskVertPath),
                                     resolveFromExe(kOutlineMaskFragPath))) {
     std::fprintf(stderr, "[App] outline mask shader load failed\n");
@@ -668,7 +661,6 @@ void App::rebuildWorldFromMap() {
                       data.normals);
   terrainTileW_   = data.width;
   terrainTileH_   = data.height;
-  terrainIndexCt_ = static_cast<int>(data.triangleIndices.size());
   hoveredTile_    = {};  // hover stale after rebuild
 
   obstacles_.rebuildFromMap(map_);
@@ -2477,78 +2469,6 @@ void App::drawWorldContextMenu() {
   }
 
   ImGui::EndPopup();
-}
-
-// =====================================================================
-// Level editor — export current procedural map as worldMap.json
-// =====================================================================
-void App::exportWorldMap() {
-  const auto outPath = resolveFromExe("worldMap.json");
-  FILE* f = nullptr;
-#ifdef _WIN32
-  _wfopen_s(&f, outPath.wstring().c_str(), L"wb");
-#else
-  f = std::fopen(outPath.string().c_str(), "wb");
-#endif
-  if (!f) {
-    chatLog_.appendSystem("Failed to open worldMap.json for writing.");
-    return;
-  }
-
-  const int W = map_.width;
-  const int H = map_.height;
-
-  std::fprintf(f, "{\"version\":2,\"width\":%d,\"height\":%d,\n", W, H);
-
-  // tiles[y][x]
-  std::fprintf(f, "\"tiles\":[\n");
-  for (int y = 0; y < H; ++y) {
-    std::fprintf(f, "  [");
-    for (int x = 0; x < W; ++x) {
-      const auto& t = map_.tiles[y][x];
-      const char* typeStr = "grass";
-      switch (t.type) {
-        case shared::TileType::dirt:  typeStr = "dirt";  break;
-        case shared::TileType::stone: typeStr = "stone"; break;
-        case shared::TileType::water: typeStr = "water"; break;
-        case shared::TileType::cliff: typeStr = "cliff"; break;
-        case shared::TileType::wall:  typeStr = "wall";  break;
-        case shared::TileType::door:  typeStr = "door";  break;
-        default: break;
-      }
-      // obstacle is now a plain string — write it directly
-      std::fprintf(f,
-          "{\"x\":%d,\"y\":%d,\"walkable\":%s,\"type\":\"%s\","
-          "\"obstacle\":\"%s\",\"blocksRanged\":%s,"
-          "\"groundColor\":\"%s\",\"height\":%.3f}",
-          t.x, t.y,
-          t.walkable ? "true" : "false",
-          typeStr, t.obstacle.c_str(),
-          t.blocksRanged ? "true" : "false",
-          t.groundColor.c_str(),
-          t.height);
-      if (x < W - 1) std::fprintf(f, ",");
-    }
-    std::fprintf(f, "]%s\n", (y < H - 1) ? "," : "");
-  }
-  std::fprintf(f, "],\n");
-
-  // npcSpawns — empty for now (server has defaults)
-  std::fprintf(f, "\"npcSpawns\":[],\n");
-  std::fprintf(f, "\"permanentItems\":[],\n");
-
-  // vertexHeights
-  std::fprintf(f, "\"vertexHeights\":[");
-  for (std::size_t i = 0; i < map_.vertexHeights.size(); ++i) {
-    std::fprintf(f, "%.6f", static_cast<double>(map_.vertexHeights[i]));
-    if (i < map_.vertexHeights.size() - 1) std::fprintf(f, ",");
-  }
-  std::fprintf(f, "]\n}\n");
-  std::fclose(f);
-
-  chatLog_.appendSystem("Exported worldMap.json (" + std::to_string(W) + "x" +
-                        std::to_string(H) + ") next to exe.");
-  std::fprintf(stdout, "[App] Exported worldMap.json to %s\n", outPath.string().c_str());
 }
 
 void App::onResize(int width, int height) {
