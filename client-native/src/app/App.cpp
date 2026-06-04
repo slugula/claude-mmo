@@ -2585,8 +2585,13 @@ void App::initImGui() {
   if (std::filesystem::exists(fontPath)) {
     io.Fonts->AddFontFromFileTTF(fontPath.string().c_str(), 13.0f);   // fontId 0 — UI
     // fontId 1 — larger pixel font for prominent numbers like skill levels.
-    // Clay selects it via CLAY_TEXT_CONFIG.fontId; size must match the request.
-    io.Fonts->AddFontFromFileTTF(fontPath.string().c_str(), 20.0f);
+    // ProggyClean is a pixel font: at non-13×N sizes the default oversampling
+    // smooths it (blurry). Disable oversampling + pixel-snap so it stays sharp.
+    ImFontConfig bigCfg;
+    bigCfg.OversampleH = 1;
+    bigCfg.OversampleV = 1;
+    bigCfg.PixelSnapH  = true;
+    io.Fonts->AddFontFromFileTTF(fontPath.string().c_str(), 20.0f, &bigCfg);
   } else {
     io.Fonts->AddFontDefault();
   }
