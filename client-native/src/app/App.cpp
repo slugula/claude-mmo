@@ -56,13 +56,13 @@ namespace app {
 
 namespace {
 // Bank-specific: the tile directly in front of a chest, honouring its 90°
-// rotation. Base front (rotation 0) faces south (+tileY); each quarter-turn
-// rotates the offset with the same Y-rotation the renderer applies to the
-// model, giving south → east → north → west for rotations 0..3. This is
-// intentionally bank-only — other interactables still use generic adjacency.
+// rotation. Base front (rotation 0) faces the south side of the chest (-tileY,
+// which renders below it); each quarter-turn rotates the offset with the same
+// Y-rotation the renderer applies to the model. This is intentionally bank-only
+// — other interactables still use generic adjacency.
 inline void bankFrontTile(int tx, int ty, int rot, int& outX, int& outY) {
-  static const int fx[4] = { 0, 1, 0, -1 };   // S, E, N, W
-  static const int fy[4] = { 1, 0, -1, 0 };
+  static const int fx[4] = { 0, -1, 0,  1 };   // rotation 0..3
+  static const int fy[4] = { -1, 0, 1,  0 };
   const int r = ((rot % 4) + 4) % 4;
   outX = tx + fx[r];
   outY = ty + fy[r];
