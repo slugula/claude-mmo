@@ -2584,9 +2584,9 @@ void App::initImGui() {
   const auto fontPath = resolveFromExe("assets/ProggyClean.ttf");
   if (std::filesystem::exists(fontPath)) {
     io.Fonts->AddFontFromFileTTF(fontPath.string().c_str(), 13.0f);   // fontId 0 — UI
-    // fontId 1 — large pixel font (crisp 2× of ProggyClean) for prominent
-    // numbers like skill levels. Clay selects it via CLAY_TEXT_CONFIG.fontId.
-    io.Fonts->AddFontFromFileTTF(fontPath.string().c_str(), 26.0f);
+    // fontId 1 — larger pixel font for prominent numbers like skill levels.
+    // Clay selects it via CLAY_TEXT_CONFIG.fontId; size must match the request.
+    io.Fonts->AddFontFromFileTTF(fontPath.string().c_str(), 20.0f);
   } else {
     io.Fonts->AddFontDefault();
   }
