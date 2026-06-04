@@ -63,7 +63,9 @@ public:
   void sendEquipItem   (int slotIndex);
   void sendUnequipItem (const std::string& equipSlot);
   void sendChat        (const std::string& message);
-  void sendOpenBank    ();
+  // tileX/tileY = the chest tile so the server can turn the player to face it
+  // (-1 = none, e.g. the debug Open-bank button).
+  void sendOpenBank    (int tileX = -1, int tileY = -1);
   void sendDepositItem (int slotIndex, int quantity);
   void sendDepositAll  ();
   void sendDepositWorn ();

@@ -263,7 +263,7 @@ export interface EquipItemAction   { type: 'EQUIP_ITEM';  slotIndex: number; }
 export interface UnequipItemAction { type: 'UNEQUIP_ITEM'; slot: EquipSlot; }
 export interface SendChatAction       { type: 'SEND_CHAT';      message: string; }
 export interface SetAppearanceAction  { type: 'SET_APPEARANCE'; playerName: string; shirtColor: ShirtColor; skinColor: SkinColor; }
-export interface OpenBankAction       { type: 'OPEN_BANK'; }
+export interface OpenBankAction       { type: 'OPEN_BANK'; tileX?: number; tileY?: number; }
 export interface DepositItemAction    { type: 'DEPOSIT_ITEM';  slotIndex: number; quantity: number; }
 export interface DepositAllAction     { type: 'DEPOSIT_ALL'; }
 export interface DepositWornAction    { type: 'DEPOSIT_WORN'; }

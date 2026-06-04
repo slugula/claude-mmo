@@ -2872,7 +2872,7 @@ void App::processNetworkMessages() {
           const int ddy = std::abs(currLocalPlayer_->tileY - pendingBankTileY_);
           const bool adjacent = ddx <= 1 && ddy <= 1 && !(ddx == 0 && ddy == 0);
           if (adjacent && currLocalPlayer_->path.empty()) {
-            network_.sendOpenBank();
+            network_.sendOpenBank(pendingBankTileX_, pendingBankTileY_);  // face the chest
             bankOpen_ = true;
             pendingBankTileX_ = pendingBankTileY_ = -1;
           }

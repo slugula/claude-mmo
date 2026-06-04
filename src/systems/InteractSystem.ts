@@ -1,6 +1,6 @@
 import type { PlayerState, NPCState, GameAction, WorldState, GridPosition } from '../shared/types';
 import { getNPCDef } from '../npcs/NPCRegistry';
-import { findReachableAdjacent } from './CombatSystem';
+import { findReachableAdjacent, directionTo } from './CombatSystem';
 
 export interface InteractResult {
   player: PlayerState;
@@ -28,7 +28,8 @@ export function processInteractions(
     if (!target) continue;
 
     if (isAdjacent(pos(nextPlayer), pos(target))) {
-      nextPlayer = { ...nextPlayer, talkTargetId: null, attackTargetId: null, path: [] };
+      nextPlayer = { ...nextPlayer, talkTargetId: null, attackTargetId: null, path: [],
+                     facing: directionTo(pos(nextPlayer), pos(target)) };
       messages.push(greeting(target));
       continue;
     }
@@ -58,7 +59,8 @@ export function processInteractions(
       nextPlayer = { ...nextPlayer, talkTargetId: null };
     } else if (isAdjacent(pos(nextPlayer), pos(target))) {
       messages.push(greeting(target));
-      nextPlayer = { ...nextPlayer, talkTargetId: null };
+      nextPlayer = { ...nextPlayer, talkTargetId: null,
+                     facing: directionTo(pos(nextPlayer), pos(target)) };
     }
   }
 

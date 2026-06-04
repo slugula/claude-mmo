@@ -3,6 +3,7 @@ import { addItem, removeItem, freeSlots } from './InventorySystem';
 import { bankAddItem, bankRemoveItem, createEmptyBank } from './BankSystem';
 import { getItem } from '../items/ItemRegistry';
 import { findPath } from '../world/Pathfinder';
+import { directionTo } from './CombatSystem';
 
 export function processItems(
   player: PlayerState,
@@ -161,6 +162,19 @@ export function processItems(
     }
 
     // ---- Banking actions -------------------------------------------------------
+
+    if (action.type === 'OPEN_BANK') {
+      // Turn to face the bank chest when it's opened (the client sends the
+      // chest tile). The bank UI itself is client-side.
+      if (action.tileX !== undefined && action.tileY !== undefined) {
+        nextPlayer = {
+          ...nextPlayer,
+          facing: directionTo(
+            { x: nextPlayer.tileX, y: nextPlayer.tileY },
+            { x: action.tileX, y: action.tileY }),
+        };
+      }
+    }
 
     if (action.type === 'DEPOSIT_ITEM') {
       const start = nextPlayer.inventory[action.slotIndex];

@@ -316,8 +316,12 @@ void NetworkClient::sendChat(const std::string& message) {
   sendActionRaw("{\"type\":\"SEND_CHAT\",\"message\":\"" + jsonEscape(message) + "\"}");
 }
 
-void NetworkClient::sendOpenBank() {
-  sendActionRaw("{\"type\":\"OPEN_BANK\"}");
+void NetworkClient::sendOpenBank(int tileX, int tileY) {
+  if (tileX < 0 || tileY < 0) { sendActionRaw("{\"type\":\"OPEN_BANK\"}"); return; }
+  char buf[96];
+  std::snprintf(buf, sizeof(buf),
+                "{\"type\":\"OPEN_BANK\",\"tileX\":%d,\"tileY\":%d}", tileX, tileY);
+  sendActionRaw(buf);
 }
 
 void NetworkClient::sendDepositItem(int slotIndex, int quantity) {

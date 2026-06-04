@@ -109,7 +109,7 @@ function is4Adjacent(a: GridPosition, b: GridPosition): boolean {
   return (dx === 1 && dy === 0) || (dx === 0 && dy === 1);
 }
 
-function directionTo(from: GridPosition, to: GridPosition): Direction {
+export function directionTo(from: GridPosition, to: GridPosition): Direction {
   const dx = Math.sign(to.x - from.x);
   const dy = Math.sign(to.y - from.y);
   if (dx ===  1 && dy === -1) return 'north_east';
