@@ -444,8 +444,7 @@ static void buildSkillsTab(const shared::PlayerState* player,
                             std::snprintf(lvlBuf, sizeof(lvlBuf), "%d", lvl);
                             CLAY_TEXT(clayStr(lvlBuf), CLAY_TEXT_CONFIG({
                                 .textColor = kItemText,
-                                .fontId    = 1,    // large pixel font (loaded at 20px)
-                                .fontSize  = 20,
+                                .fontSize  = 0,   // default 13px UI font (crisp)
                             }));
                         }
 

@@ -2583,15 +2583,7 @@ void App::initImGui() {
   // Falls back gracefully to ImGui's built-in bitmap font if the file isn't found.
   const auto fontPath = resolveFromExe("assets/ProggyClean.ttf");
   if (std::filesystem::exists(fontPath)) {
-    io.Fonts->AddFontFromFileTTF(fontPath.string().c_str(), 13.0f);   // fontId 0 — UI
-    // fontId 1 — larger pixel font for prominent numbers like skill levels.
-    // ProggyClean is a pixel font: at non-13×N sizes the default oversampling
-    // smooths it (blurry). Disable oversampling + pixel-snap so it stays sharp.
-    ImFontConfig bigCfg;
-    bigCfg.OversampleH = 1;
-    bigCfg.OversampleV = 1;
-    bigCfg.PixelSnapH  = true;
-    io.Fonts->AddFontFromFileTTF(fontPath.string().c_str(), 20.0f, &bigCfg);
+    io.Fonts->AddFontFromFileTTF(fontPath.string().c_str(), 13.0f);
   } else {
     io.Fonts->AddFontDefault();
   }
