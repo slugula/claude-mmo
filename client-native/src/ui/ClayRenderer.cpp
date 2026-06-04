@@ -25,6 +25,7 @@
 
 #include <imgui.h>
 #include <cfloat>   // FLT_MAX
+#include <cmath>    // std::floor
 #include <cstring>
 
 namespace ui {
@@ -105,8 +106,11 @@ static void clayRenderInternal(Clay_RenderCommandArray commands)
     for (int32_t i = 0; i < (int32_t)commands.length; ++i) {
         Clay_RenderCommand* cmd = Clay_RenderCommandArray_Get(&commands, i);
         const Clay_BoundingBox& b = cmd->boundingBox;
-        ImVec2 p0 { b.x,           b.y            };
-        ImVec2 p1 { b.x + b.width, b.y + b.height };
+        // Snap edges to the pixel grid so sprites/text never land on a
+        // half-pixel (which sub-pixel samples and looks blurry). Flooring both
+        // corners keeps fixed sizes exact and adjacent elements seam-free.
+        ImVec2 p0 { std::floor(b.x),            std::floor(b.y)            };
+        ImVec2 p1 { std::floor(b.x + b.width),  std::floor(b.y + b.height) };
 
         switch (cmd->commandType) {
 
