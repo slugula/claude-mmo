@@ -88,7 +88,7 @@ export class GameLoop {
     this.waterTiles = mapData.waterTiles ?? [];
     this.walls      = mapData.walls ?? [];
 
-    const world = createWorldFromTiles(mapData.tiles, mapData.vertexHeights);
+    const world = createWorldFromTiles(mapData.tiles, mapData.vertexHeights, this.walls);
 
     // Walkability is authored per-tile (water rendering is a separate visual
     // layer), so we trust the saved tile.walkable. This lets terrain raised

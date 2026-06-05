@@ -1,5 +1,6 @@
 import type { GridPosition, WorldState } from '../shared/types';
 import { HEIGHT_IMPASSABLE_DELTA } from '../shared/constants';
+import { clipBlocks } from './WorldState';
 
 interface Node {
   x: number;
@@ -72,6 +73,10 @@ export function findPath(
         if (!isWalkable(world, current.x + dx, current.y, blocked)) continue;
         if (!isWalkable(world, current.x, current.y + dy, blocked)) continue;
       }
+      // Wall clip: walls block movement across the tile edge they sit on (and
+      // pillars / corner-cuts block the relevant diagonal).
+      if (world.wallClip &&
+          clipBlocks(world.wallClip, world.width, current.x, current.y, dx, dy)) continue;
 
       const g = current.g + 1;
       const existing = openMap.get(nk);

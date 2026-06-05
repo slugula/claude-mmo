@@ -197,6 +197,9 @@ export interface WorldState {
   // Per-vertex heights — flat row-major Float32Array, length (width+1)*(height+1).
   // Index formula: row * (width+1) + col  where row ∈ [0,height], col ∈ [0,width].
   vertexHeights: Float32Array;
+  // Per-tile wall-clip bitmask (blocked outgoing directions). Built from the
+  // map's walls/pillars; absent = no edge blocking. See WorldState.ts.
+  wallClip?: Uint8Array;
 }
 
 // ---------- Respawns ----------

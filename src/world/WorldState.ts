@@ -1,4 +1,4 @@
-import type { WorldState, TileData } from '../shared/types';
+import type { WorldState, TileData, WallSeg } from '../shared/types';
 import {
   GRID_WIDTH, GRID_HEIGHT,
   PLAYER_START_X, PLAYER_START_Y,
@@ -30,7 +30,9 @@ function migrateVertexHeights(tiles: TileData[][], W: number, H: number): Float3
   return vh;
 }
 
-export function createWorldFromTiles(tiles: TileData[][], vertexHeights?: number[]): WorldState {
+export function createWorldFromTiles(
+  tiles: TileData[][], vertexHeights?: number[], walls?: WallSeg[],
+): WorldState {
   if (tiles.length === 0) {
     const vh = new Float32Array((GRID_WIDTH + 1) * (GRID_HEIGHT + 1));
     return { width: GRID_WIDTH, height: GRID_HEIGHT, tiles: [], vertexHeights: vh };
@@ -44,7 +46,58 @@ export function createWorldFromTiles(tiles: TileData[][], vertexHeights?: number
   const vh = vertexHeights
     ? Float32Array.from(vertexHeights)
     : migrateVertexHeights(normalized, W, H);
-  return { width: W, height: H, tiles: normalized, vertexHeights: vh };
+  const wallClip = walls && walls.length > 0 ? buildWallClip(walls, W, H) : undefined;
+  return { width: W, height: H, tiles: normalized, vertexHeights: vh, wallClip };
+}
+
+// ---- Wall clipping (edge-based collision) ----------------------------------
+// Per-tile bitmask of blocked OUTGOING directions. Cardinal walls block an edge
+// (set on both tiles sharing it); pillars block the diagonal through their
+// corner. Diagonal walls (odd orient) are not yet clipped.
+export const CLIP_XP = 1,  CLIP_XM = 2,  CLIP_YP = 4,  CLIP_YM = 8;     // +x,-x,+y,-y edges
+export const CLIP_PP = 16, CLIP_PM = 32, CLIP_MP = 64, CLIP_MM = 128;   // +x+y,+x-y,-x+y,-x-y diagonals
+
+export function buildWallClip(walls: WallSeg[], W: number, H: number): Uint8Array {
+  const clip = new Uint8Array(W * H);
+  const set = (x: number, y: number, bit: number) => {
+    if (x >= 0 && x < W && y >= 0 && y < H) clip[y * W + x] |= bit;
+  };
+  for (const w of walls) {
+    const x = w.tileX, y = w.tileY, o = w.orient & 7;
+    if (w.pillar) {
+      if      (o === 0) { set(x, y, CLIP_PP); set(x + 1, y + 1, CLIP_MM); }
+      else if (o === 2) { set(x, y, CLIP_PM); set(x + 1, y - 1, CLIP_MP); }
+      else if (o === 4) { set(x, y, CLIP_MM); set(x - 1, y - 1, CLIP_PP); }
+      else if (o === 6) { set(x, y, CLIP_MP); set(x - 1, y + 1, CLIP_PM); }
+    } else if ((o & 1) === 0) {   // cardinal edge wall
+      if      (o === 0) { set(x, y, CLIP_YP); set(x, y + 1, CLIP_YM); }
+      else if (o === 2) { set(x, y, CLIP_XP); set(x + 1, y, CLIP_XM); }
+      else if (o === 4) { set(x, y, CLIP_YM); set(x, y - 1, CLIP_YP); }
+      else if (o === 6) { set(x, y, CLIP_XM); set(x - 1, y, CLIP_XP); }
+    }
+  }
+  return clip;
+}
+
+// True if moving from tile (x,y) by (dx,dy) is blocked by a wall/pillar.
+export function clipBlocks(
+  clip: Uint8Array, W: number, x: number, y: number, dx: number, dy: number,
+): boolean {
+  const cm = clip[y * W + x];
+  if (dx !== 0 && dy !== 0) {
+    const dbit = dx > 0 ? (dy > 0 ? CLIP_PP : CLIP_PM)
+                        : (dy > 0 ? CLIP_MP : CLIP_MM);
+    if (cm & dbit) return true;
+    // Corner-cut: can't slip diagonally past a wall on either adjacent edge.
+    if (clipBlocks(clip, W, x, y, dx, 0)) return true;
+    if (clipBlocks(clip, W, x, y, 0, dy)) return true;
+    return false;
+  }
+  if (dx > 0) return (cm & CLIP_XP) !== 0;
+  if (dx < 0) return (cm & CLIP_XM) !== 0;
+  if (dy > 0) return (cm & CLIP_YP) !== 0;
+  if (dy < 0) return (cm & CLIP_YM) !== 0;
+  return false;
 }
 
 export function seededRandom(seed: number): () => number {
