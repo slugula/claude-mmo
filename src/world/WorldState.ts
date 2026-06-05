@@ -46,6 +46,16 @@ export function createWorldFromTiles(
   const vh = vertexHeights
     ? Float32Array.from(vertexHeights)
     : migrateVertexHeights(normalized, W, H);
+  // A diagonal wall cuts through the middle of its tile — block the whole tile
+  // (simpler and matches expectations) rather than an edge.
+  if (walls) {
+    for (const w of walls) {
+      if (!w.pillar && (w.orient & 1) === 1) {
+        const t = normalized[w.tileY]?.[w.tileX];
+        if (t) t.walkable = false;
+      }
+    }
+  }
   const wallClip = walls && walls.length > 0 ? buildWallClip(walls, W, H) : undefined;
   return { width: W, height: H, tiles: normalized, vertexHeights: vh, wallClip };
 }
