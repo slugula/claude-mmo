@@ -1213,9 +1213,9 @@ void EditorApp::drawProperties() {
     ImGui::TextDisabled("Left-click place, right-click remove.");
   }
   else if (activeTool_ == EditorTool::PlacePillar) {
-    static const char* kDir[8] = { "N","NE","E","SE","S","SW","W","NW" };
+    static const char* kCorner[4] = { "NE", "SE", "SW", "NW" };
     ImGui::TextDisabled("Pillar placeholder");
-    ImGui::Text("Corner: %s", kDir[pillarOrient_ & 7]);
+    ImGui::Text("Corner: %s", kCorner[(pillarOrient_ & 7) / 2]);
     if (ImGui::SmallButton("Q##pillar")) pillarOrient_ = (pillarOrient_ + 2) & 7;
     ImGui::SameLine();
     if (ImGui::SmallButton("E##pillar")) pillarOrient_ = (pillarOrient_ + 6) & 7;
@@ -1758,14 +1758,17 @@ void EditorApp::applyToolAt(int tx, int ty, float dt, bool rightClick,
       const int  orient  = pillar ? pillarOrient_ : wallOrient_;
       const std::string& objId = pillar ? pillarSubtype_ : wallSubtype_;
       auto& ws = map_.walls;
-      // A tile holds at most one wall and one pillar — placing replaces any
-      // existing one of the same kind (corners are their own mesh, not two
-      // stacked walls). Right-click clears that kind on the tile.
-      ws.erase(std::remove_if(ws.begin(), ws.end(),
-        [&](const shared::WallSeg& w){
-          return w.tileX == tx && w.tileY == ty && w.pillar == pillar; }),
-        ws.end());
-      if (!rightClick) ws.push_back({ tx, ty, orient, pillar, objId });
+      // A tile may hold several walls (one per edge — e.g. N+E make a corner)
+      // and pillars, deduped per orientation. Left-click adds the current
+      // orient; right-click removes the wall/pillar at that exact orient.
+      auto matches = [&](const shared::WallSeg& w){
+        return w.tileX == tx && w.tileY == ty &&
+               w.pillar == pillar && w.orient == orient; };
+      if (rightClick) {
+        ws.erase(std::remove_if(ws.begin(), ws.end(), matches), ws.end());
+      } else if (!std::any_of(ws.begin(), ws.end(), matches)) {
+        ws.push_back({ tx, ty, orient, pillar, objId });
+      }
       dirtyObstacles = true;   // walls rebuild alongside obstacles
       dirtyMinimap   = true;
       break;

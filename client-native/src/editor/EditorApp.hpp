@@ -184,7 +184,7 @@ private:
   std::string           npcSubtype_      = "chicken";
   int                   placeRotation_   = 0;        // 0..3 quarter-turns (Q=CCW, E=CW) for placed objects
   int                   wallOrient_      = 0;        // 0..7 (45°) for PlaceWall (Q/E)
-  int                   pillarOrient_    = 1;        // 0..7 for PlacePillar (Q/E, 90° steps)
+  int                   pillarOrient_    = 0;        // 0/2/4/6 = tile corners (Q/E 90° steps)
   std::string           wallSubtype_     = "wall";   // wall variant id (mesh attach later)
   std::string           pillarSubtype_   = "pillar"; // pillar variant id
 
