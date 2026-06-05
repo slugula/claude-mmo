@@ -105,6 +105,30 @@ void MinimapRenderer::rebuild(const shared::WorldMapFile& map,
     fillRect(px, py, kPxPerTile, kPxPerTile, 38, 102, 204);
   }
 
+  // ---- Walls + pillars (1px white edge/corner lines) ----------------------
+  for (const auto& w : map.walls) {
+    if (w.tileX < 0 || w.tileY < 0 ||
+        w.tileX >= map.width || w.tileY >= map.height) continue;
+    const int px = w.tileX * kPxPerTile;
+    const int py = w.tileY * kPxPerTile;
+    const int n  = kPxPerTile;
+    constexpr uint8_t R = 255, G = 255, B = 255;
+    const int o = w.orient & 7;
+    if (w.pillar) {
+      const int cx = (o == 0 || o == 2) ? px + n - 1 : px;
+      const int cy = (o == 0 || o == 6) ? py + n - 1 : py;
+      setPixel(cx, cy, R, G, B);
+    } else if ((o & 1) == 0) {
+      if      (o == 0) for (int i = 0; i < n; ++i) setPixel(px + i,     py + n - 1, R, G, B);
+      else if (o == 2) for (int i = 0; i < n; ++i) setPixel(px + n - 1, py + i,     R, G, B);
+      else if (o == 4) for (int i = 0; i < n; ++i) setPixel(px + i,     py,         R, G, B);
+      else             for (int i = 0; i < n; ++i) setPixel(px,         py + i,     R, G, B);
+    } else {
+      if (o == 1 || o == 5) for (int i = 0; i < n; ++i) setPixel(px + n - 1 - i, py + i, R, G, B);
+      else                  for (int i = 0; i < n; ++i) setPixel(px + i,         py + i, R, G, B);
+    }
+  }
+
   // ---- NPC markers (2×2 pixel dot in the centre of the tile block) --------
   for (const auto& npc : npcs) {
     const int px = npc.tileX * kPxPerTile + kPxPerTile / 2 - 1;

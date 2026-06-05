@@ -155,6 +155,32 @@ void MinimapRenderer::buildBaseLayer(const shared::WorldMapFile& map)
                  kPxPerTile, kPxPerTile, 38, 102, 204);
     }
 
+    // ---- Walls + pillars (1px white edge/corner lines, OSRS-style) -----------
+    // +tileX = right, +tileY = down in the base texture. Lines hug the inside
+    // edge so building perimeters read as a continuous white outline.
+    for (const auto& w : map.walls) {
+        if (w.tileX < 0 || w.tileY < 0 ||
+            w.tileX >= map.width || w.tileY >= map.height) continue;
+        const int px = w.tileX * kPxPerTile;
+        const int py = w.tileY * kPxPerTile;
+        const int n  = kPxPerTile;
+        constexpr uint8_t R = 255, G = 255, B = 255;
+        const int o = w.orient & 7;
+        if (w.pillar) {
+            const int cx = (o == 0 || o == 2) ? px + n - 1 : px;   // +X corners on the right
+            const int cy = (o == 0 || o == 6) ? py + n - 1 : py;   // +Z corners on the bottom
+            setPixel(cx, cy, R, G, B);
+        } else if ((o & 1) == 0) {
+            if      (o == 0) for (int i = 0; i < n; ++i) setPixel(px + i,     py + n - 1, R, G, B); // +Z (bottom)
+            else if (o == 2) for (int i = 0; i < n; ++i) setPixel(px + n - 1, py + i,     R, G, B); // +X (right)
+            else if (o == 4) for (int i = 0; i < n; ++i) setPixel(px + i,     py,         R, G, B); // -Z (top)
+            else             for (int i = 0; i < n; ++i) setPixel(px,         py + i,     R, G, B); // -X (left)
+        } else {
+            if (o == 1 || o == 5) for (int i = 0; i < n; ++i) setPixel(px + n - 1 - i, py + i, R, G, B); // "/"
+            else                  for (int i = 0; i < n; ++i) setPixel(px + i,         py + i, R, G, B); // "\"
+        }
+    }
+
     glTextureSubImage2D(baseTex_, 0, 0, 0, texW, texH,
                         GL_RGBA, GL_UNSIGNED_BYTE, baseBuf_.data());
 }
