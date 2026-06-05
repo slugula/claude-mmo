@@ -833,6 +833,24 @@ void EditorApp::render3DViewport(float dt) {
     glDisable(GL_BLEND);
   }
 
+  // Wall / pillar placement ghost (same translucent treatment).
+  if ((activeTool_ == EditorTool::PlaceWall || activeTool_ == EditorTool::PlacePillar) &&
+      hoveredTileX_ >= 0) {
+    const bool pillar = (activeTool_ == EditorTool::PlacePillar);
+    const int  orient = pillar ? pillarOrient_ : wallOrient_;
+    glEnable(GL_BLEND);
+    glBlendColor(0.f, 0.f, 0.f, 0.5f);
+    glBlendFunc(GL_CONSTANT_ALPHA, GL_ONE_MINUS_CONSTANT_ALPHA);
+    glDepthMask(GL_FALSE);
+    glDepthFunc(GL_LEQUAL);
+    obstacleShader_.use();
+    walls_.renderGhostAt(obstacleShader_, map_, hoveredTileX_, hoveredTileY_, orient, pillar);
+    glDepthMask(GL_TRUE);
+    glDepthFunc(GL_LESS);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    glDisable(GL_BLEND);
+  }
+
   // ---- Water pass -------------------------------------------------------
   // Resolve colour + depth (full opaque scene incl. submerged fish), then draw
   // depth-based refraction water on top.
@@ -1740,20 +1758,14 @@ void EditorApp::applyToolAt(int tx, int ty, float dt, bool rightClick,
       const int  orient  = pillar ? pillarOrient_ : wallOrient_;
       const std::string& objId = pillar ? pillarSubtype_ : wallSubtype_;
       auto& ws = map_.walls;
-      if (rightClick) {
-        // Remove the matching wall/pillar (same tile + orient + kind).
-        ws.erase(std::remove_if(ws.begin(), ws.end(),
-          [&](const shared::WallSeg& w){
-            return w.tileX == tx && w.tileY == ty &&
-                   w.pillar == pillar && w.orient == orient; }),
-          ws.end());
-      } else {
-        const bool already = std::any_of(ws.begin(), ws.end(),
-          [&](const shared::WallSeg& w){
-            return w.tileX == tx && w.tileY == ty &&
-                   w.pillar == pillar && w.orient == orient; });
-        if (!already) ws.push_back({ tx, ty, orient, pillar, objId });
-      }
+      // A tile holds at most one wall and one pillar — placing replaces any
+      // existing one of the same kind (corners are their own mesh, not two
+      // stacked walls). Right-click clears that kind on the tile.
+      ws.erase(std::remove_if(ws.begin(), ws.end(),
+        [&](const shared::WallSeg& w){
+          return w.tileX == tx && w.tileY == ty && w.pillar == pillar; }),
+        ws.end());
+      if (!rightClick) ws.push_back({ tx, ty, orient, pillar, objId });
       dirtyObstacles = true;   // walls rebuild alongside obstacles
       dirtyMinimap   = true;
       break;

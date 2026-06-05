@@ -33,6 +33,11 @@ public:
   // uniforms; this sets u_color per kit).
   void render(render::Shader& obstacleShader);
 
+  // Editor placement preview: draw one wall/pillar at a tile with the given
+  // orientation (caller wraps it in translucent blend state).
+  void renderGhostAt(render::Shader& obstacleShader, const shared::WorldMapFile& map,
+                     int tileX, int tileY, int orient, bool pillar);
+
   bool empty() const {
     return cardinal_.insts.empty() && diagonal_.insts.empty() && pillar_.insts.empty();
   }
@@ -56,6 +61,7 @@ private:
   Kit cardinal_;   // edge wall
   Kit diagonal_;   // corner-to-corner wall
   Kit pillar_;     // corner column
+  GLuint ghostVbo_ = 0;   // single-instance buffer for the placement preview
 };
 
 }  // namespace world

@@ -43,6 +43,10 @@ void makeBox(glm::vec3 lo, glm::vec3 hi,
 WallSystem::~WallSystem() { destroy(); }
 
 void WallSystem::initGL() {
+  // Single-instance buffer for the editor placement preview.
+  glCreateBuffers(1, &ghostVbo_);
+  glNamedBufferData(ghostVbo_, sizeof(Instance), nullptr, GL_DYNAMIC_DRAW);
+
   std::vector<float> pos, nrm; std::vector<uint32_t> idx;
   // Cardinal wall: hugs the +Z edge, ~0.2 thick, full tile width, tall.
   makeBox({-0.5f, 0.f, 0.30f}, {0.5f, kWallH, 0.50f}, pos, nrm, idx);
@@ -88,6 +92,18 @@ void WallSystem::buildKit(Kit& k, const std::vector<float>& pos,
   glEnableVertexArrayAttrib (k.vao, 4);
   glVertexArrayAttribFormat (k.vao, 4, 4, GL_FLOAT, GL_FALSE, 0);
   glVertexArrayAttribBinding(k.vao, 4, 4);
+
+  // Per-instance pos + rotY (binding 2). Bound to the ghost buffer initially;
+  // uploadInstances() / renderGhostAt() rebind binding 2 to the right store.
+  glVertexArrayBindingDivisor(k.vao, 2, 1);
+  glEnableVertexArrayAttrib  (k.vao, 2);
+  glVertexArrayAttribFormat  (k.vao, 2, 3, GL_FLOAT, GL_FALSE, offsetof(Instance, x));
+  glVertexArrayAttribBinding (k.vao, 2, 2);
+  glEnableVertexArrayAttrib  (k.vao, 3);
+  glVertexArrayAttribFormat  (k.vao, 3, 1, GL_FLOAT, GL_FALSE, offsetof(Instance, rotY));
+  glVertexArrayAttribBinding (k.vao, 3, 2);
+  glVertexArrayVertexBuffer  (k.vao, 2, ghostVbo_, 0, sizeof(Instance));
+
   glVertexArrayElementBuffer(k.vao, k.ebo);
 }
 
@@ -95,22 +111,13 @@ void WallSystem::uploadInstances(Kit& k) {
   if (k.insts.empty() || !k.instVbo) return;
   const GLsizei n = static_cast<GLsizei>(k.insts.size());
   if (n > k.instCap) {
-    // Grow: recreate the immutable-less buffer with DYNAMIC data store.
     glNamedBufferData(k.instVbo, (GLsizeiptr)(n * sizeof(Instance)),
                       k.insts.data(), GL_DYNAMIC_DRAW);
     k.instCap = n;
-    // (Re)point the per-instance attributes at the (possibly new) store.
-    glVertexArrayVertexBuffer  (k.vao, 2, k.instVbo, 0, sizeof(Instance));
-    glVertexArrayBindingDivisor(k.vao, 2, 1);
-    glEnableVertexArrayAttrib  (k.vao, 2);
-    glVertexArrayAttribFormat  (k.vao, 2, 3, GL_FLOAT, GL_FALSE, offsetof(Instance, x));
-    glVertexArrayAttribBinding (k.vao, 2, 2);
-    glEnableVertexArrayAttrib  (k.vao, 3);
-    glVertexArrayAttribFormat  (k.vao, 3, 1, GL_FLOAT, GL_FALSE, offsetof(Instance, rotY));
-    glVertexArrayAttribBinding (k.vao, 3, 2);
   } else {
     glNamedBufferSubData(k.instVbo, 0, (GLsizeiptr)(n * sizeof(Instance)), k.insts.data());
   }
+  glVertexArrayVertexBuffer(k.vao, 2, k.instVbo, 0, sizeof(Instance));   // point at placed data
 }
 
 void WallSystem::rebuildFromMap(const shared::WorldMapFile& map) {
@@ -153,6 +160,28 @@ void WallSystem::render(render::Shader& obstacleShader) {
   drawKit(obstacleShader, pillar_);
 }
 
+void WallSystem::renderGhostAt(render::Shader& obstacleShader,
+                               const shared::WorldMapFile& map,
+                               int tileX, int tileY, int orient, bool pillar) {
+  if (tileX < 0 || tileX >= map.width || tileY < 0 || tileY >= map.height) return;
+  const auto& vh = map.vertexHeights;
+  if (static_cast<int>(vh.size()) != (map.width + 1) * (map.height + 1)) return;
+
+  const float cy   = tileCenterY(vh, map.width, map.height, tileX, tileY);
+  const float rotY = static_cast<float>(orient & 7) * kPi4;
+  const Instance inst{ static_cast<float>(tileX), cy, static_cast<float>(tileY), rotY };
+
+  Kit& k = pillar ? pillar_ : ((orient & 1) == 0 ? cardinal_ : diagonal_);
+
+  glNamedBufferSubData(ghostVbo_, 0, sizeof(Instance), &inst);
+  glVertexArrayVertexBuffer(k.vao, 2, ghostVbo_, 0, sizeof(Instance));   // draw the ghost…
+  obstacleShader.setVec3("u_color", k.color);
+  glBindVertexArray(k.vao);
+  glDrawElementsInstanced(GL_TRIANGLES, k.indexCount, GL_UNSIGNED_INT, nullptr, 1);
+  glBindVertexArray(0);
+  glVertexArrayVertexBuffer(k.vao, 2, k.instVbo, 0, sizeof(Instance));   // …restore placed data
+}
+
 void WallSystem::destroyKit(Kit& k) {
   if (k.vao)     glDeleteVertexArrays(1, &k.vao);
   if (k.instVbo) glDeleteBuffers(1, &k.instVbo);
@@ -167,6 +196,7 @@ void WallSystem::destroy() {
   destroyKit(cardinal_);
   destroyKit(diagonal_);
   destroyKit(pillar_);
+  if (ghostVbo_) { glDeleteBuffers(1, &ghostVbo_); ghostVbo_ = 0; }
 }
 
 }  // namespace world
