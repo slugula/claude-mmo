@@ -375,6 +375,7 @@ bool EditorApp::init() {
   }
 
   obstacles_.initGL();
+  walls_.initGL();
   obstacles_.setModelResolver([](const std::string& rel) {
     return resolveFromExe(rel.c_str());
   });
@@ -484,18 +485,25 @@ void EditorApp::renderFrame(float dt) {
     if (sNow && !sS) saveCurrentFile();
     sS = sNow;
 
-    // Q / E rotate the placement brush in 90° steps about the up axis when the
-    // Objects tool is active. Q = counter-clockwise, E = clockwise (viewed from
-    // above). Suppressed while a text field is focused so typing IDs is safe.
+    // Q / E rotate the placement brush about the up axis. Objects rotate 90°,
+    // walls 45° (8 orientations), pillars 90° (4 corners). Q = CCW, E = CW.
+    // Suppressed while a text field is focused so typing IDs is safe.
     static bool sQ = false, sE = false;
-    const bool canRotate = (activeTool_ == EditorTool::PlaceObstacle)
-                        && !ImGui::GetIO().WantTextInput && !ctrl;
-    const bool qNow = canRotate && glfwGetKey(win, GLFW_KEY_Q) == GLFW_PRESS;
-    if (qNow && !sQ) placeRotation_ = (placeRotation_ + 1) & 3;   // CCW
-    sQ = qNow;
-    const bool eNow = canRotate && glfwGetKey(win, GLFW_KEY_E) == GLFW_PRESS;
-    if (eNow && !sE) placeRotation_ = (placeRotation_ + 3) & 3;   // CW
-    sE = eNow;
+    const bool typing = ImGui::GetIO().WantTextInput || ctrl;
+    const bool qEdge = !typing && glfwGetKey(win, GLFW_KEY_Q) == GLFW_PRESS && !sQ;
+    const bool eEdge = !typing && glfwGetKey(win, GLFW_KEY_E) == GLFW_PRESS && !sE;
+    sQ = !typing && glfwGetKey(win, GLFW_KEY_Q) == GLFW_PRESS;
+    sE = !typing && glfwGetKey(win, GLFW_KEY_E) == GLFW_PRESS;
+    if (activeTool_ == EditorTool::PlaceObstacle) {
+      if (qEdge) placeRotation_ = (placeRotation_ + 1) & 3;   // CCW
+      if (eEdge) placeRotation_ = (placeRotation_ + 3) & 3;   // CW
+    } else if (activeTool_ == EditorTool::PlaceWall) {
+      if (qEdge) wallOrient_ = (wallOrient_ + 1) & 7;         // 45° CCW
+      if (eEdge) wallOrient_ = (wallOrient_ + 7) & 7;         // 45° CW
+    } else if (activeTool_ == EditorTool::PlacePillar) {
+      if (qEdge) pillarOrient_ = (pillarOrient_ + 2) & 7;     // 90° CCW (corners)
+      if (eEdge) pillarOrient_ = (pillarOrient_ + 6) & 7;     // 90° CW
+    }
   }
 
   // ---- Camera cursor ----------------------------------------------------
@@ -757,6 +765,7 @@ void EditorApp::render3DViewport(float dt) {
   obstacleShader_.setFloat("u_fogDensity", fogDensity_);
   obstacleShader_.setFloat("u_fogStart",   fogStart_);
   obstacles_.render(obstacleShader_);  // all static objects (data-driven)
+  walls_.render(obstacleShader_);      // wall + pillar placeholders
 
   // NPCs — same data-driven models as the game (placeholder when no model).
   {
@@ -992,6 +1001,8 @@ void EditorApp::drawToolbar() {
   toolBtn("Paint",     EditorTool::PaintTerrain);
   toolBtn("Terrain",   EditorTool::SculptTerrain);
   toolBtn("Objects",   EditorTool::PlaceObstacle);
+  toolBtn("Wall",      EditorTool::PlaceWall);
+  toolBtn("Pillar",    EditorTool::PlacePillar);
   toolBtn("NPC",       EditorTool::PlaceNPC);
   toolBtn("Spawn",     EditorTool::PlaceSpawn);
   toolBtn("Collision", EditorTool::PaintBlocking);
@@ -1172,6 +1183,25 @@ void EditorApp::drawProperties() {
     if (ImGui::SmallButton("Q -90")) placeRotation_ = (placeRotation_ + 1) & 3;
     ImGui::SameLine();
     if (ImGui::SmallButton("E +90")) placeRotation_ = (placeRotation_ + 3) & 3;
+  }
+  else if (activeTool_ == EditorTool::PlaceWall) {
+    static const char* kDir[8] = { "N","NE","E","SE","S","SW","W","NW" };
+    ImGui::TextDisabled("Wall placeholder");
+    ImGui::Text("Orient: %s (%d\xC2\xB0)", kDir[wallOrient_ & 7], (wallOrient_ & 7) * 45);
+    if (ImGui::SmallButton("Q -45##wall")) wallOrient_ = (wallOrient_ + 1) & 7;
+    ImGui::SameLine();
+    if (ImGui::SmallButton("E +45##wall")) wallOrient_ = (wallOrient_ + 7) & 7;
+    ImGui::TextDisabled("Even = edge wall, odd = diagonal.");
+    ImGui::TextDisabled("Left-click place, right-click remove.");
+  }
+  else if (activeTool_ == EditorTool::PlacePillar) {
+    static const char* kDir[8] = { "N","NE","E","SE","S","SW","W","NW" };
+    ImGui::TextDisabled("Pillar placeholder");
+    ImGui::Text("Corner: %s", kDir[pillarOrient_ & 7]);
+    if (ImGui::SmallButton("Q##pillar")) pillarOrient_ = (pillarOrient_ + 2) & 7;
+    ImGui::SameLine();
+    if (ImGui::SmallButton("E##pillar")) pillarOrient_ = (pillarOrient_ + 6) & 7;
+    ImGui::TextDisabled("Left-click place, right-click remove.");
   }
   else if (activeTool_ == EditorTool::PlaceNPC) {
     ImGui::TextDisabled("NPC type");
@@ -1704,6 +1734,30 @@ void EditorApp::applyToolAt(int tx, int ty, float dt, bool rightClick,
       dirtyMinimap   = true;
       break;
     }
+    case EditorTool::PlaceWall:
+    case EditorTool::PlacePillar: {
+      const bool pillar  = (activeTool_ == EditorTool::PlacePillar);
+      const int  orient  = pillar ? pillarOrient_ : wallOrient_;
+      const std::string& objId = pillar ? pillarSubtype_ : wallSubtype_;
+      auto& ws = map_.walls;
+      if (rightClick) {
+        // Remove the matching wall/pillar (same tile + orient + kind).
+        ws.erase(std::remove_if(ws.begin(), ws.end(),
+          [&](const shared::WallSeg& w){
+            return w.tileX == tx && w.tileY == ty &&
+                   w.pillar == pillar && w.orient == orient; }),
+          ws.end());
+      } else {
+        const bool already = std::any_of(ws.begin(), ws.end(),
+          [&](const shared::WallSeg& w){
+            return w.tileX == tx && w.tileY == ty &&
+                   w.pillar == pillar && w.orient == orient; });
+        if (!already) ws.push_back({ tx, ty, orient, pillar, objId });
+      }
+      dirtyObstacles = true;   // walls rebuild alongside obstacles
+      dirtyMinimap   = true;
+      break;
+    }
     case EditorTool::PlaceNPC: {
       if (rightClick) {
         npcSpawns_.erase(std::remove_if(npcSpawns_.begin(), npcSpawns_.end(),
@@ -1866,6 +1920,7 @@ void EditorApp::rebuildTerrainGL() {
 
 void EditorApp::rebuildObstacles() {
   obstacles_.rebuildFromMap(map_);
+  walls_.rebuildFromMap(map_);
 }
 
 // -----------------------------------------------------------------------

@@ -6,6 +6,8 @@ enum class EditorTool {
   PaintTerrain,
   SculptTerrain,    // left-click = raise, right-click = lower
   PlaceObstacle,
+  PlaceWall,         // wall on a tile edge; Q/E rotate 45°
+  PlacePillar,       // pillar on a tile corner
   PlaceNPC,
   PlaceSpawn,
   PaintBlocking,    // left-click = block (walkable=false), right-click = unblock (walkable=true)

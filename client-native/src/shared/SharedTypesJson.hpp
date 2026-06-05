@@ -46,6 +46,17 @@ struct glz::meta<shared::WaterTile> {
     "tileY", &T::tileY);
 };
 
+template <>
+struct glz::meta<shared::WallSeg> {
+  using T = shared::WallSeg;
+  static constexpr auto value = glz::object(
+    "tileX",    &T::tileX,
+    "tileY",    &T::tileY,
+    "orient",   &T::orient,
+    "pillar",   &T::pillar,
+    "objectId", &T::objectId);
+};
+
 // ---- Map serialisation / deserialisation ---------------------------------
 //
 // The on-disk format is a JSON object with a "version" field (currently 2).
@@ -75,6 +86,7 @@ inline bool loadWorldMap(const std::filesystem::path& path, WorldMapFile& out) {
     std::array<int, 2>                 spawnPoint = {32, 32};
     std::vector<NpcSpawn>              npcSpawns;
     std::vector<WaterTile>             waterTiles;
+    std::vector<WallSeg>               walls;
   };
 
   std::string buf;
@@ -108,6 +120,7 @@ inline bool loadWorldMap(const std::filesystem::path& path, WorldMapFile& out) {
   out.spawnPoint   = disk.spawnPoint;
   out.npcSpawns    = std::move(disk.npcSpawns);
   out.waterTiles   = std::move(disk.waterTiles);
+  out.walls        = std::move(disk.walls);
 
   // Rebuild x/y coordinates on every tile (they are stored in the JSON but
   // may be stale from older exports; recompute for correctness).
@@ -167,6 +180,17 @@ inline bool saveWorldMap(const std::filesystem::path& path,
     const auto& w = map.waterTiles[i];
     std::fprintf(f, "%s{\"tileX\":%d,\"tileY\":%d}",
                  i == 0 ? "" : ",", w.tileX, w.tileY);
+  }
+  std::fprintf(f, "],\n");
+
+  // walls (wall + pillar edge features)
+  std::fprintf(f, "  \"walls\": [");
+  for (std::size_t i = 0; i < map.walls.size(); ++i) {
+    const auto& w = map.walls[i];
+    std::fprintf(f,
+      "%s{\"tileX\":%d,\"tileY\":%d,\"orient\":%d,\"pillar\":%s,\"objectId\":\"%s\"}",
+      i == 0 ? "" : ",", w.tileX, w.tileY, w.orient,
+      w.pillar ? "true" : "false", w.objectId.c_str());
   }
   std::fprintf(f, "],\n");
 

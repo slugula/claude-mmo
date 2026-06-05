@@ -181,6 +181,7 @@ wss.on('connection', async (ws: WebSocket, req: IncomingMessage) => {
   ws.send(JSON.stringify({
     type: 'init',
     waterTiles:    loop.getWaterTiles(),
+    walls:         loop.getWalls(),
     playerId,
     tiles:         loop.getWorldTiles(),
     vertexHeights: loop.getVertexHeights(),

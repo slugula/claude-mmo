@@ -59,6 +59,19 @@ struct WaterTile {
   int tileY = 0;
 };
 
+// ---- Wall / pillar edge feature -------------------------------------------
+// Walls live on a tile's edges, pillars on its corners. A tile may hold several
+// and remains walkable. orient = 45° steps (0=N,1=NE,2=E,3=SE,4=S,5=SW,6=W,
+// 7=NW); cardinal = edge wall, diagonal = corner-to-corner wall. For pillars
+// only the diagonal orients are meaningful (the corner it sits on).
+struct WallSeg {
+  int         tileX    = 0;
+  int         tileY    = 0;
+  int         orient   = 0;       // 0..7 (45° increments)
+  bool        pillar   = false;   // false = wall (edge), true = pillar (corner)
+  std::string objectId;           // wall/pillar variant id ("" = built-in placeholder)
+};
+
 // ---- In-memory map (produced by MapGenerator or loaded from JSON) --------
 
 struct WorldMapFile {
@@ -71,6 +84,7 @@ struct WorldMapFile {
   std::array<int, 2>                 spawnPoint  = {32, 32};
   std::vector<NpcSpawn>              npcSpawns;
   std::vector<WaterTile>             waterTiles;
+  std::vector<WallSeg>               walls;        // wall + pillar edge features
 };
 
 // =====================================================================
@@ -171,6 +185,7 @@ struct InitMessage {
   std::vector<std::vector<TileData>> tiles;           // server's authoritative map
   std::vector<float>                 vertexHeights;
   std::vector<WaterTile>             waterTiles;       // water plane tiles
+  std::vector<WallSeg>               walls;            // wall + pillar edge features
   bool                               isNewPlayer = false;
 };
 

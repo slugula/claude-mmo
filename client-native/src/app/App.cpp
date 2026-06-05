@@ -518,6 +518,7 @@ bool App::init() {
   }
 
   obstacles_.initGL();
+  walls_.initGL();
   // Resolve object model_path (relative) → absolute path next to the exe. This
   // also primes the ModelLibrary with the object placeholder.
   obstacles_.setModelResolver([](const std::string& rel) {
@@ -664,6 +665,7 @@ void App::rebuildWorldFromMap() {
   hoveredTile_    = {};  // hover stale after rebuild
 
   obstacles_.rebuildFromMap(map_);
+  walls_.rebuildFromMap(map_);
   minimap_.buildBaseLayer(map_);
   if (waterRenderer_.valid())
     waterRenderer_.rebuild(map_, waterUniforms_.waterOffset);
@@ -1141,6 +1143,7 @@ void App::renderFrame() {
   obstacleShader_.setFloat("u_fogDensity", fogDensity_);
   obstacleShader_.setFloat("u_fogStart",   fogStart_);
   obstacles_.render(obstacleShader_);  // all static objects (data-driven)
+  walls_.render(obstacleShader_);      // wall + pillar placeholders
 
   // ---- Detect connection-status transitions for chat-log + state reset -----
   {
@@ -2733,6 +2736,7 @@ void App::processNetworkMessages() {
         map_.tiles        = std::move(init.tiles);
         map_.vertexHeights= std::move(init.vertexHeights);
         map_.waterTiles   = std::move(init.waterTiles);
+        map_.walls        = std::move(init.walls);
         depletedTiles_.clear();
         rebuildWorldFromMap();
       }

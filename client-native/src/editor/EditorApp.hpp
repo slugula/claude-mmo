@@ -21,6 +21,7 @@
 #include "world/ObstacleSystem.hpp"
 #include "world/SkinnedMesh.hpp"
 #include "world/TerrainBuilder.hpp"
+#include "world/WallSystem.hpp"
 #include "world/WaterRenderer.hpp"
 
 #include <glad/glad.h>
@@ -136,6 +137,7 @@ private:
   render::ShadowMap shadowMap_;
   render::Mesh    terrainMesh_;
   world::ObstacleSystem obstacles_;
+  world::WallSystem     walls_;
   world::EntityRenderer entities_;   // NPC stand-ins
   camera::GameCamera    camera_;
   world::WaterRenderer  waterRenderer_;
@@ -181,6 +183,10 @@ private:
   std::string           obstacleSubtype_ = "tree";  // DB object ID of selected obstacle type
   std::string           npcSubtype_      = "chicken";
   int                   placeRotation_   = 0;        // 0..3 quarter-turns (Q=CCW, E=CW) for placed objects
+  int                   wallOrient_      = 0;        // 0..7 (45°) for PlaceWall (Q/E)
+  int                   pillarOrient_    = 1;        // 0..7 for PlacePillar (Q/E, 90° steps)
+  std::string           wallSubtype_     = "wall";   // wall variant id (mesh attach later)
+  std::string           pillarSubtype_   = "pillar"; // pillar variant id
 
   // Active terrain colour (PaintTerrain tool)
   float paletteR_ = 0.49f, paletteG_ = 0.78f, paletteB_ = 0.31f;

@@ -101,6 +101,15 @@ export interface PermanentItemSpawn {
   y: number;
 }
 
+// Wall / pillar edge feature (see SharedTypes.hpp WallSeg).
+export interface WallSeg {
+  tileX: number;
+  tileY: number;
+  orient: number;     // 0..7, 45° steps
+  pillar: boolean;    // false = wall (edge), true = pillar (corner)
+  objectId: string;   // variant id ("" = placeholder)
+}
+
 export interface WorldMapFile {
   version: 2;
   width: number;
@@ -108,6 +117,7 @@ export interface WorldMapFile {
   tiles: TileData[][];
   npcSpawns: NPCSpawn[];
   permanentItems: PermanentItemSpawn[];
+  walls?: WallSeg[];
   // Per-vertex heights — flat row-major array, length (width+1)*(height+1).
   // Optional: absent in old v2 maps, which are migrated from TileData.height on load.
   vertexHeights?: number[];

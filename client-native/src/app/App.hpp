@@ -18,6 +18,7 @@
 #include "world/EntityRenderer.hpp"
 #include "world/ObstacleSystem.hpp"
 #include "world/SkinnedMesh.hpp"
+#include "world/WallSystem.hpp"
 #include "world/SpriteCache.hpp"
 #include "world/WaterRenderer.hpp"
 
@@ -90,6 +91,7 @@ private:
   render::ShadowMap                        shadowMap_;
   render::Mesh                             terrainMesh_;
   world::ObstacleSystem                    obstacles_;
+  world::WallSystem                        walls_;
   world::WaterRenderer                     waterRenderer_;
   world::WaterUniforms                     waterUniforms_;
   ui::SpriteCache                          spriteCache_;

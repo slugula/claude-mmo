@@ -30,6 +30,8 @@ interface WorldMapJSON {
   // source of truth for pathfinding, but old maps may have saved these as
   // walkable=true before the editor bug was fixed. We re-enforce on load.
   waterTiles?: { tileX: number; tileY: number }[];
+  // Wall + pillar edge features — relayed to the client for rendering.
+  walls?: { tileX: number; tileY: number; orient: number; pillar: boolean; objectId: string }[];
   // legacy v1 fields (ignored by new renderer)
   pixelWidth?:  number;
   pixelHeight?: number;
@@ -72,6 +74,7 @@ export class GameLoop {
   private broadcast: BroadcastFn;
   private worldTiles: TileData[][];
   private waterTiles: { tileX: number; tileY: number }[] = [];
+  private walls: { tileX: number; tileY: number; orient: number; pillar: boolean; objectId: string }[] = [];
 
   constructor(broadcast: BroadcastFn) {
     this.broadcast = broadcast;
@@ -83,6 +86,7 @@ export class GameLoop {
     const mapData = loadWorldMap();
     this.worldTiles = mapData.tiles;
     this.waterTiles = mapData.waterTiles ?? [];
+    this.walls      = mapData.walls ?? [];
 
     const world = createWorldFromTiles(mapData.tiles, mapData.vertexHeights);
 
@@ -225,6 +229,7 @@ export class GameLoop {
 
   getWorldTiles(): TileData[][] { return this.worldTiles; }
   getWaterTiles(): { tileX: number; tileY: number }[] { return this.waterTiles; }
+  getWalls() { return this.walls; }
   getVertexHeights(): number[] { return Array.from(this.state.world.vertexHeights); }
 
   /** Returns a snapshot of all currently-connected players for checkpoint saves. */
