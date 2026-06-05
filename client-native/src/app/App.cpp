@@ -524,6 +524,9 @@ bool App::init() {
   obstacles_.setModelResolver([](const std::string& rel) {
     return resolveFromExe(rel.c_str());
   });
+  walls_.setModelResolver([](const std::string& rel) {
+    return resolveFromExe(rel.c_str());
+  });
   entities_.initGL();
 
   // Model resolvers (relative model_path → absolute on disk). Set once.
@@ -725,6 +728,14 @@ void App::applyEntityDefs(const std::vector<editor::NpcDef>&    npcs,
     caches.push_back(std::move(c));
   }
   obstacles_.rebuildFromDefinitions(caches);
+
+  // Wall/Pillar variant meshes for the wall system.
+  std::vector<std::pair<std::string, std::string>> wallDefs;
+  for (const auto& obj : dbObjectDefs_)
+    if (obj.objectType == "Wall" || obj.objectType == "Pillar")
+      wallDefs.emplace_back(obj.id, obj.modelPath);
+  walls_.setWallDefs(wallDefs);
+  walls_.rebuildFromMap(map_);
 
   dbActionDefs_ = actions;
 }

@@ -379,6 +379,9 @@ bool EditorApp::init() {
   obstacles_.setModelResolver([](const std::string& rel) {
     return resolveFromExe(rel.c_str());
   });
+  walls_.setModelResolver([](const std::string& rel) {
+    return resolveFromExe(rel.c_str());
+  });
   entities_.initGL();
 
   initNewMap(64, 64);
@@ -838,13 +841,14 @@ void EditorApp::render3DViewport(float dt) {
       hoveredTileX_ >= 0) {
     const bool pillar = (activeTool_ == EditorTool::PlacePillar);
     const int  orient = pillar ? pillarOrient_ : wallOrient_;
+    const std::string& objId = pillar ? pillarSubtype_ : wallSubtype_;
     glEnable(GL_BLEND);
     glBlendColor(0.f, 0.f, 0.f, 0.5f);
     glBlendFunc(GL_CONSTANT_ALPHA, GL_ONE_MINUS_CONSTANT_ALPHA);
     glDepthMask(GL_FALSE);
     glDepthFunc(GL_LEQUAL);
     obstacleShader_.use();
-    walls_.renderGhostAt(obstacleShader_, map_, hoveredTileX_, hoveredTileY_, orient, pillar);
+    walls_.renderGhostAt(obstacleShader_, map_, hoveredTileX_, hoveredTileY_, orient, pillar, objId);
     glDepthMask(GL_TRUE);
     glDepthFunc(GL_LESS);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -1204,7 +1208,17 @@ void EditorApp::drawProperties() {
   }
   else if (activeTool_ == EditorTool::PlaceWall) {
     static const char* kDir[8] = { "N","NE","E","SE","S","SW","W","NW" };
-    ImGui::TextDisabled("Wall placeholder");
+    ImGui::TextDisabled("Wall variant");
+    auto wallBtn = [&](const char* label, const std::string& id) {
+      const bool a = (wallSubtype_ == id);
+      if (a) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f, 0.34f, 0.10f, 1.0f));
+      if (ImGui::Button(label, ImVec2(-1, 0))) wallSubtype_ = id;
+      if (a) ImGui::PopStyleColor();
+    };
+    wallBtn("Placeholder", "wall");
+    for (const auto& o : dbObjects_)
+      if (o.objectType == "Wall") wallBtn(o.name.c_str(), o.id);
+    ImGui::Separator();
     ImGui::Text("Orient: %s (%d\xC2\xB0)", kDir[wallOrient_ & 7], (wallOrient_ & 7) * 45);
     if (ImGui::SmallButton("Q -45##wall")) wallOrient_ = (wallOrient_ + 1) & 7;
     ImGui::SameLine();
@@ -1214,7 +1228,17 @@ void EditorApp::drawProperties() {
   }
   else if (activeTool_ == EditorTool::PlacePillar) {
     static const char* kCorner[4] = { "NE", "SE", "SW", "NW" };
-    ImGui::TextDisabled("Pillar placeholder");
+    ImGui::TextDisabled("Pillar variant");
+    auto pilBtn = [&](const char* label, const std::string& id) {
+      const bool a = (pillarSubtype_ == id);
+      if (a) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f, 0.34f, 0.10f, 1.0f));
+      if (ImGui::Button(label, ImVec2(-1, 0))) pillarSubtype_ = id;
+      if (a) ImGui::PopStyleColor();
+    };
+    pilBtn("Placeholder", "pillar");
+    for (const auto& o : dbObjects_)
+      if (o.objectType == "Pillar") pilBtn(o.name.c_str(), o.id);
+    ImGui::Separator();
     ImGui::Text("Corner: %s", kCorner[(pillarOrient_ & 7) / 2]);
     if (ImGui::SmallButton("Q##pillar")) pillarOrient_ = (pillarOrient_ + 2) & 7;
     ImGui::SameLine();
@@ -2499,6 +2523,15 @@ void EditorApp::dbLoadAll() {
     }
     obstacles_.rebuildFromDefinitions(caches);
 
+    // Feed Wall/Pillar object defs (id → model) to the wall system so uploaded
+    // meshes replace the placeholders.
+    std::vector<std::pair<std::string, std::string>> wallDefs;
+    for (const auto& obj : dbObjects_)
+      if (obj.objectType == "Wall" || obj.objectType == "Pillar")
+        wallDefs.emplace_back(obj.id, obj.modelPath);
+    walls_.setWallDefs(wallDefs);
+    walls_.rebuildFromMap(map_);
+
     // Load NPC models (or placeholder) so editor NPCs render like the game.
     entities_.setNpcModelResolver([](const std::string& rel) {
       return resolveFromExe(rel.c_str());
@@ -2926,7 +2959,7 @@ void EditorApp::dbDrawObjectsTab() {
     else              ImGui::TextUnformatted(d.id.c_str());
     ImGui::TextUnformatted("Name");
     ImGui::SetNextItemWidth(-1); dbInputText("##obj_name", d.name);
-    dbCombo("Type##obj",      d.objectType, {"Decoration", "ResourceNode", "ProductionFacility"});
+    dbCombo("Type##obj",      d.objectType, {"Decoration", "ResourceNode", "ProductionFacility", "Wall", "Pillar"});
     dbCombo("Collision##obj", d.collision,  {"none", "full_blocking", "half_blocking"});
     ImGui::SetNextItemWidth(80); ImGui::InputInt("Size X##obj", &d.sizeX); ImGui::SameLine();
     ImGui::SetNextItemWidth(80); ImGui::InputInt("Size Y##obj", &d.sizeY);

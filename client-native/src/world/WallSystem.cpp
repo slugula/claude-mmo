@@ -120,10 +120,29 @@ void WallSystem::uploadInstances(Kit& k) {
   glVertexArrayVertexBuffer(k.vao, 2, k.instVbo, 0, sizeof(Instance));   // point at placed data
 }
 
+void WallSystem::setModelResolver(std::function<std::filesystem::path(const std::string&)> r) {
+  if (!meshesInited_) {
+    meshes_.init(r, "assets/models/_placeholder_object.gltf");
+    meshesInited_ = true;
+  }
+}
+
+void WallSystem::setWallDefs(const std::vector<std::pair<std::string, std::string>>& idToModel) {
+  if (!meshesInited_) return;
+  meshes_.clearEntries();
+  meshIds_.clear();
+  for (const auto& [id, modelPath] : idToModel) {
+    if (id.empty() || modelPath.empty()) continue;   // no mesh → placeholder path
+    meshes_.ensure(id, modelPath, 1, 1);
+    meshIds_.insert(id);
+  }
+}
+
 void WallSystem::rebuildFromMap(const shared::WorldMapFile& map) {
   cardinal_.insts.clear();
   diagonal_.insts.clear();
   pillar_.insts.clear();
+  for (auto& [id, v] : meshInsts_) v.clear();
 
   const int W = map.width, H = map.height;
   const auto& vh = map.vertexHeights;
@@ -133,6 +152,12 @@ void WallSystem::rebuildFromMap(const shared::WorldMapFile& map) {
     if (w.tileX < 0 || w.tileX >= W || w.tileY < 0 || w.tileY >= H) continue;
     const float cy   = tileCenterY(vh, W, H, w.tileX, w.tileY);
     const float rotY = static_cast<float>(w.orient & 7) * kPi4;
+    // Uploaded mesh for this variant → use it; otherwise the placeholder kit.
+    if (!w.objectId.empty() && meshIds_.count(w.objectId)) {
+      meshInsts_[w.objectId].push_back({ static_cast<float>(w.tileX), cy,
+                                         static_cast<float>(w.tileY), rotY });
+      continue;
+    }
     const Instance inst{ static_cast<float>(w.tileX), cy,
                          static_cast<float>(w.tileY), rotY };
     if      (w.pillar)          pillar_.insts.push_back(inst);
@@ -158,11 +183,14 @@ void WallSystem::render(render::Shader& obstacleShader) {
   drawKit(obstacleShader, cardinal_);
   drawKit(obstacleShader, diagonal_);
   drawKit(obstacleShader, pillar_);
+  for (auto& [id, v] : meshInsts_)
+    if (!v.empty()) meshes_.drawStaticInstanced(obstacleShader, id, v);
 }
 
 void WallSystem::renderGhostAt(render::Shader& obstacleShader,
                                const shared::WorldMapFile& map,
-                               int tileX, int tileY, int orient, bool pillar) {
+                               int tileX, int tileY, int orient, bool pillar,
+                               const std::string& objectId) {
   if (tileX < 0 || tileX >= map.width || tileY < 0 || tileY >= map.height) return;
   const auto& vh = map.vertexHeights;
   if (static_cast<int>(vh.size()) != (map.width + 1) * (map.height + 1)) return;
@@ -170,6 +198,13 @@ void WallSystem::renderGhostAt(render::Shader& obstacleShader,
   const float cy   = tileCenterY(vh, map.width, map.height, tileX, tileY);
   const float rotY = static_cast<float>(orient & 7) * kPi4;
   const Instance inst{ static_cast<float>(tileX), cy, static_cast<float>(tileY), rotY };
+
+  // Uploaded mesh ghost.
+  if (!objectId.empty() && meshIds_.count(objectId)) {
+    meshes_.drawStaticInstanced(obstacleShader, objectId,
+        { { inst.x, inst.y, inst.z, inst.rotY } });
+    return;
+  }
 
   Kit& k = pillar ? pillar_ : ((orient & 1) == 0 ? cardinal_ : diagonal_);
 

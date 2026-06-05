@@ -2,9 +2,15 @@
 
 #include "render/Shader.hpp"
 #include "shared/SharedTypes.hpp"
+#include "world/ModelLibrary.hpp"
 
 #include <glad/glad.h>
 
+#include <filesystem>
+#include <functional>
+#include <string>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace world {
@@ -26,6 +32,12 @@ public:
   void initGL();    // build the three procedural kits (needs a GL context)
   void destroy();
 
+  // Wire the model library so wall/pillar variants with an uploaded mesh render
+  // their glTF instead of the placeholder. Call once after initGL().
+  void setModelResolver(std::function<std::filesystem::path(const std::string&)> r);
+  // Register variant id → model path (empty path → placeholder). Loads meshes.
+  void setWallDefs(const std::vector<std::pair<std::string, std::string>>& idToModel);
+
   // Gather instances from the map's wall list. Cheap; call when the map changes.
   void rebuildFromMap(const shared::WorldMapFile& map);
 
@@ -36,7 +48,8 @@ public:
   // Editor placement preview: draw one wall/pillar at a tile with the given
   // orientation (caller wraps it in translucent blend state).
   void renderGhostAt(render::Shader& obstacleShader, const shared::WorldMapFile& map,
-                     int tileX, int tileY, int orient, bool pillar);
+                     int tileX, int tileY, int orient, bool pillar,
+                     const std::string& objectId = {});
 
   bool empty() const {
     return cardinal_.insts.empty() && diagonal_.insts.empty() && pillar_.insts.empty();
@@ -58,10 +71,17 @@ private:
   void drawKit(render::Shader& shader, Kit& k);
   void destroyKit(Kit& k);
 
-  Kit cardinal_;   // edge wall
-  Kit diagonal_;   // corner-to-corner wall
-  Kit pillar_;     // corner column
+  Kit cardinal_;   // edge wall  (placeholder)
+  Kit diagonal_;   // corner-to-corner wall (placeholder)
+  Kit pillar_;     // corner column (placeholder)
   GLuint ghostVbo_ = 0;   // single-instance buffer for the placement preview
+
+  // Uploaded variant meshes (objectId → glTF). Walls whose objectId has a real
+  // mesh render it; the rest fall back to the procedural placeholder kits.
+  ModelLibrary                        meshes_;
+  bool                                meshesInited_ = false;
+  std::unordered_set<std::string>     meshIds_;     // ids that have a real mesh
+  std::unordered_map<std::string, std::vector<ModelLibrary::Instance>> meshInsts_;
 };
 
 }  // namespace world
