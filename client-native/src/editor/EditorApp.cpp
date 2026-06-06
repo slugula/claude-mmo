@@ -25,6 +25,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <unordered_set>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -1022,6 +1023,7 @@ void EditorApp::drawToolbar() {
   ImGui::TextDisabled("-- Tools --");
   toolBtn("Paint",     EditorTool::PaintTerrain);
   toolBtn("Terrain",   EditorTool::SculptTerrain);
+  toolBtn("Flatten",   EditorTool::FlattenTerrain);
   toolBtn("Objects",   EditorTool::PlaceObstacle);
   toolBtn("Wall",      EditorTool::PlaceWall);
   toolBtn("Pillar",    EditorTool::PlacePillar);
@@ -1043,6 +1045,12 @@ void EditorApp::drawToolbar() {
   if (activeTool_ == EditorTool::SculptTerrain) {
     ImGui::SetNextItemWidth(-1);
     ImGui::SliderFloat("##str", &brush_.strength, 0.01f, 0.5f, "Str:%.2f");
+  }
+  if (activeTool_ == EditorTool::FlattenTerrain) {
+    ImGui::SetNextItemWidth(-1);
+    ImGui::SliderFloat("##str", &brush_.strength, 0.01f, 0.5f, "Pull:%.2f");
+    ImGui::TextDisabled("Levels brush area");
+    ImGui::TextDisabled("to its avg height");
   }
 
   ImGui::Separator();
@@ -1695,6 +1703,10 @@ void EditorApp::drawMinimapWindow() {
 // -----------------------------------------------------------------------
 // Brush: collect dirty flags, do ONE rebuild after all tiles processed.
 void EditorApp::applyBrush(int cx, int cy, float dt, bool rightClick) {
+  // Flatten is an area operation (needs the whole brush's average), so it's
+  // handled here rather than per-tile in applyToolAt.
+  if (activeTool_ == EditorTool::FlattenTerrain) { applyFlatten(cx, cy); return; }
+
   const int half = brush_.size / 2;
   const float r  = static_cast<float>(half);
 
@@ -1718,6 +1730,47 @@ void EditorApp::applyBrush(int cx, int cy, float dt, bool rightClick) {
   if (dirtyWater)     waterRenderer_.rebuild(map_, waterUniforms_.waterOffset);
   if (dirtyObstacles) rebuildObstacles();
   if (dirtyMinimap)   minimap_.rebuild(map_, npcSpawns_);
+}
+
+// -----------------------------------------------------------------------
+// Flatten: pull every vertex under the brush toward the brush's average
+// height. Strength controls how hard (a quick pass smooths bumps; holding it
+// makes a dead-flat pad at the area's existing elevation).
+void EditorApp::applyFlatten(int cx, int cy) {
+  const int   W = map_.width, H = map_.height;
+  auto&       vh = map_.vertexHeights;
+  if (vh.empty()) return;
+
+  const int   half = brush_.size / 2;
+  const float r    = static_cast<float>(half);
+
+  // Collect the unique vertices belonging to the brush tiles.
+  std::unordered_set<int> verts;
+  for (int dy = -half; dy <= half; ++dy) {
+    for (int dx = -half; dx <= half; ++dx) {
+      if (brush_.shape == BrushShape::Round &&
+          std::sqrt(static_cast<float>(dx * dx + dy * dy)) > r + 0.5f) continue;
+      const int tx = cx + dx, ty = cy + dy;
+      if (tx < 0 || ty < 0 || tx >= W || ty >= H) continue;
+      for (int vrow = H - ty - 1; vrow <= H - ty; ++vrow)
+        for (int vcol = tx; vcol <= tx + 1; ++vcol) {
+          if (vrow < 0 || vrow > H || vcol < 0 || vcol > W) continue;
+          verts.insert(vrow * (W + 1) + vcol);
+        }
+    }
+  }
+  if (verts.empty()) return;
+
+  double sum = 0.0;
+  for (int i : verts) sum += vh[i];
+  const float avg = static_cast<float>(sum / verts.size());
+
+  // Pull factor per stroke; scaled so a high strength flattens almost instantly.
+  const float t = std::clamp(brush_.strength * 4.0f, 0.0f, 1.0f);
+  for (int i : verts) vh[i] = std::clamp(vh[i] + (avg - vh[i]) * t, 0.0f, 1.0f);
+
+  rebuildTerrainGL();
+  rebuildObstacles();   // objects / walls follow terrain height
 }
 
 // -----------------------------------------------------------------------

@@ -5,6 +5,7 @@ namespace editor {
 enum class EditorTool {
   PaintTerrain,
   SculptTerrain,    // left-click = raise, right-click = lower
+  FlattenTerrain,   // pull brush vertices toward their average height (level a pad)
   PlaceObstacle,
   PlaceWall,         // wall on a tile edge; Q/E rotate 45°
   PlacePillar,       // pillar on a tile corner

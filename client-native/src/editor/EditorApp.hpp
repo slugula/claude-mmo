@@ -71,6 +71,7 @@ private:
                    bool& dirtyTerrain, bool& dirtyObstacles,
                    bool& dirtyMinimap,  bool& dirtyWater);
   void applyBrush(int cx, int cy, float dt, bool rightClick = false);  // dispatches to applyToolAt for each tile in brush
+  void applyFlatten(int cx, int cy);   // pull brush vertices toward their average height
   int  clampTile(int v, int max) const;
 
   // ---- Blocked-tile 3D overlay
