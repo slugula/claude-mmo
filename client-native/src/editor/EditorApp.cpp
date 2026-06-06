@@ -1503,9 +1503,22 @@ void EditorApp::drawGridView() {
   const int   W = map_.width;
   const int   H = map_.height;
 
-  const int x0 = std::max(0, static_cast<int>((-gridOffX_) / z));
+  // Horizontal flip: +tileX (east) is drawn on the LEFT, matching the 3D
+  // viewport's lookAtLH convention (east = screen-left) and the in-game
+  // minimap. sx() maps a tile-space X (can be fractional, e.g. tile edges)
+  // to screen X with the mirror applied; sy() is the unflipped Y mapping.
+  const float ox = canvasPos.x + gridOffX_;
+  const float oy = canvasPos.y + gridOffY_;
+  auto sx       = [&](float txf) { return ox + (static_cast<float>(W) - txf) * z; };
+  auto sy       = [&](float tyf) { return oy + tyf * z; };
+  auto colLeftX = [&](int tx)    { return sx(static_cast<float>(tx) + 1.0f); }; // rect left edge
+
+  // Visible-X cull range in flipped space (u = W-1-tx is the unflipped index).
+  const int u0 = std::max(0, static_cast<int>((-gridOffX_) / z));
+  const int u1 = std::min(W, static_cast<int>((-gridOffX_ + canvasSize.x) / z) + 2);
+  const int x0 = std::max(0, W - u1);
+  const int x1 = std::min(W, W - u0);
   const int y0 = std::max(0, static_cast<int>((-gridOffY_) / z));
-  const int x1 = std::min(W, static_cast<int>((-gridOffX_ + canvasSize.x) / z) + 2);
   const int y1 = std::min(H, static_cast<int>((-gridOffY_ + canvasSize.y) / z) + 2);
 
   for (int ty = y0; ty < y1; ++ty) {
@@ -1540,8 +1553,8 @@ void EditorApp::drawGridView() {
         fb = fb * 0.4f + g * 0.6f;
       }
 
-      const float px = canvasPos.x + gridOffX_ + tx * z;
-      const float py = canvasPos.y + gridOffY_ + ty * z;
+      const float px = colLeftX(tx);
+      const float py = sy(static_cast<float>(ty));
       dl->AddRectFilled(ImVec2(px, py), ImVec2(px + z, py + z),
         IM_COL32(static_cast<int>(fr * 255), static_cast<int>(fg * 255),
                   static_cast<int>(fb * 255), 255));
@@ -1575,18 +1588,47 @@ void EditorApp::drawGridView() {
     }
   }
 
+  // ---- Walls + pillars (white edge/corner lines, OSRS-style) --------------
+  // Drawn in tile space; sx()/sy() apply the horizontal flip. Orient: 0=+Z
+  // (south/bottom), 2=+X (east), 4=-Z (north/top), 6=-X (west); odd = diagonal.
+  {
+    const ImU32 wc = IM_COL32(255, 255, 255, 235);
+    const float th = std::max(1.0f, z * 0.12f);
+    for (const auto& w : map_.walls) {
+      if (w.tileX < 0 || w.tileY < 0 || w.tileX >= W || w.tileY >= H) continue;
+      const float tx = static_cast<float>(w.tileX);
+      const float ty = static_cast<float>(w.tileY);
+      const float L = sx(tx),      R = sx(tx + 1.0f);   // L = east edge (flipped → larger px)
+      const float T = sy(ty),      B = sy(ty + 1.0f);
+      const int   o = w.orient & 7;
+      if (w.pillar) {
+        const float cx = (o == 0 || o == 2) ? sx(tx + 1.0f) : sx(tx); // +X corner = east
+        const float cy = (o == 0 || o == 6) ? B : T;                  // +Z corner = bottom
+        dl->AddCircleFilled(ImVec2(cx, cy), std::max(1.5f, z * 0.18f), wc);
+      } else if ((o & 1) == 0) {
+        if      (o == 0) dl->AddLine(ImVec2(L, B), ImVec2(R, B), wc, th); // +Z bottom
+        else if (o == 2) dl->AddLine(ImVec2(R, T), ImVec2(R, B), wc, th); // +X east edge
+        else if (o == 4) dl->AddLine(ImVec2(L, T), ImVec2(R, T), wc, th); // -Z top
+        else             dl->AddLine(ImVec2(L, T), ImVec2(L, B), wc, th); // -X west edge
+      } else {
+        if (o == 1 || o == 5) dl->AddLine(ImVec2(R, T), ImVec2(L, B), wc, th); // (east,north)-(west,south)
+        else                  dl->AddLine(ImVec2(L, T), ImVec2(R, B), wc, th); // (west,north)-(east,south)
+      }
+    }
+  }
+
   // NPC markers
   for (const auto& n : npcSpawns_) {
-    const float px = canvasPos.x + gridOffX_ + n.tileX * z + z * 0.5f;
-    const float py = canvasPos.y + gridOffY_ + n.tileY * z + z * 0.5f;
+    const float px = colLeftX(n.tileX) + z * 0.5f;
+    const float py = sy(static_cast<float>(n.tileY)) + z * 0.5f;
     const ImU32 nc = (n.kind == "shopkeeper") ? IM_COL32(180, 50, 220, 255) : IM_COL32(255, 220, 0, 255);
     dl->AddCircleFilled(ImVec2(px, py), std::max(2.0f, z * 0.25f), nc);
   }
 
   // Spawn cross
   {
-    const float px = canvasPos.x + gridOffX_ + map_.spawnPoint[0] * z + z * 0.5f;
-    const float py = canvasPos.y + gridOffY_ + map_.spawnPoint[1] * z + z * 0.5f;
+    const float px = colLeftX(map_.spawnPoint[0]) + z * 0.5f;
+    const float py = sy(static_cast<float>(map_.spawnPoint[1])) + z * 0.5f;
     const float arm = std::max(3.0f, z * 0.4f);
     dl->AddLine(ImVec2(px - arm, py), ImVec2(px + arm, py), IM_COL32(255, 255, 255, 230), 2.0f);
     dl->AddLine(ImVec2(px, py - arm), ImVec2(px, py + arm), IM_COL32(255, 255, 255, 230), 2.0f);
@@ -1596,8 +1638,9 @@ void EditorApp::drawGridView() {
   if (hoveredTileX_ >= 0 && z >= 2.0f) {
     const int half = brush_.size / 2;
     if (brush_.shape == BrushShape::Square) {
-      const float px = canvasPos.x + gridOffX_ + (hoveredTileX_ - half) * z;
-      const float py = canvasPos.y + gridOffY_ + (hoveredTileY_ - half) * z;
+      // Flipped: leftmost screen tile is the highest tile index in the span.
+      const float px = colLeftX(hoveredTileX_ + half);
+      const float py = sy(static_cast<float>(hoveredTileY_ - half));
       const float s  = brush_.size * z;
       dl->AddRect(ImVec2(px, py), ImVec2(px + s, py + s), IM_COL32(255, 220, 30, 200), 0.0f, 0, 1.5f);
     } else {
@@ -1610,8 +1653,8 @@ void EditorApp::drawGridView() {
           const int tx = hoveredTileX_ + dx;
           const int ty = hoveredTileY_ + dy;
           if (tx < 0 || ty < 0 || tx >= W || ty >= H) continue;
-          const float px = canvasPos.x + gridOffX_ + tx * z;
-          const float py = canvasPos.y + gridOffY_ + ty * z;
+          const float px = colLeftX(tx);
+          const float py = sy(static_cast<float>(ty));
           dl->AddRect(ImVec2(px, py), ImVec2(px + z, py + z), IM_COL32(255, 220, 30, 160), 0.0f, 0, 1.5f);
         }
       }
@@ -1627,8 +1670,9 @@ void EditorApp::drawGridView() {
   if (ImGui::IsItemHovered() && !ImGui::IsMouseDragging(ImGuiMouseButton_Middle)) {
     const float mpx = io.MousePos.x;
     const float mpy = io.MousePos.y;
-    const int tx = static_cast<int>((mpx - canvasPos.x - gridOffX_) / z);
-    const int ty = static_cast<int>((mpy - canvasPos.y - gridOffY_) / z);
+    // Inverse of the horizontal flip: screen-left = highest tile index.
+    const int tx = (W - 1) - static_cast<int>((mpx - ox) / z);
+    const int ty = static_cast<int>((mpy - oy) / z);
 
     if (tx >= 0 && tx < W && ty >= 0 && ty < H) {
       hoveredTileX_ = tx;
@@ -1693,7 +1737,9 @@ void EditorApp::drawMinimapWindow() {
   if (mmTex) {
     const ImVec2 avail = ImGui::GetContentRegionAvail();
     const float  sz    = std::min(avail.x, avail.y);
-    ImGui::Image((ImTextureID)(uintptr_t)(mmTex), ImVec2(sz, sz), ImVec2(0, 0), ImVec2(1, 1));
+    // Mirror horizontally (u0=1, u1=0) so +tileX (east) appears on the LEFT,
+    // matching the 3D viewport's lookAtLH convention (east = screen-left).
+    ImGui::Image((ImTextureID)(uintptr_t)(mmTex), ImVec2(sz, sz), ImVec2(1, 0), ImVec2(0, 1));
   } else {
     ImGui::TextDisabled("(no minimap)");
   }
