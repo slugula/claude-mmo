@@ -35,6 +35,8 @@ public:
     float y;
     float z;
     float rotY;
+    // Surface up-normal the model is tilted onto (default +Y = upright).
+    float nx = 0.0f, ny = 1.0f, nz = 0.0f;
   };
 
   EntityRenderer() = default;
@@ -106,6 +108,15 @@ public:
   }
   bool itemAabb(const std::string& itemId, glm::vec3& mn, glm::vec3& mx) const {
     return const_cast<ModelLibrary&>(itemModels_).aabb(itemId, mn, mx);
+  }
+  // Narrow-phase ray-mesh pick (1 = hit/writes t, 0 = missed, -1 = no geom).
+  int itemRayHit(const std::string& itemId, const glm::mat4& world,
+                 const glm::vec3& ro, const glm::vec3& rd, float& t) const {
+    return itemModels_.rayHitWorld(itemId, world, ro, rd, t);
+  }
+  int npcRayHit(const std::string& kind, const glm::mat4& world,
+                const glm::vec3& ro, const glm::vec3& rd, float& t) const {
+    return npcModels_.rayHitWorld(kind, world, ro, rd, t);
   }
   bool hasAnimatedItems() const { return anyItemAnimated_; }
   // Draw animated item models (skinned shader); advances clips once per frame.

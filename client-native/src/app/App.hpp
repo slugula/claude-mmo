@@ -16,11 +16,13 @@
 #include "ui/Panels.hpp"
 #include "ui/WorldOverlays.hpp"
 #include "world/EntityRenderer.hpp"
+#include "world/AttachmentRenderer.hpp"
 #include "world/ObstacleSystem.hpp"
 #include "world/SkinnedMesh.hpp"
 #include "world/WallSystem.hpp"
 #include "world/SpriteCache.hpp"
 #include "world/WaterRenderer.hpp"
+#include "world/OverlayRenderer.hpp"
 
 #include <glad/glad.h>
 
@@ -94,9 +96,11 @@ private:
   world::WallSystem                        walls_;
   world::WaterRenderer                     waterRenderer_;
   world::WaterUniforms                     waterUniforms_;
+  world::OverlayRenderer                   overlayRenderer_;
   ui::SpriteCache                          spriteCache_;
   world::SkinnedMesh                       playerModel_;
   world::EntityRenderer                    entities_;
+  world::AttachmentRenderer                attachments_;   // equipped weapon meshes
   camera::GameCamera                       camera_;
 
   // DB entity definitions cached at startup (objects + actions) so picking,
@@ -104,6 +108,14 @@ private:
   std::vector<editor::ObjectDef>           dbObjectDefs_;
   std::vector<editor::ActionDef>           dbActionDefs_;
   std::vector<editor::ItemDef>             dbItemDefs_;
+  std::unordered_map<std::string, const editor::ItemDef*> itemDefById_;  // points into dbItemDefs_
+
+  // Draw the player's equipped weapon (equipped["rightHand"]) attached to the
+  // hand socket. Call immediately after that player's skinned render (so the
+  // shared SkinnedMesh pose/modelSpace_ is still valid).
+  void drawEquippedWeapon(const shared::PlayerState& p,
+                          const glm::mat4& playerModelMatrix,
+                          const glm::mat4& viewProj);
 
   // Hover indicator — a small dynamic VAO/VBO holding 4 vertices drawn as
   // GL_LINE_LOOP, repositioned each frame to outline the currently
@@ -143,6 +155,12 @@ private:
     int   seenFishTick     = -999;
     int   seenHitTick      = -999;
     bool  prevPickupActive = false;  // was pickupItemId non-empty last tick?
+    bool  seeded           = false;  // baseline stamps set on first sight (no replay)
+    // Crossfade between clip transitions (per remote player).
+    int   prevClipIndex    = -1;
+    float prevClipTime     = 0.0f;
+    float blendTime        = 0.0f;
+    float blendDur         = 0.0f;
   };
   std::unordered_map<std::string, shared::PlayerState> prevRemotePlayers_;
   std::unordered_map<std::string, shared::PlayerState> currRemotePlayers_;

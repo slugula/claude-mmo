@@ -2,6 +2,7 @@
 
 #include "app/WaterSettings.hpp"
 #include "editor/EntityClient.hpp"
+#include "world/SkeletonConfig.hpp"
 #include "editor/EntityDefs.hpp"
 #include "render/GlDebug.hpp"
 #include "ui/NameRegistry.hpp"
@@ -129,6 +130,51 @@ float tileWorldY(const shared::WorldMapFile& map, int tx, int ty) {
   return (SW + SE + NW + NE) * 0.25f;
 }
 
+// Surface height at the tile CENTRE (on the SW<->NE triangulation diagonal),
+// where tile-flat dropped models sit — avoids the corner-average sinking into
+// folded tiles. Mirror of EntityRenderer::tileDropY; keep the lift in sync.
+float tileDropY(const shared::WorldMapFile& map, int tx, int ty) {
+  const int W = map.width, H = map.height;
+  if (W <= 0 || H <= 0 || tx < 0 || ty < 0 || tx >= W || ty >= H) return 0.0f;
+  const auto& vh = map.vertexHeights;
+  if (static_cast<int>(vh.size()) != (W + 1) * (H + 1)) return 0.0f;
+  const float SW = vh[(H - ty)     * (W + 1) + tx]     * shared::kMaxTerrainH;
+  const float NE = vh[(H - ty - 1) * (W + 1) + tx + 1] * shared::kMaxTerrainH;
+  return (SW + NE) * 0.5f + 0.02f;
+}
+
+// Tile up-normal from its 4 corner heights (mirror of EntityRenderer's helper),
+// used to tilt dropped models flush — and to match picking/outline to that tilt.
+glm::vec3 tileUpNormal(const shared::WorldMapFile& map, int tx, int ty) {
+  const int W = map.width, H = map.height;
+  if (W <= 0 || H <= 0 || tx < 0 || ty < 0 || tx >= W || ty >= H)
+    return glm::vec3(0.0f, 1.0f, 0.0f);
+  const auto& vh = map.vertexHeights;
+  if (static_cast<int>(vh.size()) != (W + 1) * (H + 1))
+    return glm::vec3(0.0f, 1.0f, 0.0f);
+  const float SW = vh[(H - ty)     * (W + 1) + tx]     * shared::kMaxTerrainH;
+  const float SE = vh[(H - ty)     * (W + 1) + tx + 1] * shared::kMaxTerrainH;
+  const float NW = vh[(H - ty - 1) * (W + 1) + tx]     * shared::kMaxTerrainH;
+  const float NE = vh[(H - ty - 1) * (W + 1) + tx + 1] * shared::kMaxTerrainH;
+  return glm::normalize(glm::vec3(-((SE + NE) - (SW + NW)) * 0.5f, 1.0f,
+                                  -((NW + NE) - (SW + SE)) * 0.5f));
+}
+
+// Minimal rotation mapping +Y onto n — MUST match obstacle.vert's alignUpTo so
+// picking AABBs enclose the tilted model. Column-major to match GLSL.
+glm::mat3 alignUpMat3(glm::vec3 n) {
+  if (glm::dot(n, n) < 0.25f) return glm::mat3(1.0f);
+  n = glm::normalize(n);
+  const glm::vec3 up(0.0f, 1.0f, 0.0f);
+  const glm::vec3 v = glm::cross(up, n);
+  const float c = glm::dot(up, n);
+  if (c < -0.9999f) return glm::mat3( 1,0,0,  0,-1,0,  0,0,-1);
+  const glm::mat3 vx( 0.0f,  v.z, -v.y,
+                     -v.z,  0.0f,  v.x,
+                      v.y, -v.x,  0.0f);
+  return glm::mat3(1.0f) + vx + (vx * vx) * (1.0f / (1.0f + c));
+}
+
 // Standard slab-method ray-vs-AABB test.
 // Returns the t at which the ray first enters the box, or -1 if no hit.
 // Rays that start inside the box return the exit t (also positive).
@@ -155,6 +201,14 @@ std::filesystem::path resolveFromExe(const char* relative) {
   const DWORD n = GetModuleFileNameW(nullptr, buf, MAX_PATH);
   if (n == 0 || n == MAX_PATH) return std::filesystem::path(relative);
   return std::filesystem::path(buf).parent_path() / relative;
+}
+
+// True if the map has any water overlay tiles (materialId == water). Water is
+// stored in overlayTiles now; the legacy waterTiles[] is migrated on load.
+bool mapHasWater(const shared::WorldMapFile& map) {
+  for (const auto& ov : map.overlayTiles)
+    if (ov.materialId == shared::kWaterMaterialId) return true;
+  return false;
 }
 
 // Returns the world position the camera should track. Falls back to the map
@@ -517,6 +571,20 @@ bool App::init() {
     std::fprintf(stderr, "[App] water renderer init failed — water will not render\n");
   }
 
+  // Overlay renderer (paths / floors / shaped ground) — non-fatal if missing.
+  if (!overlayRenderer_.init(resolveFromExe("shaders/overlay.vert").string(),
+                             resolveFromExe("shaders/overlay.frag").string(),
+                             resolveFromExe("").string())) {
+    std::fprintf(stderr, "[App] overlay renderer init failed — overlays will not render\n");
+  }
+
+  // Equipped-weapon attachment renderer (reuses the single-model preview shader).
+  if (!attachments_.init(resolveFromExe("shaders/preview.vert").string(),
+                         resolveFromExe("shaders/preview.frag").string(),
+                         [](const std::string& rel){ return resolveFromExe(rel.c_str()); })) {
+    std::fprintf(stderr, "[App] attachment renderer init failed — weapons will not render\n");
+  }
+
   obstacles_.initGL();
   walls_.initGL();
   // Resolve object model_path (relative) → absolute path next to the exe. This
@@ -672,6 +740,8 @@ void App::rebuildWorldFromMap() {
   minimap_.buildBaseLayer(map_);
   if (waterRenderer_.valid())
     waterRenderer_.rebuild(map_, waterUniforms_.waterOffset);
+  if (overlayRenderer_.valid())
+    overlayRenderer_.rebuild(map_);
 
   std::fprintf(stdout, "[App] world built: %d x %d tiles, %zu water tiles\n",
                data.width, data.height, map_.waterTiles.size());
@@ -694,6 +764,9 @@ void App::applyEntityDefs(const std::vector<editor::NpcDef>&    npcs,
 
   // Items — names, dropped models, and sprite textures.
   dbItemDefs_ = items;
+  // Rebuild id → def lookup (points into dbItemDefs_; must run after assignment).
+  itemDefById_.clear();
+  for (const auto& def : dbItemDefs_) itemDefById_[def.id] = &def;
   std::vector<ui::SpriteCache::Entry> spriteEntries;
   spriteEntries.reserve(items.size());
   for (const auto& def : dbItemDefs_) {
@@ -894,8 +967,20 @@ void App::renderFrame() {
                     static_cast<float>(otx), baseY, static_cast<float>(oty),
                     wMin, wMax);
 
-          const float t = rayVsAABB(rayOrigin, rayDir, wMin, wMax);
-          if (t > 0.0f && t < bestT) {
+          const float aabbT = rayVsAABB(rayOrigin, rayDir, wMin, wMax);
+          if (aabbT <= 0.0f || aabbT >= bestT) continue;  // broad reject
+          // Narrow phase — strict to the visible mesh (reject the empty corners
+          // of a tree's / rod's bounding box).
+          const float orot = static_cast<float>(map_.tiles[oty][otx].obstacleRotation)
+                             * 1.57079632679f;
+          glm::mat4 M = glm::translate(glm::mat4(1.0f),
+                                       glm::vec3(static_cast<float>(otx), baseY,
+                                                 static_cast<float>(oty)));
+          M = glm::rotate(M, orot, glm::vec3(0.0f, 1.0f, 0.0f));
+          float t = aabbT;
+          const int r = obstacles_.rayHit(pickId, M, rayOrigin, rayDir, t);
+          if (r == 0) continue;                 // has mesh geom but ray missed it
+          if (t < bestT) {                       // r==1 mesh hit, or r==-1 AABB fallback
             bestT    = t;
             bestTx   = otx;
             bestTy   = oty;
@@ -921,8 +1006,16 @@ void App::renderFrame() {
                   static_cast<float>(npc.tileX), baseY,
                   static_cast<float>(npc.tileY), wMin, wMax);
 
-        const float t = rayVsAABB(rayOrigin, rayDir, wMin, wMax);
-        if (t > 0.0f && t < bestT) {
+        const float aabbT = rayVsAABB(rayOrigin, rayDir, wMin, wMax);
+        if (aabbT <= 0.0f || aabbT >= bestT) continue;
+        glm::mat4 M = glm::translate(glm::mat4(1.0f),
+                                     glm::vec3(static_cast<float>(npc.tileX), baseY,
+                                               static_cast<float>(npc.tileY)));
+        M = glm::rotate(M, facingToYaw(npc.facing), glm::vec3(0.0f, 1.0f, 0.0f));
+        float t = aabbT;
+        const int r = entities_.npcRayHit(npc.kind, M, rayOrigin, rayDir, t);
+        if (r == 0) continue;                  // missed the mesh (static models)
+        if (t < bestT) {                        // mesh hit, or AABB fallback (animated)
           bestT    = t;
           bestTx   = npc.tileX;
           bestTy   = npc.tileY;
@@ -933,7 +1026,7 @@ void App::renderFrame() {
 
       // ---- Dropped items -----------------------------------------------------
       for (const auto& item : droppedItems_) {
-        const float baseY = tileWorldY(map_, item.tileX, item.tileY);
+        const float baseY = tileDropY(map_, item.tileX, item.tileY);
         // Model-backed items use their model AABB; the rest use the placeholder
         // box bounds (±0.20 XZ, 0..0.20 Y, inflated ×1.2).
         glm::vec3 lMin, lMax; float inflate = 1.0f;
@@ -942,13 +1035,33 @@ void App::renderFrame() {
           lMax = glm::vec3( 0.20f, 0.20f, 0.20f);
           inflate = 1.2f;
         }
-        glm::vec3 wMin, wMax;
-        worldAABB(lMin, lMax, inflate,
-                  static_cast<float>(item.tileX), baseY,
-                  static_cast<float>(item.tileY), wMin, wMax);
+        // Build a TILT-AWARE world AABB: dropped models are tilted onto the tile
+        // surface, so enclose the rotated local box (matches the visual + outline).
+        const glm::mat3 R  = alignUpMat3(tileUpNormal(map_, item.tileX, item.tileY));
+        const glm::vec3 lc = (lMin + lMax) * 0.5f;
+        const glm::vec3 he = (lMax - lMin) * 0.5f * inflate;
+        const glm::vec3 base(static_cast<float>(item.tileX), baseY,
+                             static_cast<float>(item.tileY));
+        glm::vec3 wMin( 1e9f), wMax(-1e9f);
+        for (int cx = 0; cx < 2; ++cx)
+          for (int cy = 0; cy < 2; ++cy)
+            for (int cz = 0; cz < 2; ++cz) {
+              const glm::vec3 corner = lc + glm::vec3(cx ? he.x : -he.x,
+                                                      cy ? he.y : -he.y,
+                                                      cz ? he.z : -he.z);
+              const glm::vec3 w = R * corner + base;
+              wMin = glm::min(wMin, w);
+              wMax = glm::max(wMax, w);
+            }
 
-        const float t = rayVsAABB(rayOrigin, rayDir, wMin, wMax);
-        if (t > 0.0f && t < bestT) {
+        const float aabbT = rayVsAABB(rayOrigin, rayDir, wMin, wMax);
+        if (aabbT <= 0.0f || aabbT >= bestT) continue;
+        // Narrow phase against the actual (tilted) model mesh.
+        const glm::mat4 M = glm::translate(glm::mat4(1.0f), base) * glm::mat4(R);
+        float t = aabbT;
+        const int rr = entities_.itemRayHit(item.itemId, M, rayOrigin, rayDir, t);
+        if (rr == 0) continue;                 // missed the mesh
+        if (t < bestT) {                        // mesh hit, or AABB fallback (box items)
           bestT    = t;
           bestTx   = item.tileX;
           bestTy   = item.tileY;
@@ -1116,6 +1229,31 @@ void App::renderFrame() {
   terrainShader_.setFloat("u_aoEnabled",   aoEnabled_   ? 1.0f : 0.0f);
   terrainShader_.setFloat("u_aoStrength",  aoStrength_);
   terrainMesh_.draw();
+
+  // ---- Overlay surfaces (paths / floors / shaped ground) ---------------------
+  // Drawn right after terrain so obstacles, NPCs, and water composite on top.
+  if (overlayRenderer_.hasMesh()) {
+    world::OverlayLighting ol;
+    ol.viewProj        = viewProj;
+    ol.lightViewProj   = lightVP;
+    ol.lightDir        = sunDir;
+    ol.paletteLevels   = glm::vec3(static_cast<float>(paletteHues_),
+                                   static_cast<float>(paletteSats_),
+                                   static_cast<float>(paletteLums_));
+    ol.paletteEnabled  = palette_ ? 1.0f : 0.0f;
+    ol.ambient         = ambient_;
+    ol.diffuse         = diffuse_;
+    ol.lightingEnabled = lightingEnabled_ ? 1.0f : 0.0f;
+    ol.shadowsEnabled  = shadowsEnabled_  ? 1.0f : 0.0f;
+    ol.shadowDarkness  = shadowDarkness_;
+    ol.shadowBias      = shadowBias_;
+    ol.fogEnabled      = fogEnabled_ ? 1.0f : 0.0f;
+    ol.fogColor        = fogColor_;
+    ol.fogDensity      = fogDensity_;
+    ol.fogStart        = fogStart_;
+    ol.shadowMapUnit   = 1;
+    overlayRenderer_.render(ol);
+  }
 
   // ---- Hover tile outline — drawn immediately after terrain, BEFORE obstacles
   //      and NPCs, so that taller geometry (trees, rocks, NPCs) naturally
@@ -1320,15 +1458,36 @@ void App::renderFrame() {
       }
       const int wantIdx = playerModel_.findClipIndex(desiredClip);
       if (wantIdx != ra.clipIndex) {
-        ra.clipIndex = wantIdx;
-        ra.clipTime  = 0.0f;
+        // Start a crossfade from the outgoing clip (frozen at its current time)
+        // into the new clip, mirroring the local player's blend.
+        ra.prevClipIndex = ra.clipIndex;
+        ra.prevClipTime  = ra.clipTime;
+        ra.blendTime     = 0.0f;
+        ra.blendDur      = (ra.clipIndex >= 0) ? 0.12f : 0.0f;  // no blend on first clip
+        ra.clipIndex     = wantIdx;
+        ra.clipTime      = 0.0f;
       }
       ra.clipTime += dt;
+      if (ra.blendDur > 0.0f) ra.blendTime += dt;
 
       glm::mat4 rpModel = glm::translate(glm::mat4(1.0f), glm::vec3(fx, rpWorldY, fy));
       rpModel = glm::rotate(rpModel, ra.yaw, glm::vec3(0.0f, 1.0f, 0.0f));
       rpModel = glm::scale(rpModel, glm::vec3(kPlayerScale));
-      playerModel_.renderAs(skinnedShader_, rpModel, ra.clipIndex, ra.clipTime);
+      // Rebind the skinned program: a previous iteration's weapon draw switches
+      // to the preview program, and renderAs assumes its shader is already bound
+      // (it sets uniforms via the active program). Uniforms set above persist.
+      skinnedShader_.use();
+      if (ra.blendDur > 0.0f && ra.blendTime < ra.blendDur) {
+        playerModel_.renderAsBlended(skinnedShader_, rpModel,
+                                     ra.prevClipIndex, ra.prevClipTime,
+                                     ra.clipIndex, ra.clipTime,
+                                     ra.blendTime / ra.blendDur);
+      } else {
+        playerModel_.renderAs(skinnedShader_, rpModel, ra.clipIndex, ra.clipTime);
+      }
+      // Equipped weapon for this remote player — must follow its renderAs
+      // immediately (shared SkinnedMesh pose).
+      drawEquippedWeapon(rp, rpModel, viewProj);
     }
 
     // Prune remoteAnims_ entries for players that have left.
@@ -1379,7 +1538,7 @@ void App::renderFrame() {
 
   // ---- SSR snapshot — resolve the full opaque scene (incl. submerged fish)
   //      so the water shader can sample colour + depth for refraction & foam.
-  if (!map_.waterTiles.empty() && waterRenderer_.valid()) {
+  if (mapHasWater(map_) && waterRenderer_.valid()) {
     msaa_->resolve();
     msaa_->resolveDepth();
     msaa_->bind();
@@ -1390,7 +1549,7 @@ void App::renderFrame() {
   // Depth-based refraction: samples sceneColor at a wave-distorted UV, tints by
   // water-column depth, and generates contact foam where geometry meets the
   // surface. Drawn before outlines so they composite on top.
-  if (!map_.waterTiles.empty() && waterRenderer_.valid()) {
+  if (mapHasWater(map_) && waterRenderer_.valid()) {
     waterUniforms_.cameraPos = camera_.cameraPosition();
     waterUniforms_.sunDir    = sunDir;
     waterUniforms_.nearPlane = 0.1f;    // matches GameCamera::viewProjection
@@ -1470,9 +1629,10 @@ void App::renderFrame() {
         if (di.id == hoveredEntity_.id) {
           hasItem  = true;
           hoveredItemId = di.itemId;
+          const glm::vec3 n = tileUpNormal(map_, di.tileX, di.tileY);
           itemInst = { static_cast<float>(di.tileX),
-                       tileWorldY(map_, di.tileX, di.tileY),
-                       static_cast<float>(di.tileY), 0.0f };
+                       tileDropY(map_, di.tileX, di.tileY),
+                       static_cast<float>(di.tileY), 0.0f, n.x, n.y, n.z };
           break;
         }
       }
@@ -2710,6 +2870,47 @@ void App::renderPlayer(const glm::mat4& viewProj, float dt) {
   skinnedShader_.setFloat("u_fogStart",    fogStart_);
   skinnedShader_.setVec3 ("u_color",           kPlayerColor);
   playerModel_.render(skinnedShader_, modelMatrix);
+
+  // Equipped weapon — drawn immediately after the player while the shared
+  // SkinnedMesh pose (modelSpace_) still reflects this player.
+  if (currLocalPlayer_.has_value())
+    drawEquippedWeapon(*currLocalPlayer_, modelMatrix, viewProj);
+}
+
+// ---------------------------------------------------------------------------
+void App::drawEquippedWeapon(const shared::PlayerState& p,
+                             const glm::mat4& playerModelMatrix,
+                             const glm::mat4& viewProj) {
+  if (!attachments_.valid()) return;
+  const auto it = p.equipped.find("rightHand");
+  if (it == p.equipped.end() || it->second.itemId.empty()) return;
+  const auto dit = itemDefById_.find(it->second.itemId);
+  if (dit == itemDefById_.end()) return;
+  const editor::ItemDef& def = *dit->second;
+  if (def.modelEquipped.empty()) return;
+
+  const std::string joint = def.gripJoint.empty()
+      ? world::resolveSocketJoint(world::kSocketWeaponMain)
+      : def.gripJoint;
+  const int jidx = playerModel_.findJointIndex(joint);
+  if (jidx < 0) {
+    static std::string s_lastWarned;
+    if (s_lastWarned != joint) {
+      s_lastWarned = joint;
+      std::fprintf(stderr,
+        "[App] weapon attach joint '%s' not found in player model — skipping "
+        "(update world/SkeletonConfig.hpp for this model)\n", joint.c_str());
+    }
+    return;
+  }
+
+  const glm::mat4 grip = world::gripMatrix(
+      glm::vec3(def.gripPosX, def.gripPosY, def.gripPosZ),
+      glm::vec3(def.gripRotX, def.gripRotY, def.gripRotZ),
+      def.gripScale);
+  const glm::mat4 weaponWorld =
+      playerModelMatrix * playerModel_.jointModelMatrix(jidx) * grip;
+  attachments_.draw(def.modelEquipped, weaponWorld, viewProj);
 }
 
 // =====================================================================
@@ -2747,7 +2948,14 @@ void App::processNetworkMessages() {
         map_.tiles        = std::move(init.tiles);
         map_.vertexHeights= std::move(init.vertexHeights);
         map_.waterTiles   = std::move(init.waterTiles);
+        map_.overlayTiles = std::move(init.overlayTiles);
         map_.walls        = std::move(init.walls);
+        // Legacy server (pre-overlay) sends only waterTiles — migrate so the
+        // overlay/water renderers have a single source of truth.
+        if (map_.overlayTiles.empty() && !map_.waterTiles.empty())
+          for (const auto& w : map_.waterTiles)
+            map_.overlayTiles.push_back(
+                shared::OverlayTile{w.tileX, w.tileY, 0, shared::kWaterMaterialId});
         depletedTiles_.clear();
         rebuildWorldFromMap();
       }
@@ -2812,6 +3020,21 @@ void App::processNetworkMessages() {
 
           auto& ra = remoteAnims_[id];
           const auto prevIt = prevRemotePlayers_.find(id);
+
+          // First time we've seen this player (login OR re-entered the view
+          // radius): baseline the event stamps to their CURRENT values so stale
+          // action ticks don't replay an animation on appearance. Applies to
+          // every tick-stamp animation uniformly.
+          if (!ra.seeded || prevIt == prevRemotePlayers_.end()) {
+            ra.seeded          = true;
+            ra.seenAttackTick  = ps.lastAttackTick;
+            ra.seenChopTick    = ps.lastChopTick;
+            ra.seenMineTick    = ps.lastMineTick;
+            ra.seenFishTick    = ps.lastFishTick;
+            ra.seenHitTick     = ps.lastHitTick;
+            ra.prevPickupActive= ps.pickupItemId.has_value();
+            continue;
+          }
 
           // Attack → Sword_Attack (lower priority).
           if (ps.lastAttackTick > ra.seenAttackTick) {

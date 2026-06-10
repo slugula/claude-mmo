@@ -26,6 +26,7 @@ inline void applyWaterSettings(const AppSettings& s, world::WaterUniforms& u) {
   u.waterOffset       = s.waterOffset;
   u.refractionStrength= s.waterRefraction;
   u.depthFade         = s.waterDepthFade;
+  u.shoreDepth        = s.waterShoreDepth;
   u.foamContactWidth  = s.waterFoamContact;
   u.specularStrength  = s.waterSpecular;
   u.causticMapPath    = s.waterCausticMap;
@@ -51,6 +52,7 @@ inline void storeWaterSettings(const world::WaterUniforms& u, AppSettings& s) {
   s.waterOffset           = u.waterOffset;
   s.waterRefraction       = u.refractionStrength;
   s.waterDepthFade        = u.depthFade;
+  s.waterShoreDepth       = u.shoreDepth;
   s.waterFoamContact      = u.foamContactWidth;
   s.waterSpecular         = u.specularStrength;
   s.waterCausticMap       = u.causticMapPath;

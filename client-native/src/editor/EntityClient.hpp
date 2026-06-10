@@ -112,7 +112,15 @@ template<> struct glz::meta<editor::ItemDef> {
     "heal_amount",     &T::healAmount,
     "sprite_path",     &T::spritePath,
     "model_dropped",   &T::modelDropped,
-    "model_equipped",  &T::modelEquipped);
+    "model_equipped",  &T::modelEquipped,
+    "grip_joint",      &T::gripJoint,
+    "grip_pos_x",      &T::gripPosX,
+    "grip_pos_y",      &T::gripPosY,
+    "grip_pos_z",      &T::gripPosZ,
+    "grip_rot_x",      &T::gripRotX,
+    "grip_rot_y",      &T::gripRotY,
+    "grip_rot_z",      &T::gripRotZ,
+    "grip_scale",      &T::gripScale);
 };
 
 // ---- HTTP helper (implemented in EntityClient.cpp with WinHTTP) ------------

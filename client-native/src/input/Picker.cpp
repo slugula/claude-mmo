@@ -10,9 +10,9 @@ namespace input {
 
 namespace {
 
-// Möller-Trumbore ray-triangle intersection.
-// Returns true if the ray hits the triangle in front of its origin; writes
-// the parametric t along the ray.
+}  // namespace
+
+// Möller-Trumbore ray-triangle intersection (declared in Picker.hpp).
 bool rayTriangle(const glm::vec3& orig, const glm::vec3& dir,
                  const glm::vec3& v0,   const glm::vec3& v1, const glm::vec3& v2,
                  float* outT) {
@@ -36,8 +36,6 @@ bool rayTriangle(const glm::vec3& orig, const glm::vec3& dir,
   *outT = t;
   return true;
 }
-
-}  // namespace
 
 void screenToRay(double pixelX, double pixelY,
                  int screenW,   int screenH,

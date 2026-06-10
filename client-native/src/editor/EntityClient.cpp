@@ -31,6 +31,13 @@ std::string entityHttpRequest(const std::wstring& method,
     WINHTTP_NO_PROXY_BYPASS, 0);
   if (!session) throw std::runtime_error("WinHttpOpen failed");
 
+  // Short timeouts (ms): resolve, connect, send, receive. This is a localhost
+  // dev-convenience API — if the server is down or its event loop is wedged we
+  // must fail fast, NOT block the app's main thread on WinHTTP's ~30s defaults
+  // (which froze startup for tens of seconds). Callers fall back gracefully
+  // (the client uses server-supplied init defs; the editor shows the error).
+  WinHttpSetTimeouts(session, 2000, 2000, 2000, 2000);
+
   HINTERNET conn = WinHttpConnect(session, L"localhost", 8080, 0);
   if (!conn) {
     WinHttpCloseHandle(session);

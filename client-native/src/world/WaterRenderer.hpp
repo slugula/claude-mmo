@@ -27,6 +27,7 @@ struct WaterUniforms {
   // ---- Depth & refraction (new) ----
   float     refractionStrength = 0.04f;   // UV distortion magnitude for underwater view
   float     depthFade          = 5.0f;    // how fast water color transitions shallow→deep
+  float     shoreDepth         = 0.85f;   // 0–1 strength of shore-distance "fake depth" (flush water)
   float     foamContactWidth   = 0.3f;    // world-space depth threshold for contact foam
   float     nearPlane          = 0.1f;    // camera near plane (set per-frame by host)
   float     farPlane           = 500.0f;  // camera far plane

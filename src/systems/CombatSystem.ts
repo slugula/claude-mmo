@@ -68,15 +68,33 @@ function chebyshevDistance(a: GridPosition, b: GridPosition): number {
  * Returns false if any intermediate tile has blocksRanged: true.
  */
 function hasLineOfSight(world: WorldState, from: GridPosition, to: GridPosition): boolean {
-  let x0 = from.x, y0 = from.y;
-  const x1 = to.x, y1 = to.y;
+  // Coerce to finite integers. Bresenham's `x0 !== x1` termination NEVER fires
+  // for non-integer or NaN coordinates, which would spin this loop forever and
+  // wedge the whole server event loop (HTTP hangs, no tick broadcasts). Guard
+  // the inputs, and keep a hard iteration cap as a belt-and-braces safety net.
+  let x0 = Math.round(from.x), y0 = Math.round(from.y);
+  const x1 = Math.round(to.x), y1 = Math.round(to.y);
+  if (!Number.isFinite(x0) || !Number.isFinite(y0) ||
+      !Number.isFinite(x1) || !Number.isFinite(y1)) {
+    console.error('[CombatSystem] hasLineOfSight got non-finite coords',
+                  { from, to });
+    return false;
+  }
   const dx = Math.abs(x1 - x0);
   const dy = Math.abs(y1 - y0);
   const sx = x0 < x1 ? 1 : -1;
   const sy = y0 < y1 ? 1 : -1;
   let err = dx - dy;
 
+  const maxSteps = world.width + world.height + 4;
+  let steps = 0;
+
   while (x0 !== x1 || y0 !== y1) {
+    if (++steps > maxSteps) {
+      console.error('[CombatSystem] hasLineOfSight exceeded step cap — aborting',
+                    { from, to, x0, y0, x1, y1 });
+      return false;
+    }
     // Advance first, so we skip the source tile
     const e2 = 2 * err;
     if (e2 > -dy) { err -= dy; x0 += sx; }

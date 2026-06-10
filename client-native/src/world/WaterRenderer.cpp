@@ -183,6 +183,7 @@ void WaterRenderer::render(float time,
   // Depth-based & refraction uniforms (new)
   shader_.setFloat("uRefractionStrength", u.refractionStrength);
   shader_.setFloat("uDepthFade",          u.depthFade);
+  shader_.setFloat("uShoreDepth",         u.shoreDepth);
   shader_.setFloat("uFoamContactWidth",   u.foamContactWidth);
   shader_.setFloat("uNear",               u.nearPlane);
   shader_.setFloat("uFar",                u.farPlane);

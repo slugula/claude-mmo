@@ -14,6 +14,13 @@ struct PickResult {
   float     rayT     = 0.0f;  // distance along the ray (useful for hit ordering)
 };
 
+// Möller-Trumbore ray-triangle intersection. Writes the parametric distance t
+// along the ray on hit (in front of the origin). Reusable for narrow-phase
+// mesh picking (transform the ray into model-local space first).
+bool rayTriangle(const glm::vec3& orig, const glm::vec3& dir,
+                 const glm::vec3& v0, const glm::vec3& v1, const glm::vec3& v2,
+                 float* outT);
+
 // Build a world-space ray from a screen pixel. The pixel coordinate system is
 // (x: right, y: down) — i.e. matches GLFW's cursor convention with (0,0) at
 // the window's top-left. Returns origin + a normalized direction.

@@ -24,6 +24,11 @@ constexpr float kMaxTerrainH      = 4.0f;
 constexpr float kWaterY           = -0.25f;
 constexpr int   kTickDurationMs   = 200;
 
+// Material id (index into world::kOverlayMaterials) reserved for water. Kept
+// here — not in the world layer — so the shared map loader can migrate legacy
+// waterTiles into overlayTiles without depending on rendering code.
+constexpr int   kWaterMaterialId  = 3;
+
 // ---- Tile enums ----------------------------------------------------------
 
 enum class TileType {
@@ -53,10 +58,26 @@ struct NpcSpawn {
 };
 
 // ---- Water tile descriptor (used by the level editor + client renderer) --
+// Legacy: superseded by OverlayTile with a water materialId. Still loaded from
+// old maps and migrated to overlayTiles on load.
 
 struct WaterTile {
   int tileX = 0;
   int tileY = 0;
+};
+
+// ---- Overlay tile descriptor (OSRS-style shaped surface layer) ------------
+// An overlay paints a textured material over part of a tile using one of 12
+// predefined shapes (0..11). The remaining area shows the underlay (terrain
+// groundColor). Water is just an overlay whose materialId == kWaterMaterialId.
+//   shape      — 0..11, see OverlayShapes.hpp / kShapeTriangles
+//   materialId — index into world::kOverlayMaterials (0 = none/reserved)
+struct OverlayTile {
+  int tileX      = 0;
+  int tileY      = 0;
+  int shape      = 0;
+  int materialId = 0;
+  int rotation   = 0;   // 90° steps (0..3), CW; rotates the shape about tile centre
 };
 
 // ---- Wall / pillar edge feature -------------------------------------------
@@ -83,7 +104,8 @@ struct WorldMapFile {
   // the map is generated procedurally by the client).
   std::array<int, 2>                 spawnPoint  = {32, 32};
   std::vector<NpcSpawn>              npcSpawns;
-  std::vector<WaterTile>             waterTiles;
+  std::vector<WaterTile>             waterTiles;   // legacy; migrated into overlayTiles on load
+  std::vector<OverlayTile>           overlayTiles; // OSRS-style shaped surface layer
   std::vector<WallSeg>               walls;        // wall + pillar edge features
 };
 
@@ -184,7 +206,8 @@ struct InitMessage {
   std::string                        playerId;
   std::vector<std::vector<TileData>> tiles;           // server's authoritative map
   std::vector<float>                 vertexHeights;
-  std::vector<WaterTile>             waterTiles;       // water plane tiles
+  std::vector<WaterTile>             waterTiles;       // legacy water plane tiles
+  std::vector<OverlayTile>           overlayTiles;     // OSRS-style shaped surface layer
   std::vector<WallSeg>               walls;            // wall + pillar edge features
   bool                               isNewPlayer = false;
 };

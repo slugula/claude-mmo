@@ -30,6 +30,8 @@ interface WorldMapJSON {
   // source of truth for pathfinding, but old maps may have saved these as
   // walkable=true before the editor bug was fixed. We re-enforce on load.
   waterTiles?: { tileX: number; tileY: number }[];
+  // OSRS-style shaped surface layer (v3+). Relayed to the client for rendering.
+  overlayTiles?: { tileX: number; tileY: number; shape: number; materialId: number; rotation?: number }[];
   // Wall + pillar edge features — relayed to the client for rendering.
   walls?: { tileX: number; tileY: number; orient: number; pillar: boolean; objectId: string }[];
   // legacy v1 fields (ignored by new renderer)
@@ -71,9 +73,11 @@ export class GameLoop {
   private state:     GameState;
   private pendingActions = new Map<string, GameAction[]>();
   private timer:     ReturnType<typeof setInterval> | null = null;
+  private lastTickAt = 0;
   private broadcast: BroadcastFn;
   private worldTiles: TileData[][];
   private waterTiles: { tileX: number; tileY: number }[] = [];
+  private overlayTiles: { tileX: number; tileY: number; shape: number; materialId: number; rotation?: number }[] = [];
   private walls: { tileX: number; tileY: number; orient: number; pillar: boolean; objectId: string }[] = [];
 
   constructor(broadcast: BroadcastFn) {
@@ -86,6 +90,12 @@ export class GameLoop {
     const mapData = loadWorldMap();
     this.worldTiles = mapData.tiles;
     this.waterTiles = mapData.waterTiles ?? [];
+    // Overlay layer (v3+). Legacy maps only have waterTiles — migrate each into
+    // a full-tile (shape 0) water overlay so the client has one source of truth.
+    // kWaterMaterialId == 3 (mirror of shared::kWaterMaterialId in C++).
+    this.overlayTiles = mapData.overlayTiles ?? (mapData.waterTiles ?? []).map(
+      w => ({ tileX: w.tileX, tileY: w.tileY, shape: 0, materialId: 3 }),
+    );
     this.walls      = mapData.walls ?? [];
 
     const world = createWorldFromTiles(mapData.tiles, mapData.vertexHeights, this.walls);
@@ -229,6 +239,7 @@ export class GameLoop {
 
   getWorldTiles(): TileData[][] { return this.worldTiles; }
   getWaterTiles(): { tileX: number; tileY: number }[] { return this.waterTiles; }
+  getOverlayTiles() { return this.overlayTiles; }
   getWalls() { return this.walls; }
   getVertexHeights(): number[] { return Array.from(this.state.world.vertexHeights); }
 
@@ -242,12 +253,39 @@ export class GameLoop {
   }
 
   private tick(): void {
+    // Detect inter-tick gaps: if the previous tick (or anything else on the
+    // event loop) blocked, the gap since the last tick will exceed the interval.
+    const now = Date.now();
+    if (this.lastTickAt !== 0) {
+      const gap = now - this.lastTickAt;
+      if (gap > TICK_DURATION_MS * 3) {
+        console.warn(`[GameLoop] event-loop stall: ${gap}ms since last tick ` +
+                     `(expected ~${TICK_DURATION_MS}ms)`);
+      }
+    }
+    this.lastTickAt = now;
+
     const playerActions = new Map<string, GameAction[]>();
     for (const [id, actions] of this.pendingActions) {
       playerActions.set(id, actions.splice(0));
     }
 
-    this.state = processTick(this.state, playerActions);
+    // A throw here must NOT kill the loop or corrupt state: log it (with stack)
+    // and skip the tick, keeping the last good state, so the server stays up and
+    // the cause is visible instead of silently wedging.
+    let next: GameState;
+    try {
+      next = processTick(this.state, playerActions);
+    } catch (err) {
+      console.error('[GameLoop] processTick threw — skipping tick:', err);
+      return;
+    }
+    this.state = next;
+
+    const elapsed = Date.now() - now;
+    if (elapsed > TICK_DURATION_MS) {
+      console.warn(`[GameLoop] slow tick: ${elapsed}ms (tick ${this.state.tick})`);
+    }
 
     const { world: _world, ...patch } = this.state;
     this.broadcast(patch as ServerStatePatch);

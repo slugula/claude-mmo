@@ -99,6 +99,13 @@ struct ItemDef {
   std::string spritePath;
   std::string modelDropped;
   std::string modelEquipped;
+  // Held-weapon grip: how modelEquipped sits in the hand socket. These are
+  // RELATIVE to the current player model's hand bone — a new model needs them
+  // re-tuned (pure data, no code change). gripJoint defaults via SkeletonConfig.
+  std::string gripJoint;                         // "" = default (weapon_main socket)
+  float       gripPosX = 0.0f, gripPosY = 0.0f, gripPosZ = 0.0f;
+  float       gripRotX = 0.0f, gripRotY = 0.0f, gripRotZ = 0.0f;
+  float       gripScale = 1.0f;
 };
 
 }  // namespace editor

@@ -7,6 +7,7 @@ import { authRouter, verifyToken } from './auth/router';
 import { entityRouter } from './db/EntityRouter';
 import { getClientDefs } from './db/EntityLoader';
 import { PlayerRepository } from './db/PlayerRepository';
+import { pool } from './db/client';
 import type { GameAction, ServerStatePatch, RespawnEntry } from '../src/shared/types';
 
 const PORT = Number(process.env.PORT ?? 8080);
@@ -133,6 +134,16 @@ function broadcast(patch: ServerStatePatch): void {
 
 // ---- Game loop ----
 
+// Surface async failures instead of letting them crash silently or wedge the
+// process. We log (with stack) and keep running — a single bad tick/handler
+// shouldn't take the whole dev server down without a trace.
+process.on('uncaughtException', (err) => {
+  console.error('[server] uncaughtException:', err);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('[server] unhandledRejection:', reason);
+});
+
 const loop = new GameLoop(broadcast);
 loop.start();
 
@@ -181,6 +192,7 @@ wss.on('connection', async (ws: WebSocket, req: IncomingMessage) => {
   ws.send(JSON.stringify({
     type: 'init',
     waterTiles:    loop.getWaterTiles(),
+    overlayTiles:  loop.getOverlayTiles(),
     walls:         loop.getWalls(),
     playerId,
     tiles:         loop.getWorldTiles(),
@@ -250,3 +262,26 @@ setInterval(async () => {
 httpServer.listen(PORT, () => {
   console.log(`[server] Listening on :${PORT}`);
 });
+
+// ---- Graceful shutdown -----------------------------------------------------
+// Release everything that keeps the event loop alive (the 200ms tick interval,
+// the HTTP/WS servers + open client sockets, the pg pool) so Ctrl+C exits the
+// process promptly instead of hanging the terminal. A second Ctrl+C force-quits,
+// and a backstop timer guarantees exit even if a close() callback never fires.
+let shuttingDown = false;
+function shutdown(signal: string): void {
+  if (shuttingDown) { process.exit(0); }   // second signal → hard exit
+  shuttingDown = true;
+  console.log(`\n[server] ${signal} received — shutting down...`);
+  try { loop.stop(); } catch { /* ignore */ }            // clear the tick interval
+  for (const client of wss.clients) client.terminate();  // drop open WS sockets
+  wss.close();
+  httpServer.close(() => {
+    pool.end().then(() => process.exit(0)).catch(() => process.exit(0));
+  });
+  // Backstop: if a handle refuses to close, exit anyway. unref() so this timer
+  // alone never keeps the process alive.
+  setTimeout(() => process.exit(0), 1500).unref();
+}
+process.on('SIGINT',  () => shutdown('SIGINT'));
+process.on('SIGTERM', () => shutdown('SIGTERM'));

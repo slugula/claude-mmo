@@ -99,9 +99,20 @@ bool SkinnedMesh::load(const std::filesystem::path& glbPath) {
 
   // Allocate animation evaluation scratch buffers
   const int jc = static_cast<int>(model_.joints.size());
+  if (jc > kMaxJoints) {
+    std::fprintf(stderr,
+      "[SkinnedMesh] WARNING: model has %d joints but kMaxJoints=%d — "
+      "skinning will clip. Bump kMaxJoints (and skinned.vert) for this model.\n",
+      jc, kMaxJoints);
+  }
   jointMatrices_.assign(jc, glm::mat4(1.0f));
   localTransforms_.assign(jc, glm::mat4(1.0f));
   modelSpace_.assign(jc, glm::mat4(1.0f));
+  // Crossfade caches.
+  visT_.assign(jc, glm::vec3(0.0f));  visS_.assign(jc, glm::vec3(1.0f));
+  visR_.assign(jc, glm::quat(1, 0, 0, 0));
+  blendT_ = visT_; blendS_ = visS_; blendR_ = visR_;
+  havePose_ = false; blending_ = false; blendTime_ = 0.0f; blendDur_ = 0.0f;
 
   // Upload each primitive and cache its material colour.
   primitives_.resize(model_.primitives.size());
@@ -187,22 +198,34 @@ void SkinnedMesh::uploadPrimitive(const GltfPrimitive& src, PrimitiveGl& dst) {
   dst.materialIndex = src.materialIndex;
 }
 
-void SkinnedMesh::setClip(const std::string& clipName) {
-  activeClipIndex_ = -1;
+void SkinnedMesh::setClip(const std::string& clipName, float blendSeconds) {
+  int idx = -1;
   for (size_t i = 0; i < model_.animations.size(); ++i) {
-    if (model_.animations[i].name == clipName) {
-      activeClipIndex_ = static_cast<int>(i);
-      break;
-    }
+    if (model_.animations[i].name == clipName) { idx = static_cast<int>(i); break; }
   }
-  if (activeClipIndex_ < 0 && !model_.animations.empty()) {
-    activeClipIndex_ = 0;  // safe fallback
+  if (idx < 0 && !model_.animations.empty()) idx = 0;  // safe fallback
+  if (idx == activeClipIndex_) return;  // same clip — don't restart / re-blend
+
+  // Crossfade from the current visible pose (if one exists) into the new clip.
+  if (havePose_ && blendSeconds > 0.0f && activeClipIndex_ >= 0) {
+    blendT_ = visT_; blendR_ = visR_; blendS_ = visS_;  // snapshot what's on screen
+    blending_  = true;
+    blendTime_ = 0.0f;
+    blendDur_  = blendSeconds;
+  } else {
+    blending_ = false;
   }
-  activeClip_ = (activeClipIndex_ >= 0) ? model_.animations[activeClipIndex_].name : "";
+
+  activeClipIndex_ = idx;
+  activeClip_ = (idx >= 0) ? model_.animations[idx].name : "";
   clipTime_   = 0.0f;
 }
 
 void SkinnedMesh::update(float dtSeconds) {
+  if (blending_) {
+    blendTime_ += dtSeconds;
+    if (blendTime_ >= blendDur_) blending_ = false;
+  }
   if (activeClipIndex_ < 0) return;
   const auto& anim = model_.animations[activeClipIndex_];
   if (anim.duration <= 0.0f) return;
@@ -213,7 +236,7 @@ void SkinnedMesh::update(float dtSeconds) {
   }
 }
 
-void SkinnedMesh::evaluatePose() {
+void SkinnedMesh::evaluatePose(bool applyBlend) {
   const int jc = static_cast<int>(model_.joints.size());
   if (jc <= 0) return;
 
@@ -222,6 +245,11 @@ void SkinnedMesh::evaluatePose() {
   const GltfAnimation* anim = (activeClipIndex_ >= 0)
       ? &model_.animations[activeClipIndex_]
       : nullptr;
+
+  // Crossfade weight (smoothstep) — only on the internal-state path.
+  const bool  doBlend = applyBlend && blending_ && blendDur_ > 0.0f;
+  const float wlin = doBlend ? std::clamp(blendTime_ / blendDur_, 0.0f, 1.0f) : 1.0f;
+  const float w    = wlin * wlin * (3.0f - 2.0f * wlin);  // ease in/out
 
   for (int j = 0; j < jc; ++j) {
     const GltfJoint& joint = model_.joints[j];
@@ -236,8 +264,19 @@ void SkinnedMesh::evaluatePose() {
       if (tr.hasS) s = sampleVec3(tr.timesS, tr.valuesS, clipTime_, s);
     }
 
+    // Mix the snapshot (outgoing pose) into the incoming clip during a fade.
+    if (doBlend) {
+      t = glm::mix(blendT_[j], t, w);
+      r = glm::slerp(blendR_[j], r, w);
+      s = glm::mix(blendS_[j], s, w);
+    }
+
+    // Cache the visible pose so the next transition can snapshot it (local path).
+    if (applyBlend) { visT_[j] = t; visR_[j] = r; visS_[j] = s; }
+
     localTransforms_[j] = trsToMatrix(t, r, s);
   }
+  if (applyBlend) havePose_ = true;
 
   // Walk hierarchy: parents come before children in glTF skin.joints by
   // convention but we don't rely on that — we compute on demand. For our
@@ -263,7 +302,7 @@ void SkinnedMesh::render(render::Shader& shader, const glm::mat4& modelMatrix,
                          bool useMaterialColors) {
   if (primitives_.empty()) return;
 
-  evaluatePose();
+  evaluatePose(/*applyBlend=*/true);
 
   shader.setMat4("u_model", modelMatrix);
 
@@ -315,6 +354,28 @@ int SkinnedMesh::findClipIndex(const std::string& clipName) const {
   return -1;
 }
 
+void SkinnedMesh::dumpJointNames() const {
+  std::fprintf(stdout, "  [dumpJoints] %d joints:\n",
+               static_cast<int>(model_.joints.size()));
+  for (int j = 0; j < static_cast<int>(model_.joints.size()); ++j) {
+    std::fprintf(stdout, "    joint[%d] \"%s\" parent=%d\n",
+                 j, model_.joints[j].name.c_str(), model_.joints[j].parent);
+  }
+}
+
+int SkinnedMesh::findJointIndex(const std::string& name) const {
+  for (size_t i = 0; i < model_.joints.size(); ++i) {
+    if (model_.joints[i].name == name) return static_cast<int>(i);
+  }
+  return -1;
+}
+
+glm::mat4 SkinnedMesh::jointModelMatrix(int jointIndex) const {
+  if (jointIndex < 0 || jointIndex >= static_cast<int>(modelSpace_.size()))
+    return glm::mat4(1.0f);
+  return modelSpace_[jointIndex];
+}
+
 void SkinnedMesh::renderAs(render::Shader& shader, const glm::mat4& modelMatrix,
                            int clipIndex, float clipTime) {
   if (primitives_.empty()) return;
@@ -332,11 +393,68 @@ void SkinnedMesh::renderAs(render::Shader& shader, const glm::mat4& modelMatrix,
   }
   clipTime_ = clipTime;
 
-  evaluatePose();
+  evaluatePose(/*applyBlend=*/false);
 
   // Restore immediately so the primary owner's state isn't corrupted.
   activeClipIndex_ = savedIndex;
   clipTime_        = savedTime;
+
+  shader.setMat4("u_model", modelMatrix);
+  const GLint loc = glGetUniformLocation(shader.id(), "u_jointMatrices");
+  if (loc >= 0) {
+    const int count = std::min(static_cast<int>(jointMatrices_.size()), kMaxJoints);
+    glUniformMatrix4fv(loc, count, GL_FALSE, glm::value_ptr(jointMatrices_[0]));
+  }
+  for (const auto& p : primitives_) {
+    glBindVertexArray(p.vao);
+    glDrawElements(GL_TRIANGLES, p.indexCount, GL_UNSIGNED_INT, nullptr);
+  }
+  glBindVertexArray(0);
+}
+
+void SkinnedMesh::sampleJointLocal(int clipIndex, float time, int j,
+                                   glm::vec3& t, glm::quat& r, glm::vec3& s) const {
+  const GltfJoint& joint = model_.joints[j];
+  t = joint.restTranslation;
+  r = joint.restRotation;
+  s = joint.restScale;
+  if (clipIndex >= 0 && clipIndex < static_cast<int>(model_.animations.size())) {
+    const GltfAnimation& anim = model_.animations[clipIndex];
+    if (j < static_cast<int>(anim.tracks.size())) {
+      const GltfJointTrack& tr = anim.tracks[j];
+      if (tr.hasT) t = sampleVec3(tr.timesT, tr.valuesT, time, t);
+      if (tr.hasR) r = sampleQuat(tr.timesR, tr.valuesR, time, r);
+      if (tr.hasS) s = sampleVec3(tr.timesS, tr.valuesS, time, s);
+    }
+  }
+}
+
+void SkinnedMesh::renderAsBlended(render::Shader& shader, const glm::mat4& modelMatrix,
+                                  int fromIdx, float fromTime,
+                                  int toIdx,   float toTime, float weight) {
+  if (primitives_.empty()) return;
+  const int jc = static_cast<int>(model_.joints.size());
+  if (jc <= 0) return;
+
+  const float wlin = std::clamp(weight, 0.0f, 1.0f);
+  const float w    = wlin * wlin * (3.0f - 2.0f * wlin);  // smoothstep
+
+  for (int j = 0; j < jc; ++j) {
+    glm::vec3 tf, sf, tt, st; glm::quat rf, rt;
+    sampleJointLocal(fromIdx, fromTime, j, tf, rf, sf);
+    sampleJointLocal(toIdx,   toTime,   j, tt, rt, st);
+    const glm::vec3 t = glm::mix(tf, tt, w);
+    const glm::quat r = glm::slerp(rf, rt, w);
+    const glm::vec3 s = glm::mix(sf, st, w);
+    localTransforms_[j] = trsToMatrix(t, r, s);
+  }
+  for (int j = 0; j < jc; ++j) {
+    const int parent = model_.joints[j].parent;
+    modelSpace_[j] = (parent < 0) ? localTransforms_[j]
+                                  : modelSpace_[parent] * localTransforms_[j];
+  }
+  for (int j = 0; j < jc && j < kMaxJoints; ++j)
+    jointMatrices_[j] = modelSpace_[j] * model_.joints[j].inverseBind;
 
   shader.setMat4("u_model", modelMatrix);
   const GLint loc = glGetUniformLocation(shader.id(), "u_jointMatrices");

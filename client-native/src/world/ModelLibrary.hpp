@@ -35,7 +35,13 @@ namespace world {
 class ModelLibrary {
 public:
   // Per-instance payload (matches the obstacle/entity shader instance layout).
-  struct Instance { float x, y, z, rotY; };
+  // (nx,ny,nz) is the surface up-normal the model is tilted onto — defaults to
+  // straight up, so existing {x,y,z,rotY} brace-inits leave upright geometry
+  // (trees/rocks/NPCs) unchanged; dropped flat models set it to the tile normal.
+  struct Instance {
+    float x, y, z, rotY;
+    float nx = 0.0f, ny = 1.0f, nz = 0.0f;
+  };
 
   ModelLibrary() = default;
   ~ModelLibrary();
@@ -59,6 +65,18 @@ public:
 
   // World-space (model-local) AABB for the id. Returns false if unknown.
   bool aabb(const std::string& id, glm::vec3& outMin, glm::vec3& outMax) const;
+
+  // Narrow-phase ray-vs-mesh pick in MODEL-LOCAL space (caller transforms the
+  // world ray by the instance's inverse transform first). Returns the nearest
+  // hit's parametric t. Static models only (animated → false, use AABB).
+  bool rayHitLocal(const std::string& id, const glm::vec3& ro,
+                   const glm::vec3& rd, float& tHit) const;
+
+  // Tri-state narrow-phase pick using the instance's world matrix:
+  //   1 = mesh hit (writes tHit), 0 = has geom but ray missed, -1 = no precise
+  //   geom (caller should fall back to the AABB result).
+  int rayHitWorld(const std::string& id, const glm::mat4& world,
+                  const glm::vec3& ro, const glm::vec3& rd, float& tHit) const;
 
   // Advance every animated entry's clip by dt once per frame.
   void update(float dt);
@@ -89,6 +107,9 @@ private:
     std::unique_ptr<SkinnedMesh>  skinned;      // owned (animated)
     glm::vec3                     aabbMin = glm::vec3(-0.5f, 0.0f, -0.5f);
     glm::vec3                     aabbMax = glm::vec3( 0.5f, 1.0f,  0.5f);
+    // Merged static geometry (model space) retained for narrow-phase ray picking.
+    std::vector<float>            cpuPos;   // x,y,z per vertex
+    std::vector<unsigned int>     cpuIdx;   // triangle indices into cpuPos
   };
 
   // Upload one kit (positions/normals/indices) wired to scratchVbo_ at the

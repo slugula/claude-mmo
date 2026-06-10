@@ -3,6 +3,9 @@
 
 #include "ui/MinimapRenderer.hpp"
 
+#include "world/OverlayMaterials.hpp"
+#include "world/OverlayShapes.hpp"
+
 #include <glm/glm.hpp>
 
 #include <algorithm>
@@ -147,12 +150,30 @@ void MinimapRenderer::buildBaseLayer(const shared::WorldMapFile& map)
         }
     }
 
-    // ---- Water tiles (drawn over terrain) ------------------------------------
-    for (const auto& wt : map.waterTiles) {
-        if (wt.tileX < 0 || wt.tileY < 0 ||
-            wt.tileX >= map.width || wt.tileY >= map.height) continue;
-        fillRect(wt.tileX * kPxPerTile, wt.tileY * kPxPerTile,
-                 kPxPerTile, kPxPerTile, 38, 102, 204);
+    // ---- Overlay tiles (paths / floors / water) ------------------------------
+    // Rasterise each overlay's shape per sub-pixel so triangular / partial
+    // shapes read as triangles, filled with the material's representative colour.
+    // (u,v) maps to the same tile-local space the world mesh uses (see
+    // OverlayRenderer's 180° emit): u = 1 - eastFrac, v = northFrac.
+    {
+        const auto& mats = world::overlayMaterials();
+        for (const auto& ov : map.overlayTiles) {
+            if (ov.tileX < 0 || ov.tileY < 0 ||
+                ov.tileX >= map.width || ov.tileY >= map.height) continue;
+            if (ov.materialId <= 0 ||
+                ov.materialId >= static_cast<int>(mats.size())) continue;
+            const auto& m = mats[static_cast<size_t>(ov.materialId)];
+            const int px0 = ov.tileX * kPxPerTile;
+            const int py0 = ov.tileY * kPxPerTile;
+            for (int sy = 0; sy < kPxPerTile; ++sy) {
+                for (int sx = 0; sx < kPxPerTile; ++sx) {
+                    const float u = 1.0f - (sx + 0.5f) / static_cast<float>(kPxPerTile);
+                    const float v = 1.0f - (sy + 0.5f) / static_cast<float>(kPxPerTile);
+                    if (world::shapeCoversUV(ov.shape, u, v, ov.rotation))
+                        setPixel(px0 + sx, py0 + sy, m.mr, m.mg, m.mb);
+                }
+            }
+        }
     }
 
     // ---- Walls + pillars (1px white edge/corner lines, OSRS-style) -----------

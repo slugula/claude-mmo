@@ -47,6 +47,17 @@ struct glz::meta<shared::WaterTile> {
 };
 
 template <>
+struct glz::meta<shared::OverlayTile> {
+  using T = shared::OverlayTile;
+  static constexpr auto value = glz::object(
+    "tileX",      &T::tileX,
+    "tileY",      &T::tileY,
+    "shape",      &T::shape,
+    "materialId", &T::materialId,
+    "rotation",   &T::rotation);
+};
+
+template <>
 struct glz::meta<shared::WallSeg> {
   using T = shared::WallSeg;
   static constexpr auto value = glz::object(
@@ -86,6 +97,7 @@ inline bool loadWorldMap(const std::filesystem::path& path, WorldMapFile& out) {
     std::array<int, 2>                 spawnPoint = {32, 32};
     std::vector<NpcSpawn>              npcSpawns;
     std::vector<WaterTile>             waterTiles;
+    std::vector<OverlayTile>           overlayTiles;
     std::vector<WallSeg>               walls;
   };
 
@@ -120,7 +132,19 @@ inline bool loadWorldMap(const std::filesystem::path& path, WorldMapFile& out) {
   out.spawnPoint   = disk.spawnPoint;
   out.npcSpawns    = std::move(disk.npcSpawns);
   out.waterTiles   = std::move(disk.waterTiles);
+  out.overlayTiles = std::move(disk.overlayTiles);
   out.walls        = std::move(disk.walls);
+
+  // Backward-compat: maps saved before the overlay system (v2 and earlier)
+  // stored water as a flat waterTiles list. Migrate each into a full-tile
+  // (shape 0) water overlay so the renderer has a single source of truth.
+  // New maps (v3) carry overlayTiles directly and have an empty waterTiles.
+  if (out.overlayTiles.empty() && !out.waterTiles.empty()) {
+    out.overlayTiles.reserve(out.waterTiles.size());
+    for (const auto& w : out.waterTiles)
+      out.overlayTiles.push_back(OverlayTile{w.tileX, w.tileY, /*shape*/ 0,
+                                             kWaterMaterialId});
+  }
 
   // Rebuild x/y coordinates on every tile (they are stored in the JSON but
   // may be stale from older exports; recompute for correctness).
@@ -139,8 +163,8 @@ inline bool loadWorldMap(const std::filesystem::path& path, WorldMapFile& out) {
 
   // Walkability is authored per-tile and trusted as-is — water rendering is a
   // separate visual layer. This lets terrain raised above the waterline over a
-  // water tile stay walkable while the water plane still renders. Impassable
-  // water is painted non-walkable in the editor (PaintWater defaults to blocked).
+  // water tile stay walkable while the water plane still renders. Painting the
+  // water overlay material in the editor auto-blocks the tile (walkable=false).
 
   return true;
 }
@@ -159,7 +183,7 @@ inline bool saveWorldMap(const std::filesystem::path& path,
   auto hexOf = [](const std::string& s) -> std::string { return s; };
 
   std::fprintf(f, "{\n");
-  std::fprintf(f, "  \"version\": 2,\n");
+  std::fprintf(f, "  \"version\": 3,\n");
   std::fprintf(f, "  \"width\": %d,\n",  map.width);
   std::fprintf(f, "  \"height\": %d,\n", map.height);
   std::fprintf(f, "  \"spawnPoint\": [%d, %d],\n",
@@ -174,12 +198,12 @@ inline bool saveWorldMap(const std::filesystem::path& path,
   }
   std::fprintf(f, "],\n");
 
-  // waterTiles
-  std::fprintf(f, "  \"waterTiles\": [");
-  for (std::size_t i = 0; i < map.waterTiles.size(); ++i) {
-    const auto& w = map.waterTiles[i];
-    std::fprintf(f, "%s{\"tileX\":%d,\"tileY\":%d}",
-                 i == 0 ? "" : ",", w.tileX, w.tileY);
+  // overlayTiles (OSRS-style shaped surface layer; supersedes waterTiles)
+  std::fprintf(f, "  \"overlayTiles\": [");
+  for (std::size_t i = 0; i < map.overlayTiles.size(); ++i) {
+    const auto& o = map.overlayTiles[i];
+    std::fprintf(f, "%s{\"tileX\":%d,\"tileY\":%d,\"shape\":%d,\"materialId\":%d,\"rotation\":%d}",
+                 i == 0 ? "" : ",", o.tileX, o.tileY, o.shape, o.materialId, o.rotation);
   }
   std::fprintf(f, "],\n");
 

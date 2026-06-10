@@ -1,6 +1,7 @@
 #include "world/ModelLibrary.hpp"
 
 #include "world/GltfLoader.hpp"
+#include "input/Picker.hpp"
 
 #include <algorithm>
 #include <cstdio>
@@ -143,6 +144,10 @@ void ModelLibrary::uploadKit(Kit& k, const std::vector<float>& pos,
   glEnableVertexArrayAttrib  (k.vao, 3);
   glVertexArrayAttribFormat  (k.vao, 3, 1, GL_FLOAT, GL_FALSE, offsetof(Instance, rotY));
   glVertexArrayAttribBinding (k.vao, 3, 2);
+  // location 5 = per-instance surface up-normal (binding 2 = shared scratch VBO)
+  glEnableVertexArrayAttrib  (k.vao, 5);
+  glVertexArrayAttribFormat  (k.vao, 5, 3, GL_FLOAT, GL_FALSE, offsetof(Instance, nx));
+  glVertexArrayAttribBinding (k.vao, 5, 2);
 
   glVertexArrayElementBuffer(k.vao, k.ebo);
 }
@@ -194,6 +199,10 @@ void ModelLibrary::ensure(const std::string& id, const std::string& modelPath,
                           : glm::vec3(0.7f);
           Kit k; uploadKit(k, prim.positions, n, prim.colors, prim.indices, col);
           e.staticKits.push_back(k);
+          // Retain merged CPU geometry for narrow-phase ray picking.
+          const unsigned int base = static_cast<unsigned int>(e.cpuPos.size() / 3);
+          e.cpuPos.insert(e.cpuPos.end(), prim.positions.begin(), prim.positions.end());
+          for (unsigned int idx : prim.indices) e.cpuIdx.push_back(base + idx);
         }
       }
     }
@@ -236,6 +245,40 @@ bool ModelLibrary::aabb(const std::string& id, glm::vec3& outMin, glm::vec3& out
   outMin = it->second.aabbMin;
   outMax = it->second.aabbMax;
   return true;
+}
+
+bool ModelLibrary::rayHitLocal(const std::string& id, const glm::vec3& ro,
+                               const glm::vec3& rd, float& tHit) const {
+  auto it = entries_.find(id);
+  if (it == entries_.end()) return false;
+  const Entry& e = it->second;
+  if (e.cpuPos.size() < 9 || e.cpuIdx.size() < 3) return false;  // no static geom
+
+  auto vtx = [&](unsigned int i) {
+    return glm::vec3(e.cpuPos[i * 3], e.cpuPos[i * 3 + 1], e.cpuPos[i * 3 + 2]);
+  };
+  bool  hit  = false;
+  float best = 1e30f;
+  for (std::size_t i = 0; i + 2 < e.cpuIdx.size(); i += 3) {
+    float t;
+    if (input::rayTriangle(ro, rd, vtx(e.cpuIdx[i]), vtx(e.cpuIdx[i + 1]),
+                           vtx(e.cpuIdx[i + 2]), &t) && t < best) {
+      best = t; hit = true;
+    }
+  }
+  if (hit) tHit = best;
+  return hit;
+}
+
+int ModelLibrary::rayHitWorld(const std::string& id, const glm::mat4& world,
+                              const glm::vec3& ro, const glm::vec3& rd,
+                              float& tHit) const {
+  auto it = entries_.find(id);
+  if (it == entries_.end() || it->second.cpuPos.size() < 9) return -1;  // no geom
+  const glm::mat4 inv = glm::inverse(world);
+  const glm::vec3 lro = glm::vec3(inv * glm::vec4(ro, 1.0f));
+  const glm::vec3 lrd = glm::vec3(inv * glm::vec4(rd, 0.0f));  // unnormalized → t stays world-comparable
+  return rayHitLocal(id, lro, lrd, tHit) ? 1 : 0;
 }
 
 void ModelLibrary::update(float dt) {

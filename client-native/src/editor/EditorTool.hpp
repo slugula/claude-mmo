@@ -12,7 +12,7 @@ enum class EditorTool {
   PlaceNPC,
   PlaceSpawn,
   PaintBlocking,    // left-click = block (walkable=false), right-click = unblock (walkable=true)
-  PaintWater,       // paints water tiles (non-walkable, rendered as animated water)
+  PaintOverlay,     // paints a shaped, textured overlay (path/floor/water) on a tile
   Erase,
 };
 

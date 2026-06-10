@@ -23,15 +23,28 @@ export function processItems(
       const item = nextDropped.find(d => d.id === action.droppedItemId);
       if (!item) continue;
 
+      // Picking up an item cancels any ongoing action (gathering/combat/talk) —
+      // the player should NOT resume chopping/mining/fishing after the pickup.
+      const cancelActions = {
+        attackTargetId: null,
+        talkTargetId:   null,
+        chopTargetX:    null,
+        chopTargetY:    null,
+        mineTargetX:    null,
+        mineTargetY:    null,
+        fishTargetX:    null,
+        fishTargetY:    null,
+      } as const;
+
       if (nextPlayer.tileX === item.tileX && nextPlayer.tileY === item.tileY) {
         const result = addItem(nextPlayer.inventory, item.itemId, item.quantity);
         if (result.added) {
-          nextPlayer = { ...nextPlayer, inventory: result.inventory, pickupItemId: null };
+          nextPlayer = { ...nextPlayer, ...cancelActions, inventory: result.inventory, pickupItemId: null };
           // Permanent items stay on the floor — don't remove them
           if (!item.permanent) nextDropped = nextDropped.filter(d => d.id !== item.id);
         } else {
           messages.push('Your inventory is full.');
-          nextPlayer = { ...nextPlayer, pickupItemId: null };
+          nextPlayer = { ...nextPlayer, ...cancelActions, pickupItemId: null };
         }
       } else {
         const from = { x: nextPlayer.tileX, y: nextPlayer.tileY };
@@ -39,9 +52,8 @@ export function processItems(
         const path = world.tiles[to.y]?.[to.x]?.walkable ? findPath(world, from, to) : [];
         nextPlayer = {
           ...nextPlayer,
+          ...cancelActions,
           pickupItemId: item.id,
-          attackTargetId: null,
-          talkTargetId: null,
           path,
           destinationX: to.x,
           destinationY: to.y,

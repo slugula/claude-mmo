@@ -104,7 +104,16 @@ CREATE TABLE IF NOT EXISTS item_definitions (
   -- Assets
   sprite_path     TEXT,
   model_dropped   TEXT,
-  model_equipped  TEXT
+  model_equipped  TEXT,
+  -- Held-weapon grip (how model_equipped sits in the hand socket; model-relative)
+  grip_joint      TEXT,
+  grip_pos_x      REAL NOT NULL DEFAULT 0,
+  grip_pos_y      REAL NOT NULL DEFAULT 0,
+  grip_pos_z      REAL NOT NULL DEFAULT 0,
+  grip_rot_x      REAL NOT NULL DEFAULT 0,
+  grip_rot_y      REAL NOT NULL DEFAULT 0,
+  grip_rot_z      REAL NOT NULL DEFAULT 0,
+  grip_scale      REAL NOT NULL DEFAULT 1
 );
 
 -- Skill definitions — fixed set of SkillIds; the editor only authors the icon.

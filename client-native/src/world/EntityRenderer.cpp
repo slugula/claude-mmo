@@ -128,6 +128,37 @@ float tileWorldY(const shared::WorldMapFile& map, int tx, int ty) {
   return (SW + SE + NW + NE) * 0.25f;
 }
 
+// Height a tile-flat dropped model should sit at: the terrain surface at the
+// tile CENTRE, which lies on the SW<->NE triangulation diagonal = (SW+NE)/2 —
+// NOT the 4-corner average (that sinks into folded tiles). Plus a tiny lift.
+float tileDropY(const shared::WorldMapFile& map, int tx, int ty) {
+  const int W = map.width, H = map.height;
+  if (W <= 0 || H <= 0 || tx < 0 || ty < 0 || tx >= W || ty >= H) return 0.0f;
+  const auto& vh = map.vertexHeights;
+  if (static_cast<int>(vh.size()) != (W + 1) * (H + 1)) return 0.0f;
+  const float SW = vh[(H - ty)     * (W + 1) + tx]     * shared::kMaxTerrainH;
+  const float NE = vh[(H - ty - 1) * (W + 1) + tx + 1] * shared::kMaxTerrainH;
+  return (SW + NE) * 0.5f + 0.02f;  // diagonal-centre surface + lift
+}
+
+// Up-normal of tile (tx,ty) from its 4 corner heights — used to lie flat
+// dropped models flush on sloped terrain. +tileX = world +X, +tileY = world +Z.
+glm::vec3 tileUpNormal(const shared::WorldMapFile& map, int tx, int ty) {
+  const int W = map.width, H = map.height;
+  if (W <= 0 || H <= 0 || tx < 0 || ty < 0 || tx >= W || ty >= H)
+    return glm::vec3(0.0f, 1.0f, 0.0f);
+  const auto& vh = map.vertexHeights;
+  if (static_cast<int>(vh.size()) != (W + 1) * (H + 1))
+    return glm::vec3(0.0f, 1.0f, 0.0f);
+  const float SW = vh[(H - ty)     * (W + 1) + tx]     * shared::kMaxTerrainH;
+  const float SE = vh[(H - ty)     * (W + 1) + tx + 1] * shared::kMaxTerrainH;
+  const float NW = vh[(H - ty - 1) * (W + 1) + tx]     * shared::kMaxTerrainH;
+  const float NE = vh[(H - ty - 1) * (W + 1) + tx + 1] * shared::kMaxTerrainH;
+  const float dhdx = ((SE + NE) - (SW + NW)) * 0.5f;  // slope per +1 east
+  const float dhdz = ((NW + NE) - (SW + SE)) * 0.5f;  // slope per +1 north
+  return glm::normalize(glm::vec3(-dhdx, 1.0f, -dhdz));
+}
+
 // Server's facing string -> Y-axis yaw in radians.
 // Matches App.cpp's facingToYaw exactly; duplicated here so the entity
 // renderer doesn't pull in App-level headers.
@@ -139,7 +170,7 @@ float facingToYaw(const std::string& facing) {
 }
 
 using Instance = EntityRenderer::Instance;
-static_assert(sizeof(Instance) == 16, "Instance must be tightly packed");
+static_assert(sizeof(Instance) == 28, "Instance must be tightly packed (x,y,z,rotY,nx,ny,nz)");
 
 }  // namespace
 
@@ -258,10 +289,13 @@ void EntityRenderer::rebuildItems(const std::vector<shared::DroppedItemState>& i
   for (const auto& it : items) {
     if (it.tileX < 0 || it.tileY < 0
         || it.tileX >= map.width || it.tileY >= map.height) continue;
-    const float y = tileWorldY(map, it.tileX, it.tileY);
+    const float y = tileDropY(map, it.tileX, it.tileY);
     if (itemModels_.has(it.itemId)) {
+      // Tilt the (tile-sized, flat) model onto the tile surface so it sits flush.
+      const glm::vec3 n = tileUpNormal(map, it.tileX, it.tileY);
       itemModelGroups_[it.itemId].push_back(ModelLibrary::Instance{
-          static_cast<float>(it.tileX), y, static_cast<float>(it.tileY), 0.0f });
+          static_cast<float>(it.tileX), y, static_cast<float>(it.tileY), 0.0f,
+          n.x, n.y, n.z });
     } else {
       boxInsts.push_back({ static_cast<float>(it.tileX), y,
                            static_cast<float>(it.tileY), 0.0f });
@@ -337,6 +371,15 @@ void EntityRenderer::renderAnimatedItems(render::Shader& skinnedShader, float dt
     if (!itemModels_.isAnimated(id)) continue;
     for (const auto& in : insts) {
       glm::mat4 m = glm::translate(glm::mat4(1.0f), glm::vec3(in.x, in.y, in.z));
+      // Tilt onto the tile surface (matches the static path's shader tilt).
+      const glm::vec3 n(in.nx, in.ny, in.nz);
+      const float c = glm::dot(glm::vec3(0, 1, 0), n);
+      if (c < -0.9999f) {
+        m = glm::rotate(m, 3.14159265f, glm::vec3(1, 0, 0));
+      } else if (c < 0.9999f) {
+        const glm::vec3 axis = glm::normalize(glm::cross(glm::vec3(0, 1, 0), n));
+        m = glm::rotate(m, std::acos(std::clamp(c, -1.0f, 1.0f)), axis);
+      }
       itemModels_.drawAnimatedAt(skinnedShader, id, m);
     }
   }
@@ -508,9 +551,11 @@ void EntityRenderer::renderItemGeometry(render::Shader& maskShader,
 
   auto& models = const_cast<ModelLibrary&>(itemModels_);
   if (!itemId.empty() && models.has(itemId) && !models.isAnimated(itemId)) {
-    // Model-backed item: silhouette its actual model.
+    // Model-backed item: silhouette its actual model — carry the tile up-normal
+    // so the mask matches the tilted main render.
     models.drawStaticInstanced(maskShader, itemId,
-        { ModelLibrary::Instance{ inst.x, inst.y, inst.z, inst.rotY } });
+        { ModelLibrary::Instance{ inst.x, inst.y, inst.z, inst.rotY,
+                                  inst.nx, inst.ny, inst.nz } });
   } else if (itemOutlineVao_ && outlineInstanceVbo_) {
     // Placeholder box (or animated model — no skinned mask here).
     glNamedBufferSubData(outlineInstanceVbo_, 0, sizeof(Instance), &inst);

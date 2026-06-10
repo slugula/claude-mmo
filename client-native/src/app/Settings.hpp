@@ -70,6 +70,7 @@ struct AppSettings {
   float       waterOffset          = 0.00f;
   float       waterRefraction      = 0.04f;
   float       waterDepthFade       = 5.00f;
+  float       waterShoreDepth      = 0.85f;
   float       waterFoamContact     = 0.30f;
   float       waterSpecular        = 0.70f;
   std::string waterCausticMap;                // relative path, e.g. "assets/water_caustic.png" ("" = none)
@@ -111,8 +112,8 @@ inline bool saveSettings(const AppSettings& s, const std::filesystem::path& path
                s.waterClarity, s.waterCausticIntensity, s.waterCausticScale, s.waterCausticSpeed);
   std::fprintf(f, "waterFoamWidth=%f\nwaterFoamSpeed=%f\nwaterFoamScale=%f\nwaterParallaxDepth=%f\n",
                s.waterFoamWidth, s.waterFoamSpeed, s.waterFoamScale, s.waterParallaxDepth);
-  std::fprintf(f, "waterOffset=%f\nwaterRefraction=%f\nwaterDepthFade=%f\nwaterFoamContact=%f\nwaterSpecular=%f\n",
-               s.waterOffset, s.waterRefraction, s.waterDepthFade, s.waterFoamContact, s.waterSpecular);
+  std::fprintf(f, "waterOffset=%f\nwaterRefraction=%f\nwaterDepthFade=%f\nwaterShoreDepth=%f\nwaterFoamContact=%f\nwaterSpecular=%f\n",
+               s.waterOffset, s.waterRefraction, s.waterDepthFade, s.waterShoreDepth, s.waterFoamContact, s.waterSpecular);
   std::fprintf(f, "waterCausticMap=%s\n", s.waterCausticMap.c_str());
   std::fprintf(f, "bankPosX=%f\nbankPosY=%f\n", s.bankPosX, s.bankPosY);
   std::fclose(f);
@@ -165,7 +166,8 @@ inline bool loadSettings(AppSettings& s, const std::filesystem::path& path) {
         fF("waterFoamWidth", s.waterFoamWidth) || fF("waterFoamSpeed", s.waterFoamSpeed) ||
         fF("waterFoamScale", s.waterFoamScale) || fF("waterParallaxDepth", s.waterParallaxDepth) ||
         fF("waterOffset", s.waterOffset) || fF("waterRefraction", s.waterRefraction) ||
-        fF("waterDepthFade", s.waterDepthFade) || fF("waterFoamContact", s.waterFoamContact) ||
+        fF("waterDepthFade", s.waterDepthFade) || fF("waterShoreDepth", s.waterShoreDepth) ||
+        fF("waterFoamContact", s.waterFoamContact) ||
         fF("waterSpecular", s.waterSpecular) ||
         fF("bankPosX", s.bankPosX) || fF("bankPosY", s.bankPosY)) {
       continue;

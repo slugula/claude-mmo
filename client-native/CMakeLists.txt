@@ -56,6 +56,8 @@ add_library(game_core STATIC
   src/world/WallSystem.cpp
   src/world/WaterMesh.cpp
   src/world/WaterRenderer.cpp
+  src/world/OverlayRenderer.cpp
+  src/world/AttachmentRenderer.cpp
   src/world/SpriteCache.cpp
 )
 

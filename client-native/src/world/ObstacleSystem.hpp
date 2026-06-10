@@ -114,6 +114,13 @@ public:
     return const_cast<ModelLibrary&>(models_).aabb(id, outMin, outMax);
   }
 
+  // Narrow-phase ray-mesh pick for object `id` at world matrix `world`.
+  // 1 = mesh hit (writes t), 0 = missed mesh, -1 = no precise geom (use AABB).
+  int rayHit(const std::string& id, const glm::mat4& world,
+             const glm::vec3& ro, const glm::vec3& rd, float& t) const {
+    return models_.rayHitWorld(id, world, ro, rd, t);
+  }
+
   // Resolve the object id a tile should render/pick: its depleted reference when
   // `depleted`, else its own obstacle id. "" = render nothing while depleted.
   std::string effectiveId(const std::string& obs, bool depleted) const;

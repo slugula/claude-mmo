@@ -23,6 +23,8 @@
 #include "world/TerrainBuilder.hpp"
 #include "world/WallSystem.hpp"
 #include "world/WaterRenderer.hpp"
+#include "world/OverlayRenderer.hpp"
+#include "world/AttachmentRenderer.hpp"
 
 #include <glad/glad.h>
 #include <glm/glm.hpp>
@@ -143,6 +145,7 @@ private:
   camera::GameCamera    camera_;
   world::WaterRenderer  waterRenderer_;
   world::WaterUniforms  waterUniforms_;
+  world::OverlayRenderer overlayRenderer_;
 
   // Raw GPU buffers for incremental terrain updates.
   // These are the VBOs owned by terrainMesh_; we cache them for SubData calls.
@@ -188,6 +191,12 @@ private:
   int                   pillarOrient_    = 0;        // 0/2/4/6 = tile corners (Q/E 90° steps)
   std::string           wallSubtype_     = "wall";   // wall variant id (mesh attach later)
   std::string           pillarSubtype_   = "pillar"; // pillar variant id
+
+  // PaintOverlay tool state
+  int                   overlayShape_    = 0;        // 0..11 (OverlayShapes.hpp)
+  int                   overlayMaterial_ = 1;        // index into world::overlayMaterials() (1 = dirt_path)
+  int                   overlayRotation_ = 0;        // 0..3 quarter-turns (Q/E)
+  std::size_t           overlayHash_     = SIZE_MAX; // last-built overlayTiles signature
 
   // Active terrain colour (PaintTerrain tool)
   float paletteR_ = 0.49f, paletteG_ = 0.78f, paletteB_ = 0.31f;
@@ -294,6 +303,20 @@ private:
   bool                        dbPreviewHasAnim_  = false;
   std::vector<std::string>    dbPreviewClips_;    // clip names from the loaded model
   glm::vec3                   dbPreviewRot_ = glm::vec3(0.f);  // euler degrees applied in preview
+
+  // ---- Held-weapon grip preview (Items tab) ----
+  // Renders the player model holding the edited item's equipped weapon so grip
+  // pos/rot/scale can be tuned visually, then saved to the DB.
+  world::SkinnedMesh          playerPreview_;          // player.glb for grip preview
+  world::AttachmentRenderer   gripAttach_;             // draws the weapon at the grip
+  bool                        playerPreviewTried_ = false;
+  bool                        gripPreview_   = true;   // show in-hand vs spinning weapon
+  int                         gripClipIndex_ = -1;     // player clip used in the preview
+  // Manual orbit for the grip preview (drag on the image; no auto-spin).
+  float                       gripYaw_       = 2.2f;   // azimuth (radians)
+  float                       gripPitch_     = 0.20f;  // elevation (radians)
+  bool                        gripDragging_  = false;
+  void                        dbDrawGripPreview(const ItemDef& d, const glm::mat4& viewProj, float dt);
 
   EntityClient         dbClient_;
   bool                 showDbWindow_  = false;

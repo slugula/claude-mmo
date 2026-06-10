@@ -34,6 +34,7 @@ uniform vec3  uFoamColor;
 uniform float uRefractionStrength;  // UV distortion magnitude for underwater view (default 0.04)
 uniform float uDepthFade;           // how fast colour transitions shallow→deep (default 5.0)
 uniform float uFoamContactWidth;    // world-space depth for contact/intersection foam (default 0.3)
+uniform float uShoreDepth;          // 0–1: strength of shore-distance "fake depth" for flush water
 uniform float uNear;                // camera near plane
 uniform float uFar;                 // camera far plane
 
@@ -103,8 +104,16 @@ void main() {
     float columnDepth = max(0.0, linSceneD - linWaterD);
 
     // ---- Depth-based water colour (shallow → deep) -------------------------
-    // Exponential fade: shallow near intersections, deep in open water.
-    float depthFactor = 1.0 - exp(-columnDepth * uDepthFade);
+    // Two depth sources, combined by max():
+    //   1. GEOMETRIC — real submerged geometry (carved beds, objects) via the
+    //      water column. Near-zero for flush-draped water.
+    //   2. SHORE-DISTANCE "fake depth" — open water (shoreWeight→0) reads deep,
+    //      shoreline (shoreWeight→1) reads shallow. This is what gives flush
+    //      water a believable depth gradient without any geometric column.
+    float geoDepth   = 1.0 - exp(-columnDepth * uDepthFade);
+    float openness   = 1.0 - vShoreWeight;          // 0 at shore, 1 in open water
+    float shoreDepth = openness * openness * uShoreDepth;  // ease-in so edges stay shallow
+    float depthFactor = max(geoDepth, shoreDepth);
     vec3  waterColor  = mix(uShallowColor, uDeepColor, depthFactor);
 
     // ---- Refraction: distorted sample of underwater scene ------------------
@@ -134,22 +143,22 @@ void main() {
                    * (1.0 - vShoreWeight * 0.7);
     waterColor += vec3(sparkle * 0.80, sparkle * 0.90, sparkle * 1.00);
 
-    // ---- Contact / intersection foam ---------------------------------------
-    // Fires wherever scene geometry is within uFoamContactWidth world-units of
-    // the water surface — handles terrain edges AND mesh objects automatically.
-    float contactFactor = 1.0 - smoothstep(0.0, uFoamContactWidth, columnDepth);
+    // ---- Shoreline foam (driven by distance-to-land) -----------------------
+    // For flush water the geometric column is ~0 everywhere, so contact foam
+    // can't tell shore from open water. shore_weight knows exactly where land
+    // is, so foam is banded along the shoreline. uFoamWidth sets band width.
+    float foamBand = smoothstep(1.0 - clamp(uFoamWidth, 0.05, 1.0), 1.0, vShoreWeight);
+    // Also fire foam where genuine geometry breaks the surface (objects/beds).
+    float contactFactor = (1.0 - smoothstep(0.0, uFoamContactWidth, columnDepth))
+                          * step(0.001, columnDepth);
+    float foamFactor = max(foamBand, contactFactor);
     vec2  foamUV1 = vUV * uFoamScale + vec2(uTime * uFoamSpeed,       uTime * uFoamSpeed * 0.7);
     vec2  foamUV2 = vUV * uFoamScale * 0.7 + vec2(uTime * uFoamSpeed * 0.6 + 3.7,
                                                     uTime * uFoamSpeed * 0.4 + 1.3);
-    float fn1     = foamNoise(foamUV1 / uFoamScale, uTime);
-    float fn2     = foamNoise(foamUV2 / uFoamScale, uTime * 0.8);
-    float contactFoam = contactFactor * mix(fn1, fn2, 0.5) * uFoamWidth;
-    waterColor = mix(waterColor, uFoamColor, clamp(contactFoam, 0.0, 1.0));
-
-    // ---- Shore-zone foam (secondary, smooths tile-boundary blending) -------
-    float shoreFactor = smoothstep(max(0.0, 1.0 - uFoamWidth * 0.5), 1.0, vShoreWeight);
-    float shoreFoam   = shoreFactor * foamNoise(vUV + vec2(uTime * uFoamSpeed * 0.6), uTime);
-    waterColor = mix(waterColor, uFoamColor, shoreFoam * 0.5);
+    float fn1 = foamNoise(foamUV1 / uFoamScale, uTime);
+    float fn2 = foamNoise(foamUV2 / uFoamScale, uTime * 0.8);
+    float foam = foamFactor * mix(0.55, 1.0, mix(fn1, fn2, 0.5));
+    waterColor = mix(waterColor, uFoamColor, clamp(foam, 0.0, 1.0));
 
     // Fully opaque output — all transparency handled in-shader above.
     fragColor = vec4(waterColor, 1.0);

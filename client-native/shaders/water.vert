@@ -18,10 +18,15 @@ out vec4  vClipPos;
 
 void main() {
     // Gentle wave displacement — fully suppressed at shore so edges stay calm.
+    // UPWARD-ONLY: the water sits flush on the terrain, so a wave trough that
+    // dipped below the surface would expose the ground underneath. Remapping the
+    // wave from [-1,1] to [0,1] keeps the surface at or above its flush resting
+    // height — it only ever rises, never sinks into the terrain.
     float waveDamp = 1.0 - aShoreWeight;
     float wave = sin(aPos.x * uWaveScale        + uTime * uWaveSpeed) *
                  cos(aPos.z * uWaveScale * 0.7  + uTime * uWaveSpeed * 0.8);
-    vec3 displaced = aPos + vec3(0.0, wave * uWaveHeight * waveDamp, 0.0);
+    float waveUp = wave * 0.5 + 0.5;   // [0,1]
+    vec3 displaced = aPos + vec3(0.0, waveUp * uWaveHeight * waveDamp, 0.0);
 
     vUV          = aUV;
     vShoreWeight = aShoreWeight;

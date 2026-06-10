@@ -7,6 +7,9 @@
 #include "shared/SharedTypesJson.hpp"
 #include "world/GltfLoader.hpp"
 #include "world/TerrainBuilder.hpp"
+#include "world/OverlayMaterials.hpp"
+#include "world/OverlayShapes.hpp"
+#include "world/SkeletonConfig.hpp"
 
 #include <glad/glad.h>
 #include <GLFW/glfw3.h>
@@ -24,8 +27,11 @@
 #include <commdlg.h>
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
+#include <cstdint>
 #include <unordered_set>
+#include <unordered_map>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -33,6 +39,19 @@
 namespace editor {
 
 namespace {
+
+// Water is stored in the overlay layer (materialId == water).
+inline bool overlayIsWater(const shared::WorldMapFile& map, int x, int y) {
+  for (const auto& o : map.overlayTiles)
+    if (o.materialId == shared::kWaterMaterialId && o.tileX == x && o.tileY == y)
+      return true;
+  return false;
+}
+inline bool mapHasWater(const shared::WorldMapFile& map) {
+  for (const auto& o : map.overlayTiles)
+    if (o.materialId == shared::kWaterMaterialId) return true;
+  return false;
+}
 
 constexpr int   kInitialWidth  = 1440;
 constexpr int   kInitialHeight = 900;
@@ -242,6 +261,57 @@ void EditorApp::dbLoadPreviewModel(const std::string& modelPath, bool forceReloa
   }
 }
 
+void EditorApp::dbDrawGripPreview(const ItemDef& d, const glm::mat4& viewProj, float dt) {
+  // Lazy-load the player model once.
+  if (!playerPreview_.isLoaded() && !playerPreviewTried_) {
+    playerPreviewTried_ = true;
+    if (playerPreview_.load(resolveFromExe("assets/models/player.glb"))) {
+      const int idle = playerPreview_.findClipIndex("Idle_Loop");
+      gripClipIndex_ = idle >= 0 ? idle : 0;
+      playerPreview_.setClip(playerPreview_.clipName());
+    }
+  }
+  if (!playerPreview_.isLoaded() || !skinnedShader_.isValid()) return;
+
+  // Drive the chosen clip.
+  const float clipDur = playerPreview_.clipDuration(gripClipIndex_, 1.0f);
+  static float s_t = 0.0f; s_t += dt; if (clipDur > 0 && s_t > clipDur) s_t = std::fmod(s_t, clipDur);
+
+  skinnedShader_.use();
+  skinnedShader_.setMat4 ("u_viewProj",        viewProj);
+  skinnedShader_.setMat4 ("u_lightViewProj",   glm::mat4(1.f));
+  skinnedShader_.setVec3 ("u_lightDir",        glm::vec3(0.3f, -1.f, 0.3f));
+  skinnedShader_.setVec3 ("u_paletteLevels",   glm::vec3(0.f));
+  skinnedShader_.setFloat("u_paletteEnabled",  0.f);
+  skinnedShader_.setFloat("u_ambient",         0.40f);
+  skinnedShader_.setFloat("u_diffuse",         0.75f);
+  skinnedShader_.setFloat("u_lightingEnabled", 1.f);
+  skinnedShader_.setInt  ("u_shadowMap",       1);
+  skinnedShader_.setFloat("u_shadowsEnabled",  0.f);
+  skinnedShader_.setFloat("u_shadowDarkness",  0.f);
+  skinnedShader_.setFloat("u_shadowBias",      0.f);
+  skinnedShader_.setFloat("u_fogEnabled",      0.f);
+  skinnedShader_.setVec3 ("u_fogColor",        glm::vec3(0.f));
+  skinnedShader_.setFloat("u_fogDensity",      0.f);
+  skinnedShader_.setFloat("u_fogStart",        0.f);
+  skinnedShader_.setVec3 ("u_color",           glm::vec3(0.75f, 0.78f, 0.85f));
+
+  const glm::mat4 playerModel(1.0f);  // player at origin in the preview
+  playerPreview_.renderAs(skinnedShader_, playerModel, gripClipIndex_, s_t);
+
+  // Attach the weapon at the current grip — same math as the game client.
+  const std::string joint = d.gripJoint.empty()
+      ? world::resolveSocketJoint(world::kSocketWeaponMain) : d.gripJoint;
+  const int jidx = playerPreview_.findJointIndex(joint);
+  if (jidx >= 0 && gripAttach_.valid()) {
+    const glm::mat4 grip = world::gripMatrix(
+        glm::vec3(d.gripPosX, d.gripPosY, d.gripPosZ),
+        glm::vec3(d.gripRotX, d.gripRotY, d.gripRotZ), d.gripScale);
+    const glm::mat4 weaponWorld = playerModel * playerPreview_.jointModelMatrix(jidx) * grip;
+    gripAttach_.draw(d.modelEquipped, weaponWorld, viewProj);
+  }
+}
+
 void EditorApp::dbRenderPreview(float dt) {
   if (!dbPreviewFbo_) return;
 
@@ -252,6 +322,29 @@ void EditorApp::dbRenderPreview(float dt) {
   glViewport(0, 0, 256, 256);
   glClearColor(0.10f, 0.12f, 0.15f, 1.0f);
   glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+  // Items tab: when the edited item has an equipped model and "preview in hand"
+  // is on, show the player holding it (for grip tuning) instead of the spinning
+  // weapon. Builds its own camera + restores FBO, then returns.
+  if (dbTab_ == 0 && gripPreview_ && !dbEditItem_.modelEquipped.empty()) {
+    glEnable(GL_DEPTH_TEST);
+    // Frame the player: ~2 units tall, centred at hip height. Orbit is manual
+    // (drag on the preview image) — no auto-spin, so grip tweaks are readable.
+    const float az = gripYaw_;
+    const float elev = gripPitch_;
+    const glm::vec3 center(0.0f, 1.0f, 0.0f);
+    const float dist = 3.2f;
+    const glm::vec3 eye = center + glm::vec3(
+        dist * std::cos(az) * std::cos(elev),
+        dist * std::sin(elev),
+        dist * std::sin(az) * std::cos(elev));
+    const glm::mat4 view = glm::lookAtLH(eye, center, glm::vec3(0, 1, 0));
+    const glm::mat4 proj = glm::perspectiveLH(glm::radians(40.0f), 1.0f, 0.05f, 50.0f);
+    dbDrawGripPreview(dbEditItem_, proj * view, dt);
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glViewport(0, 0, viewport3dW_, viewport3dH_);
+    return;
+  }
 
   // Common camera setup
   const bool hasContent = dbPreviewHasAnim_ ? dbPreviewSkinned_.isLoaded()
@@ -368,6 +461,20 @@ bool EditorApp::init() {
                             resolveFromExe(kWaterNormalPath).string())) {
     std::fprintf(stderr, "[Editor] water renderer init failed\n");
     // Non-fatal: editor still works, water just won't render.
+  }
+
+  if (!overlayRenderer_.init(resolveFromExe("shaders/overlay.vert").string(),
+                             resolveFromExe("shaders/overlay.frag").string(),
+                             resolveFromExe("").string())) {
+    std::fprintf(stderr, "[Editor] overlay renderer init failed\n");
+    // Non-fatal: editor still works, overlays just won't render.
+  }
+
+  // Grip-preview weapon renderer (Items tab) — reuses the preview shader.
+  if (!gripAttach_.init(resolveFromExe("shaders/preview.vert").string(),
+                        resolveFromExe("shaders/preview.frag").string(),
+                        [](const std::string& rel){ return resolveFromExe(rel.c_str()); })) {
+    std::fprintf(stderr, "[Editor] grip attachment renderer init failed\n");
   }
 
   if (!shadowMap_.init(kShadowMapSize)) {
@@ -507,6 +614,9 @@ void EditorApp::renderFrame(float dt) {
     } else if (activeTool_ == EditorTool::PlacePillar) {
       if (qEdge) pillarOrient_ = (pillarOrient_ + 2) & 7;     // 90° CCW (corners)
       if (eEdge) pillarOrient_ = (pillarOrient_ + 6) & 7;     // 90° CW
+    } else if (activeTool_ == EditorTool::PaintOverlay) {
+      if (qEdge) overlayRotation_ = (overlayRotation_ + 3) & 3;  // 90° CCW
+      if (eEdge) overlayRotation_ = (overlayRotation_ + 1) & 3;  // 90° CW
     }
   }
 
@@ -753,6 +863,43 @@ void EditorApp::render3DViewport(float dt) {
   terrainShader_.setFloat("u_aoStrength",  aoStrength_);
   terrainMesh_.draw();
 
+  // Overlay surfaces (paths / floors / shaped ground). Rebuild lazily when the
+  // overlayTiles signature changes (covers paint, undo/redo, load, resize).
+  if (overlayRenderer_.valid()) {
+    std::size_t h = map_.overlayTiles.size() * 1469598103934665603ull;
+    for (const auto& o : map_.overlayTiles)
+      h = (h ^ (static_cast<std::size_t>(o.tileX) * 73856093u ^
+                static_cast<std::size_t>(o.tileY) * 19349663u ^
+                static_cast<std::size_t>(o.shape) * 83492791u ^
+                static_cast<std::size_t>(o.materialId) * 2654435761u)) * 1099511628211ull;
+    // Fold terrain heights into the signature so overlays re-drape smoothly
+    // when the user sculpts/raises/lowers the ground beneath them.
+    for (float vhgt : map_.vertexHeights)
+      h = (h ^ static_cast<std::size_t>(std::bit_cast<std::uint32_t>(vhgt))) * 1099511628211ull;
+    if (h != overlayHash_) { overlayRenderer_.rebuild(map_); overlayHash_ = h; }
+
+    world::OverlayLighting ol;
+    ol.viewProj        = viewProj;
+    ol.lightViewProj   = lightVP;
+    ol.lightDir        = sunDir;
+    ol.paletteLevels   = glm::vec3(static_cast<float>(paletteHues_),
+                                   static_cast<float>(paletteSats_),
+                                   static_cast<float>(paletteLums_));
+    ol.paletteEnabled  = palette_ ? 1.0f : 0.0f;
+    ol.ambient         = ambient_;
+    ol.diffuse         = diffuse_;
+    ol.lightingEnabled = lightingEnabled_ ? 1.0f : 0.0f;
+    ol.shadowsEnabled  = shadowsEnabled_  ? 1.0f : 0.0f;
+    ol.shadowDarkness  = 0.35f;
+    ol.shadowBias      = 0.0005f;
+    ol.fogEnabled      = fogEnabled_ ? 1.0f : 0.0f;
+    ol.fogColor        = fogColor_;
+    ol.fogDensity      = fogDensity_;
+    ol.fogStart        = fogStart_;
+    ol.shadowMapUnit   = 1;
+    overlayRenderer_.render(ol);
+  }
+
   // Obstacles
   obstacleShader_.use();
   obstacleShader_.setMat4 ("u_viewProj",       viewProj);
@@ -859,7 +1006,7 @@ void EditorApp::render3DViewport(float dt) {
   // ---- Water pass -------------------------------------------------------
   // Resolve colour + depth (full opaque scene incl. submerged fish), then draw
   // depth-based refraction water on top.
-  if (!map_.waterTiles.empty() && waterRenderer_.valid()) {
+  if (mapHasWater(map_) && waterRenderer_.valid()) {
     viewport3dFbo_->resolve();
     viewport3dFbo_->resolveDepth();
 
@@ -1030,7 +1177,7 @@ void EditorApp::drawToolbar() {
   toolBtn("NPC",       EditorTool::PlaceNPC);
   toolBtn("Spawn",     EditorTool::PlaceSpawn);
   toolBtn("Collision", EditorTool::PaintBlocking);
-  toolBtn("Water",     EditorTool::PaintWater);
+  toolBtn("Overlay",   EditorTool::PaintOverlay);
 
   ImGui::Separator();
   ImGui::TextDisabled("-- Brush --");
@@ -1082,6 +1229,7 @@ void EditorApp::drawWaterSettings() {
     ImGui::SetNextItemWidth(-1); ImGui::ColorEdit3("Shallow##w", &u.shallowColor.x);
     ImGui::SetNextItemWidth(-1); ImGui::ColorEdit3("Deep##w",    &u.deepColor.x);
     ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##dfade", &u.depthFade,   0.5f, 20.0f, "DepthFade:%.1f");
+    ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##shdep", &u.shoreDepth,  0.0f, 1.0f,  "ShoreDepth:%.2f");
     float prevOff = u.waterOffset;
     ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("##woff",  &u.waterOffset, 0.0f, 0.5f,  "WaterLevel:%.3f");
     if (u.waterOffset != prevOff)  // rebuild mesh — water Y changed
@@ -1274,6 +1422,59 @@ void EditorApp::drawProperties() {
       npcBtn("chicken");
       npcBtn("shopkeeper");
     }
+  }
+  else if (activeTool_ == EditorTool::PaintOverlay) {
+    ImGui::TextDisabled("Material");
+    const auto& mats = world::overlayMaterials();
+    for (int i = 1; i < static_cast<int>(mats.size()); ++i) {  // skip 0 = none
+      const bool a = (overlayMaterial_ == i);
+      if (a) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.55f, 0.34f, 0.10f, 1.0f));
+      if (ImGui::Button(mats[static_cast<std::size_t>(i)].name.c_str(), ImVec2(-1, 0)))
+        overlayMaterial_ = i;
+      if (a) ImGui::PopStyleColor();
+    }
+
+    ImGui::Separator();
+    ImGui::TextDisabled("Shape");
+    // 12 shape previews in a 4-column grid. White = overlay coverage, dark =
+    // underlay (terrain) showing through. Click to select.
+    const auto& shapes = world::overlayShapeTriangles();
+    ImDrawList*  dl   = ImGui::GetWindowDrawList();
+    const float  cell = 40.0f;
+    const ImU32  cOverlay = IM_COL32(235, 235, 235, 255);
+    const ImU32  cUnder   = IM_COL32(40, 70, 40, 255);
+    const ImU32  cSel     = IM_COL32(230, 170, 40, 255);
+    for (int s = 0; s < world::kNumOverlayShapes; ++s) {
+      if (s % 4 != 0) ImGui::SameLine();
+      ImGui::PushID(s);
+      const ImVec2 p0 = ImGui::GetCursorScreenPos();
+      ImGui::InvisibleButton("##shape", ImVec2(cell, cell));
+      if (ImGui::IsItemClicked()) overlayShape_ = s;
+      const ImVec2 p1 = ImVec2(p0.x + cell, p0.y + cell);
+      dl->AddRectFilled(p0, p1, cUnder);
+      // v=1 (north) maps to top (p0.y); v=0 (south) maps to bottom (p1.y).
+      // Apply the active rotation so the preview reflects what gets painted.
+      auto toPx = [&](float u, float v) {
+        world::rotateUV(u, v, overlayRotation_);
+        return ImVec2(p0.x + u * cell, p0.y + (1.0f - v) * cell);
+      };
+      for (const auto& t : shapes[static_cast<std::size_t>(s)])
+        dl->AddTriangleFilled(toPx(t.u0, t.v0), toPx(t.u1, t.v1),
+                              toPx(t.u2, t.v2), cOverlay);
+      dl->AddRect(p0, p1, overlayShape_ == s ? cSel : IM_COL32(90, 90, 90, 255),
+                  0.0f, 0, overlayShape_ == s ? 2.5f : 1.0f);
+      ImGui::PopID();
+    }
+    ImGui::Spacing();
+    ImGui::Text("Shape %d", overlayShape_);
+    ImGui::Separator();
+    ImGui::TextDisabled("Rotation (Q / E)");
+    ImGui::Text("%d\xC2\xB0", (overlayRotation_ & 3) * 90);
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Q -90##ov")) overlayRotation_ = (overlayRotation_ + 3) & 3;
+    ImGui::SameLine();
+    if (ImGui::SmallButton("E +90##ov")) overlayRotation_ = (overlayRotation_ + 1) & 3;
+    ImGui::TextDisabled("L-click: paint  R-click: erase");
   }
 
   ImGui::End();
@@ -1513,6 +1714,14 @@ void EditorApp::drawGridView() {
   auto sy       = [&](float tyf) { return oy + tyf * z; };
   auto colLeftX = [&](int tx)    { return sx(static_cast<float>(tx) + 1.0f); }; // rect left edge
 
+  // O(1) per-tile overlay lookup, built once per frame. (Scanning the whole
+  // overlayTiles vector for every visible tile was O(tiles × overlays) — a hard
+  // hang on large, heavily-painted maps.)
+  std::unordered_map<int, const shared::OverlayTile*> ovByTile;
+  ovByTile.reserve(map_.overlayTiles.size() * 2);
+  for (const auto& ov : map_.overlayTiles)
+    ovByTile[ov.tileY * W + ov.tileX] = &ov;
+
   // Visible-X cull range in flipped space (u = W-1-tx is the unflipped index).
   const int u0 = std::max(0, static_cast<int>((-gridOffX_) / z));
   const int u1 = std::min(W, static_cast<int>((-gridOffX_ + canvasSize.x) / z) + 2);
@@ -1529,12 +1738,6 @@ void EditorApp::drawGridView() {
 
       float fr = 0.29f, fg = 0.49f, fb = 0.16f;
       hexToRgbf(tile.groundColor.c_str(), fr, fg, fb);
-
-      // Water tiles render as blue in the 2D grid
-      const bool isWaterTile = std::any_of(
-          map_.waterTiles.begin(), map_.waterTiles.end(),
-          [tx, ty](const shared::WaterTile& w){ return w.tileX == tx && w.tileY == ty; });
-      if (isWaterTile) { fr = 0.15f; fg = 0.40f; fb = 0.80f; }
 
       if (showHeightOverlay_) {
         const int vW = W + 1;
@@ -1558,6 +1761,24 @@ void EditorApp::drawGridView() {
       dl->AddRectFilled(ImVec2(px, py), ImVec2(px + z, py + z),
         IM_COL32(static_cast<int>(fr * 255), static_cast<int>(fg * 255),
                   static_cast<int>(fb * 255), 255));
+
+      // Overlay shape drawn over the tile in the material colour. (u,v) maps to
+      // the tile rect the same way the minimap rasteriser does, so the 2D grid,
+      // minimap, and 3D view agree on shape orientation.
+      if (auto it = ovByTile.find(ty * W + tx); it != ovByTile.end()) {
+        const auto& ov = *it->second;
+        const auto& mats = world::overlayMaterials();
+        if (ov.materialId > 0 && ov.materialId < static_cast<int>(mats.size())) {
+          const auto& m = mats[static_cast<std::size_t>(ov.materialId)];
+          const ImU32 col = IM_COL32(m.mr, m.mg, m.mb, 255);
+          auto toPx = [&](float u, float v) {
+            world::rotateUV(u, v, ov.rotation);
+            return ImVec2(px + u * z, py + (1.0f - v) * z);
+          };
+          for (const auto& t : world::overlayShapeTriangles()[static_cast<std::size_t>(ov.shape)])
+            dl->AddTriangleFilled(toPx(t.u0, t.v0), toPx(t.u1, t.v1), toPx(t.u2, t.v2), col);
+        }
+      }
 
       // Walkability overlay
       if (showWalkabilityOverlay_ && !tile.walkable) {
@@ -1707,10 +1928,10 @@ void EditorApp::drawGridView() {
           npcSpawns_.erase(std::remove_if(npcSpawns_.begin(), npcSpawns_.end(),
             [tx, ty](const shared::NpcSpawn& n){ return n.tileX == tx && n.tileY == ty; }),
             npcSpawns_.end());
-          auto& wt = map_.waterTiles;
-          wt.erase(std::remove_if(wt.begin(), wt.end(),
-            [tx, ty](const shared::WaterTile& w){ return w.tileX == tx && w.tileY == ty; }),
-            wt.end());
+          auto& ov = map_.overlayTiles;
+          ov.erase(std::remove_if(ov.begin(), ov.end(),
+            [tx, ty](const shared::OverlayTile& o){ return o.tileX == tx && o.tileY == ty; }),
+            ov.end());
           rebuildObstacles();
           waterRenderer_.rebuild(map_, waterUniforms_.waterOffset);
           minimap_.rebuild(map_, npcSpawns_);
@@ -1921,29 +2142,26 @@ void EditorApp::applyToolAt(int tx, int ty, float dt, bool rightClick,
       tile.walkable = rightClick;
       break;
     }
-    case EditorTool::PaintWater: {
-      if (rightClick) {
-        auto& wt = map_.waterTiles;
-        wt.erase(std::remove_if(wt.begin(), wt.end(),
-            [tx, ty](const shared::WaterTile& w){ return w.tileX == tx && w.tileY == ty; }),
-            wt.end());
-        tile.walkable = true;
-      } else {
-        // Avoid duplicate entries
-        const bool already = std::any_of(map_.waterTiles.begin(), map_.waterTiles.end(),
-            [tx, ty](const shared::WaterTile& w){ return w.tileX == tx && w.tileY == ty; });
-        if (!already) {
-          map_.waterTiles.push_back({ tx, ty });
-          // Clear any obstacle first (setObstacleAtTile(none) resets walkable to
-          // true internally, so we must force it back to false afterwards).
-          setObstacleAtTile(tx, ty, "");
+    case EditorTool::PaintOverlay: {
+      // One overlay per tile: remove any existing overlay here first.
+      auto& ov = map_.overlayTiles;
+      const bool hadWater = overlayIsWater(map_, tx, ty);
+      ov.erase(std::remove_if(ov.begin(), ov.end(),
+          [tx, ty](const shared::OverlayTile& o){
+            return o.tileX == tx && o.tileY == ty; }),
+          ov.end());
+      if (!rightClick && overlayMaterial_ > 0) {
+        ov.push_back(shared::OverlayTile{ tx, ty, overlayShape_, overlayMaterial_,
+                                          overlayRotation_ });
+        // Water material auto-blocks the tile, but drapes flush on the terrain
+        // (no carving / no terrain modification). Obstacles left untouched.
+        if (overlayMaterial_ == shared::kWaterMaterialId)
           tile.walkable = false;
-          bakeWaterBank(tx, ty);
-          dirtyTerrain = true;
-          dirtyObstacles = true;
-        }
+      } else if (rightClick && hadWater) {
+        // Erased a water overlay — restore walkability.
+        tile.walkable = true;
       }
-      dirtyWater   = true;
+      dirtyWater   = true;   // overlay + water share the rebuild path
       dirtyMinimap = true;
       break;
     }
@@ -1954,10 +2172,11 @@ void EditorApp::applyToolAt(int tx, int ty, float dt, bool rightClick,
         [tx, ty](const shared::NpcSpawn& n){ return n.tileX == tx && n.tileY == ty; }),
         npcSpawns_.end());
       {
-        auto& wt = map_.waterTiles;
-        wt.erase(std::remove_if(wt.begin(), wt.end(),
-            [tx, ty](const shared::WaterTile& w){ return w.tileX == tx && w.tileY == ty; }),
-            wt.end());
+        auto& ov = map_.overlayTiles;
+        ov.erase(std::remove_if(ov.begin(), ov.end(),
+            [tx, ty](const shared::OverlayTile& o){
+              return o.tileX == tx && o.tileY == ty; }),
+            ov.end());
       }
       dirtyObstacles = true;
       dirtyMinimap   = true;
@@ -2037,6 +2256,7 @@ void EditorApp::initNewMap(int w, int h) {
   }
   map_.vertexHeights.assign(static_cast<std::size_t>((w + 1) * (h + 1)), 0.0f);
   map_.waterTiles.clear();
+  map_.overlayTiles.clear();
 
   rebuildTerrainGL();
   rebuildObstacles();
@@ -2089,10 +2309,7 @@ void EditorApp::setObstacleAtTile(int tx, int ty, const std::string& obs) {
     else                                    { walkable = false; blocksRanged = true; }
   }
 
-  auto isWater = [&](int x, int y) {
-    for (const auto& w : map_.waterTiles) if (w.tileX == x && w.tileY == y) return true;
-    return false;
-  };
+  auto isWater = [&](int x, int y) { return overlayIsWater(map_, x, y); };
 
   // The obstacle marker lives only on the anchor tile (one rendered instance).
   anchor.obstacle = obs;
@@ -2138,9 +2355,7 @@ void EditorApp::bakeWaterBank(int tx, int ty) {
   // Build a quick is-water lookup for this call.
   auto isWater = [&](int x, int y) {
     if (x < 0 || y < 0 || x >= W || y >= H) return false;
-    for (const auto& w : map_.waterTiles)
-      if (w.tileX == x && w.tileY == y) return true;
-    return false;
+    return overlayIsWater(map_, x, y);
   };
 
   // Sample bank height = average of non-water neighbour tile centers.
@@ -2320,9 +2535,9 @@ void EditorApp::resizeMap(int newW, int newH) {
   npcSpawns_.erase(std::remove_if(npcSpawns_.begin(), npcSpawns_.end(),
     [newW, newH](const shared::NpcSpawn& n){ return n.tileX >= newW || n.tileY >= newH; }),
     npcSpawns_.end());
-  map_.waterTiles.erase(std::remove_if(map_.waterTiles.begin(), map_.waterTiles.end(),
-    [newW, newH](const shared::WaterTile& w){ return w.tileX >= newW || w.tileY >= newH; }),
-    map_.waterTiles.end());
+  map_.overlayTiles.erase(std::remove_if(map_.overlayTiles.begin(), map_.overlayTiles.end(),
+    [newW, newH](const shared::OverlayTile& o){ return o.tileX >= newW || o.tileY >= newH; }),
+    map_.overlayTiles.end());
 
   rebuildTerrainGL(); rebuildObstacles();
   waterRenderer_.rebuild(map_, waterUniforms_.waterOffset);
@@ -2794,6 +3009,58 @@ void EditorApp::dbDrawItemsTab() {
                                           "assets/models/");
       if (!rel.empty()) d.modelEquipped = rel;
     }
+
+    // ---- Held-weapon grip (only meaningful with an equipped model) ----------
+    // Values are RELATIVE to the current player model's hand bone. The preview
+    // (top-right) shows the player holding the weapon; tune, then Save.
+    if (!d.modelEquipped.empty()) {
+      ImGui::Separator();
+      ImGui::TextDisabled("Held-weapon grip (model-relative)");
+      ImGui::Checkbox("Preview in hand##grip", &gripPreview_);
+      // Live preview of the player holding the weapon (rendered into the shared
+      // preview FBO by dbRenderPreview's grip branch). FBO is bottom-up → flip V.
+      if (gripPreview_ && dbPreviewTex_) {
+        // Reserve the area with an InvisibleButton so dragging orbits the camera
+        // and CAPTURES the mouse (otherwise ImGui drags the window instead);
+        // draw the FBO texture into that rect via the draw list.
+        const ImVec2 sz(256, 256);
+        const ImVec2 p0 = ImGui::GetCursorScreenPos();
+        ImGui::InvisibleButton("##grip_view", sz);
+        const bool active = ImGui::IsItemActive();
+        ImGui::GetWindowDrawList()->AddImage(
+            (ImTextureID)(intptr_t)dbPreviewTex_, p0,
+            ImVec2(p0.x + sz.x, p0.y + sz.y), ImVec2(0, 1), ImVec2(1, 0));
+        if (active) {
+          const ImVec2 md = ImGui::GetIO().MouseDelta;
+          gripYaw_   += md.x * 0.012f;
+          gripPitch_  = std::clamp(gripPitch_ + md.y * 0.012f, -1.4f, 1.4f);
+        }
+        ImGui::TextDisabled("Drag to rotate");
+        if (!playerPreview_.isLoaded() && playerPreviewTried_)
+          ImGui::TextColored({1.f,0.4f,0.4f,1.f}, "player.glb failed to load");
+      }
+      ImGui::TextUnformatted("Attach joint (blank = default hand)");
+      ImGui::SetNextItemWidth(-1); dbInputText("##grip_joint", d.gripJoint);
+      ImGui::SetNextItemWidth(-1); ImGui::DragFloat3("Pos##grip",   &d.gripPosX, 0.005f);
+      ImGui::SetNextItemWidth(-1); ImGui::DragFloat3("Rot\xC2\xB0##grip", &d.gripRotX, 1.0f);
+      ImGui::SetNextItemWidth(-1); ImGui::DragFloat ("Scale##grip", &d.gripScale, 0.01f, 0.01f, 20.0f);
+      // Player clip used in the preview (so you can tune against the attack pose).
+      if (playerPreview_.isLoaded()) {
+        const char* cur = (gripClipIndex_ >= 0)
+            ? (playerPreview_.animationNameAt(gripClipIndex_) ? playerPreview_.animationNameAt(gripClipIndex_)->c_str() : "?")
+            : "?";
+        ImGui::SetNextItemWidth(-1);
+        if (ImGui::BeginCombo("##grip_clip", cur)) {
+          for (int c = 0; c < playerPreview_.animationCount(); ++c) {
+            const std::string* nm = playerPreview_.animationNameAt(c);
+            if (!nm) continue;
+            if (ImGui::Selectable(nm->c_str(), c == gripClipIndex_)) gripClipIndex_ = c;
+          }
+          ImGui::EndCombo();
+        }
+      }
+    }
+
     ImGui::TextUnformatted("Examine Text");
     ImGui::SetNextItemWidth(-1); dbInputText("##item_examine", d.examineText);
 

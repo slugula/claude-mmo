@@ -307,7 +307,15 @@ entityRouter.get('/items', async (_req, res) => {
         COALESCE(heal_amount,     0)  AS heal_amount,
         COALESCE(sprite_path,     '') AS sprite_path,
         COALESCE(model_dropped,   '') AS model_dropped,
-        COALESCE(model_equipped,  '') AS model_equipped
+        COALESCE(model_equipped,  '') AS model_equipped,
+        COALESCE(grip_joint,      '') AS grip_joint,
+        COALESCE(grip_pos_x,      0)  AS grip_pos_x,
+        COALESCE(grip_pos_y,      0)  AS grip_pos_y,
+        COALESCE(grip_pos_z,      0)  AS grip_pos_z,
+        COALESCE(grip_rot_x,      0)  AS grip_rot_x,
+        COALESCE(grip_rot_y,      0)  AS grip_rot_y,
+        COALESCE(grip_rot_z,      0)  AS grip_rot_z,
+        COALESCE(grip_scale,      1)  AS grip_scale
       FROM item_definitions ORDER BY id`);
     ok(res, r.rows);
   } catch (e) { err(res, e); }
@@ -328,14 +336,18 @@ entityRouter.post('/items', async (req, res) => {
       INSERT INTO item_definitions
         (id,name,stackable,tradable,value,examine_text,item_type,equip_slot,two_handed,
          melee_attack,melee_strength,melee_defense,ranged_attack,ranged_strength,ranged_defense,
-         required_skill,required_level,tool_type,combat_style,heal_amount,sprite_path,model_dropped,model_equipped)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)`,
+         required_skill,required_level,tool_type,combat_style,heal_amount,sprite_path,model_dropped,model_equipped,
+         grip_joint,grip_pos_x,grip_pos_y,grip_pos_z,grip_rot_x,grip_rot_y,grip_rot_z,grip_scale)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,
+              $24,$25,$26,$27,$28,$29,$30,$31)`,
       [b.id,b.name,b.stackable??false,b.tradable??true,b.value??0,b.examine_text??null,
        b.item_type??'resource',b.equip_slot??null,b.two_handed??false,
        b.melee_attack??0,b.melee_strength??0,b.melee_defense??0,
        b.ranged_attack??0,b.ranged_strength??0,b.ranged_defense??0,
        b.required_skill??null,b.required_level??null,b.tool_type??null,b.combat_style??null,
-       b.heal_amount??null,b.sprite_path??null,b.model_dropped??null,b.model_equipped??null]);
+       b.heal_amount??null,b.sprite_path??null,b.model_dropped??null,b.model_equipped??null,
+       b.grip_joint??null,b.grip_pos_x??0,b.grip_pos_y??0,b.grip_pos_z??0,
+       b.grip_rot_x??0,b.grip_rot_y??0,b.grip_rot_z??0,b.grip_scale??1]);
     ok(res, { ok: true });
   } catch (e) { err(res, e); }
 });
@@ -348,14 +360,18 @@ entityRouter.put('/items/:id', async (req, res) => {
         name=$1,stackable=$2,tradable=$3,value=$4,examine_text=$5,item_type=$6,equip_slot=$7,
         two_handed=$8,melee_attack=$9,melee_strength=$10,melee_defense=$11,ranged_attack=$12,
         ranged_strength=$13,ranged_defense=$14,required_skill=$15,required_level=$16,
-        tool_type=$17,combat_style=$18,heal_amount=$19,sprite_path=$20,model_dropped=$21,model_equipped=$22
-      WHERE id=$23`,
+        tool_type=$17,combat_style=$18,heal_amount=$19,sprite_path=$20,model_dropped=$21,model_equipped=$22,
+        grip_joint=$23,grip_pos_x=$24,grip_pos_y=$25,grip_pos_z=$26,
+        grip_rot_x=$27,grip_rot_y=$28,grip_rot_z=$29,grip_scale=$30
+      WHERE id=$31`,
       [b.name,b.stackable??false,b.tradable??true,b.value??0,b.examine_text??null,
        b.item_type??'resource',b.equip_slot??null,b.two_handed??false,
        b.melee_attack??0,b.melee_strength??0,b.melee_defense??0,
        b.ranged_attack??0,b.ranged_strength??0,b.ranged_defense??0,
        b.required_skill??null,b.required_level??null,b.tool_type??null,b.combat_style??null,
-       b.heal_amount??null,b.sprite_path??null,b.model_dropped??null,b.model_equipped??null,req.params.id]);
+       b.heal_amount??null,b.sprite_path??null,b.model_dropped??null,b.model_equipped??null,
+       b.grip_joint??null,b.grip_pos_x??0,b.grip_pos_y??0,b.grip_pos_z??0,
+       b.grip_rot_x??0,b.grip_rot_y??0,b.grip_rot_z??0,b.grip_scale??1,req.params.id]);
     ok(res, { ok: true });
   } catch (e) { err(res, e); }
 });
