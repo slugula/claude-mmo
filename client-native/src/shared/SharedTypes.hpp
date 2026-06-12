@@ -109,6 +109,30 @@ struct WorldMapFile {
   std::vector<WallSeg>               walls;        // wall + pillar edge features
 };
 
+// ---- World manifest (multi-chunk overworld) -------------------------------
+// Mirror of WorldManifest in src/shared/types.ts. world.json assigns chunk map
+// files to cells of a world grid; cell (cx,cy) owns global tiles
+// [cx*chunkSize, cx*chunkSize+chunkSize). Chunk map files stay local-coordinate.
+
+struct WorldChunkRef {
+  int         cx = 0;        // world grid cell (non-negative in v1)
+  int         cy = 0;
+  std::string mapFile;       // relative to the manifest's directory
+  std::string name;
+};
+
+struct WorldSpawnPoint {
+  int x = 32;                // GLOBAL tile coordinates
+  int y = 32;
+};
+
+struct WorldManifest {
+  int                        version   = 1;
+  int                        chunkSize = 64;
+  WorldSpawnPoint            spawn;
+  std::vector<WorldChunkRef> chunks;
+};
+
 // =====================================================================
 // Phase 4 — network messages and the entities they carry
 // =====================================================================

@@ -68,6 +68,34 @@ struct glz::meta<shared::WallSeg> {
     "objectId", &T::objectId);
 };
 
+template <>
+struct glz::meta<shared::WorldChunkRef> {
+  using T = shared::WorldChunkRef;
+  static constexpr auto value = glz::object(
+    "cx",      &T::cx,
+    "cy",      &T::cy,
+    "mapFile", &T::mapFile,
+    "name",    &T::name);
+};
+
+template <>
+struct glz::meta<shared::WorldSpawnPoint> {
+  using T = shared::WorldSpawnPoint;
+  static constexpr auto value = glz::object(
+    "x", &T::x,
+    "y", &T::y);
+};
+
+template <>
+struct glz::meta<shared::WorldManifest> {
+  using T = shared::WorldManifest;
+  static constexpr auto value = glz::object(
+    "version",   &T::version,
+    "chunkSize", &T::chunkSize,
+    "spawn",     &T::spawn,
+    "chunks",    &T::chunks);
+};
+
 // ---- Map serialisation / deserialisation ---------------------------------
 //
 // The on-disk format is a JSON object with a "version" field (currently 2).
@@ -264,6 +292,55 @@ inline bool saveWorldMap(const std::filesystem::path& path,
   }
   std::fprintf(f, "]\n}\n");
 
+  std::fclose(f);
+  return true;
+}
+
+// ---- World manifest I/O ----------------------------------------------------
+// world.json — see WorldManifest in SharedTypes.hpp. Small file; glaze handles
+// both directions (unlike the map, there's no legacy fprintf format to match).
+
+inline bool loadWorldManifest(const std::filesystem::path& path, WorldManifest& out) {
+  std::string buf;
+  {
+    std::FILE* f = std::fopen(path.string().c_str(), "rb");
+    if (!f) {
+      std::fprintf(stderr, "[loadWorldManifest] cannot open %s\n", path.string().c_str());
+      return false;
+    }
+    std::fseek(f, 0, SEEK_END);
+    const long sz = std::ftell(f);
+    std::fseek(f, 0, SEEK_SET);
+    if (sz <= 0) { std::fclose(f); return false; }
+    buf.resize(static_cast<std::size_t>(sz));
+    std::fread(buf.data(), 1, static_cast<std::size_t>(sz), f);
+    std::fclose(f);
+  }
+
+  const auto err = glz::read<glz::opts{.error_on_unknown_keys = false}>(out, buf);
+  if (err) {
+    std::fprintf(stderr, "[loadWorldManifest] parse error: %s\n",
+                 glz::format_error(err, buf).c_str());
+    return false;
+  }
+  return true;
+}
+
+inline bool saveWorldManifest(const std::filesystem::path& path, const WorldManifest& manifest) {
+  std::string buf;
+  const auto err = glz::write<glz::opts{.prettify = true}>(manifest, buf);
+  if (err) {
+    std::fprintf(stderr, "[saveWorldManifest] serialise error\n");
+    return false;
+  }
+  std::FILE* f = std::fopen(path.string().c_str(), "wb");
+  if (!f) {
+    std::fprintf(stderr, "[saveWorldManifest] cannot open %s for writing\n",
+                 path.string().c_str());
+    return false;
+  }
+  std::fwrite(buf.data(), 1, buf.size(), f);
+  std::fputc('\n', f);
   std::fclose(f);
   return true;
 }

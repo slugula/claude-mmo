@@ -766,6 +766,7 @@ void EditorApp::renderFrame(float dt) {
   drawGridView();
   drawMinimapWindow();
   if (showDbWindow_) drawDatabaseWindow();
+  if (showWorldView_) drawWorldView();
 
   // ---- Dialogs ----------------------------------------------------------
   if (showNewMapDialog_) { ImGui::OpenPopup("New Map"); showNewMapDialog_ = false; }
@@ -862,6 +863,12 @@ void EditorApp::render3DViewport(float dt) {
   terrainShader_.setFloat("u_aoEnabled",   aoEnabled_   ? 1.0f : 0.0f);
   terrainShader_.setFloat("u_aoStrength",  aoStrength_);
   terrainMesh_.draw();
+
+  // Neighbor-chunk ghosts (read-only seam-authoring preview). World offset and
+  // dimmed colours are baked into each mesh, so the terrain shader needs no
+  // extra uniforms.
+  for (const auto& np : neighbors_)
+    if (np.mesh.isValid()) np.mesh.draw();
 
   // Overlay surfaces (paths / floors / shaped ground). Rebuild lazily when the
   // overlayTiles signature changes (covers paint, undo/redo, load, resize).
@@ -1127,6 +1134,15 @@ void EditorApp::drawMenuBar() {
   }
   if (ImGui::BeginMenu("Map")) {
     if (ImGui::MenuItem("Resize...")) { resizeW_ = map_.width; resizeH_ = map_.height; showResizeDialog_ = true; }
+    ImGui::EndMenu();
+  }
+  if (ImGui::BeginMenu("World")) {
+    ImGui::MenuItem("World View", nullptr, &showWorldView_);
+    ImGui::Separator();
+    if (ImGui::MenuItem("New World"))       { worldNewManifest(); showWorldView_ = true; }
+    if (ImGui::MenuItem("Open World..."))   { worldOpenManifest(); showWorldView_ = true; }
+    if (ImGui::MenuItem("Save World", nullptr, false, !worldManifest_.chunks.empty() || worldDirty_))
+      worldSaveManifest();
     ImGui::EndMenu();
   }
   if (ImGui::BeginMenu("Database")) {
@@ -1806,6 +1822,37 @@ void EditorApp::drawGridView() {
 
       if (z >= 6.0f)
         dl->AddRect(ImVec2(px, py), ImVec2(px + z, py + z), IM_COL32(0, 0, 0, 40));
+    }
+  }
+
+  // ---- Neighbor-chunk border tiles (read-only ghosts) ---------------------
+  // When the open map is assigned to a world cell, draw a strip of each
+  // neighbor's tiles beyond the [0,W)/[0,H) range at reduced alpha so terrain,
+  // paths, and walls can be authored to line up across the seam. sx()/sy()
+  // accept out-of-range tile-space coords, so this is just an offset lookup.
+  for (const auto& np : neighbors_) {
+    const int nW = np.map.width, nH = np.map.height;
+    const int strip = neighborStripTiles_;
+    const int nx0 = (np.dcx > 0) ? 0 : (np.dcx < 0 ? std::max(0, nW - strip) : 0);
+    const int nx1 = (np.dcx > 0) ? std::min(nW, strip) : nW;
+    const int ny0 = (np.dcy > 0) ? 0 : (np.dcy < 0 ? std::max(0, nH - strip) : 0);
+    const int ny1 = (np.dcy > 0) ? std::min(nH, strip) : nH;
+    for (int ny = ny0; ny < ny1; ++ny) {
+      if (ny >= static_cast<int>(np.map.tiles.size())) break;
+      for (int nx = nx0; nx < nx1; ++nx) {
+        if (nx >= static_cast<int>(np.map.tiles[ny].size())) break;
+        const float txf = static_cast<float>(nx + np.dcx * nW);
+        const float tyf = static_cast<float>(ny + np.dcy * nH);
+        const float px = sx(txf + 1.0f);
+        const float py = sy(tyf);
+        if (px + z < canvasPos.x || px > canvasPos.x + canvasSize.x ||
+            py + z < canvasPos.y || py > canvasPos.y + canvasSize.y) continue;
+        float fr = 0.29f, fg = 0.49f, fb = 0.16f;
+        hexToRgbf(np.map.tiles[ny][nx].groundColor.c_str(), fr, fg, fb);
+        dl->AddRectFilled(ImVec2(px, py), ImVec2(px + z, py + z),
+          IM_COL32(static_cast<int>(fr * 140), static_cast<int>(fg * 140),
+                   static_cast<int>(fb * 140), 255));
+      }
     }
   }
 
@@ -2611,6 +2658,7 @@ void EditorApp::openFileDialog() {
   minimap_.init(map_.width, map_.height); minimap_.rebuild(map_, npcSpawns_);
   camera_.snapTo({ static_cast<float>(map_.width) * 0.5f, 0.0f,
                    static_cast<float>(map_.height) * 0.5f });
+  worldRefreshNeighbors();
 }
 
 void EditorApp::openRecentFile(const std::string& path) {
@@ -2628,6 +2676,7 @@ void EditorApp::openRecentFile(const std::string& path) {
   minimap_.init(map_.width, map_.height); minimap_.rebuild(map_, npcSpawns_);
   camera_.snapTo({ static_cast<float>(map_.width) * 0.5f, 0.0f,
                    static_cast<float>(map_.height) * 0.5f });
+  worldRefreshNeighbors();
 }
 
 void EditorApp::saveCurrentFile() {

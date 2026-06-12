@@ -31,9 +31,12 @@
 
 #include <array>
 #include <chrono>
+#include <climits>
 #include <cstdint>
+#include <filesystem>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace editor {
@@ -264,6 +267,45 @@ private:
 
   // Minimap
   MinimapRenderer minimap_;
+
+  // ---- World View (multi-chunk overworld manifest; EditorWorldView.cpp) ----
+  // A world grid where each cell holds one 64×64 chunk map. Assign existing
+  // map files (or create blank chunks) to cells, move/erase assignments, set
+  // the world spawn, and open a cell's map for editing. While the open map is
+  // assigned to a cell, its neighbors render as read-only ghosts for seam
+  // authoring.
+  void drawWorldView();
+  void worldNewManifest();
+  void worldOpenManifest();
+  void worldSaveManifest();
+  void worldOpenChunk(int cx, int cy);                 // load cell's map into the editor
+  void worldAssignCell(int cx, int cy, const std::string& mapFile);
+  void worldEraseCell(int cx, int cy);
+  void worldRefreshNeighbors();                        // (re)load adjacent chunk ghosts
+  void worldDestroyThumbs();                           // free thumbnail GL textures
+  GLuint worldThumbnail(const std::string& mapFile);   // cached per-mapFile texture
+  std::filesystem::path worldDir() const;              // manifest directory
+  shared::WorldChunkRef* worldCellAt(int cx, int cy);
+
+  shared::WorldManifest worldManifest_;
+  std::string  worldManifestPath_;        // empty = no world loaded
+  bool         worldDirty_      = false;
+  bool         showWorldView_   = false;
+  bool         worldAutoloaded_ = false;  // tried loading public/maps/world.json once
+  float        worldOffX_ = 0.0f, worldOffY_ = 0.0f;
+  float        worldZoom_ = 96.0f;        // pixels per world cell (32..256)
+  int          worldDragCx_ = INT_MIN, worldDragCy_ = INT_MIN;  // drag-move source cell
+  std::unordered_map<std::string, GLuint> worldThumbs_;  // mapFile → 64×64 texture (0 = failed)
+
+  // Neighbor-edge ghost preview (read-only adjacent chunks of the open map).
+  struct NeighborPreview {
+    int                  dcx = 0, dcy = 0;  // cell offset relative to the open chunk
+    shared::WorldMapFile map;               // read-only copy for 2D-grid border tiles
+    render::Mesh         mesh;              // ghost terrain (world offset + dim baked in)
+  };
+  std::vector<NeighborPreview> neighbors_;
+  bool neighborPreviewEnabled_ = true;
+  int  neighborStripTiles_     = 16;        // border tiles drawn in the 2D grid
 
   // ---- Database editor window
   void drawDatabaseWindow();
