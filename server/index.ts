@@ -9,6 +9,7 @@ import { getClientDefs } from './db/EntityLoader';
 import { PlayerRepository } from './db/PlayerRepository';
 import { pool } from './db/client';
 import type { GameAction, ServerStatePatch, RespawnEntry } from '../src/shared/types';
+import { CHAT_RADIUS } from '../src/shared/constants';
 
 const PORT = Number(process.env.PORT ?? 8080);
 const CHECKPOINT_INTERVAL_MS = 60_000;
@@ -72,9 +73,14 @@ function broadcast(patch: ServerStatePatch): void {
     // Filter visible entities by Chebyshev distance (square view area)
     const visiblePlayers: ServerStatePatch['players'] = {};
     for (const [id, p] of Object.entries(patch.players)) {
-      if (chebyshev(p.tileX, p.tileY, cx, cy) <= r) {
-        visiblePlayers[id] = p;
-      }
+      const dist = chebyshev(p.tileX, p.tileY, cx, cy);
+      if (dist > r) continue;
+      // Chat is scoped tighter than visibility: blank chatMessage for players
+      // beyond CHAT_RADIUS so this recipient sees them but not their chat
+      // (client treats empty chatMessage as no bubble / no log entry).
+      visiblePlayers[id] = (id !== playerId && dist > CHAT_RADIUS && p.chatMessage !== '')
+        ? { ...p, chatMessage: '' }
+        : p;
     }
 
     const visibleNPCs = patch.npcs.filter(n => chebyshev(n.tileX, n.tileY, cx, cy) <= r);

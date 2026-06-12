@@ -1,6 +1,7 @@
 import { readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import { loadWorldManifest, assembleWorld } from './world/assembleWorld';
 import type { GameState, PlayerState, ServerStatePatch, TileData, NPCSpawn, PermanentItemSpawn } from '../src/shared/types';
 import {
   TICK_DURATION_MS,
@@ -79,6 +80,11 @@ export class GameLoop {
   private waterTiles: { tileX: number; tileY: number }[] = [];
   private overlayTiles: { tileX: number; tileY: number; shape: number; materialId: number; rotation?: number }[] = [];
   private walls: { tileX: number; tileY: number; orient: number; pillar: boolean; objectId: string }[] = [];
+  // Manifest spawn (global tile coords) when a multi-chunk world is loaded;
+  // null in legacy single-map mode (falls back to PLAYER_START_X/Y clamping).
+  private worldSpawn: { x: number; y: number } | null = null;
+  // Chest positions collected at load (assembly) or by the legacy scan.
+  private chestTiles: { x: number; y: number }[] = [];
 
   constructor(broadcast: BroadcastFn) {
     this.broadcast = broadcast;
@@ -87,7 +93,30 @@ export class GameLoop {
     // this hot-swaps them with DB data if available.
     void loadEntitiesFromDB();
 
-    const mapData = loadWorldMap();
+    // Multi-chunk overworld: when public/maps/world.json exists, assemble the
+    // referenced chunk maps into one global world. Otherwise load the single
+    // worldMap.json exactly as before.
+    const manifestPath = join(__dirname, '../public/maps/world.json');
+    const manifest = loadWorldManifest(manifestPath);
+
+    interface LoadedWorld {
+      tiles: TileData[][];
+      vertexHeights?: number[];
+      npcSpawns?: NPCSpawn[];
+      permanentItems?: PermanentItemSpawn[];
+      waterTiles?: { tileX: number; tileY: number }[];
+      overlayTiles?: { tileX: number; tileY: number; shape: number; materialId: number; rotation?: number }[];
+      walls?: { tileX: number; tileY: number; orient: number; pillar: boolean; objectId: string }[];
+    }
+    let mapData: LoadedWorld;
+    if (manifest) {
+      const assembled = assembleWorld(manifestPath, manifest);
+      mapData = assembled;
+      this.worldSpawn = assembled.spawn;
+      this.chestTiles = assembled.chests;
+    } else {
+      mapData = loadWorldMap();
+    }
     this.worldTiles = mapData.tiles;
     this.waterTiles = mapData.waterTiles ?? [];
     // Overlay layer (v3+). Legacy maps only have waterTiles — migrate each into
@@ -130,12 +159,19 @@ export class GameLoop {
     }));
 
     if (droppedItems.length === 0) {
-      // Find chest tile for legacy rack placement
+      // Find chest tile for legacy rack placement. Assembly collects chest
+      // positions during the chunk copy; the tile scan only runs in legacy
+      // single-map mode where the world is small.
       let chestX = Math.max(0, Math.floor(world.width / 2) - 4);
       let chestY = Math.max(0, Math.floor(world.height / 2) - 4);
-      outer: for (let ty = 0; ty < world.height; ty++) {
-        for (let tx = 0; tx < world.width; tx++) {
-          if (world.tiles[ty]?.[tx]?.obstacle === 'chest') { chestX = tx; chestY = ty; break outer; }
+      if (this.chestTiles.length > 0) {
+        chestX = this.chestTiles[0].x;
+        chestY = this.chestTiles[0].y;
+      } else if (!manifest) {
+        outer: for (let ty = 0; ty < world.height; ty++) {
+          for (let tx = 0; tx < world.width; tx++) {
+            if (world.tiles[ty]?.[tx]?.obstacle === 'chest') { chestX = tx; chestY = ty; break outer; }
+          }
         }
       }
       droppedItems = [
@@ -208,11 +244,23 @@ export class GameLoop {
         dyingTick:     -999,
         lastRegenTick: -999,
       };
+      // World-layout safety: if the saved position is out of bounds or lands on
+      // a non-walkable tile (e.g. a chunk was moved/erased in the manifest since
+      // last login, leaving the spot in void), relocate to the world spawn.
+      const w = this.state.world;
+      const t = w.tiles[player.tileY]?.[player.tileX];
+      if (!t || !t.walkable) {
+        const home = this.defaultSpawn();
+        console.warn(`[GameLoop] saved position (${player.tileX},${player.tileY}) for ${name} ` +
+                     `is void/non-walkable — relocating to spawn (${home.x},${home.y})`);
+        player = {
+          ...player,
+          tileX: home.x, tileY: home.y,
+          destinationX: home.x, destinationY: home.y,
+        };
+      }
     } else {
-      // Clamp spawn to actual map dimensions so old maps (64×64) work with new constants (128,128)
-      const startX = Math.min(PLAYER_START_X, this.state.world.width - 1);
-      const startY = Math.min(PLAYER_START_Y, this.state.world.height - 1);
-      const spawn = findWalkableTileNear(this.state.world, startX, startY);
+      const spawn = this.defaultSpawn();
       player = createInitialPlayer(spawn.x, spawn.y, name);
     }
 
@@ -221,6 +269,14 @@ export class GameLoop {
       players: { ...this.state.players, [playerId]: player },
     };
     this.pendingActions.set(playerId, []);
+  }
+
+  /** Walkable spawn tile: the manifest's world spawn in multi-chunk mode, or
+   *  the legacy PLAYER_START constants clamped to the map. */
+  private defaultSpawn(): { x: number; y: number } {
+    const startX = this.worldSpawn?.x ?? Math.min(PLAYER_START_X, this.state.world.width - 1);
+    const startY = this.worldSpawn?.y ?? Math.min(PLAYER_START_Y, this.state.world.height - 1);
+    return findWalkableTileNear(this.state.world, startX, startY);
   }
 
   /** Removes the player and returns their final state for persistence. */

@@ -123,6 +123,26 @@ export interface WorldMapFile {
   vertexHeights?: number[];
 }
 
+// ---------- World manifest (multi-chunk overworld) ----------
+// public/maps/world.json assigns chunk map files to cells of a world grid.
+// Cell (cx,cy) owns global tiles [cx*chunkSize, cx*chunkSize+chunkSize).
+// Chunk map files stay in local coordinates and are offset on assembly.
+// Mirror of shared::WorldManifest in SharedTypes.hpp.
+
+export interface WorldChunkRef {
+  cx: number;        // world grid cell (non-negative in v1)
+  cy: number;
+  mapFile: string;   // relative to the manifest's directory
+  name?: string;
+}
+
+export interface WorldManifest {
+  version: number;
+  chunkSize: number;                  // every chunk map must be chunkSize × chunkSize
+  spawn: { x: number; y: number };    // GLOBAL tile coordinates
+  chunks: WorldChunkRef[];
+}
+
 // ---------- NPCs ----------
 
 export type NPCKind = string;

@@ -17,9 +17,18 @@ function heuristic(a: GridPosition, b: GridPosition): number {
   return Math.max(Math.abs(a.x - b.x), Math.abs(a.y - b.y));
 }
 
+// Multi-chunk worlds can exceed the old 10000-tile keying headroom; 2^16 per
+// axis is safe for any world the manifest can describe.
 function key(x: number, y: number): number {
-  return x * 10000 + y;
+  return y * 65536 + x;
 }
+
+// Search budget. The closed-set cap bounds A* work per query (~128×128 area —
+// enough for routes several chunks away); MAX_PATH_LENGTH rejects absurdly long
+// routes up front via the heuristic so a click on an unreachable far target
+// doesn't burn the whole budget every time.
+const MAX_CLOSED = 16384;
+const MAX_PATH_LENGTH = 200;
 
 // OSRS neighbour order: cardinals first (W, E, S, N), then diagonals (SW, SE, NW, NE).
 // Cardinals are preferred so the path hugs walls rather than taking wide arcs.
@@ -36,6 +45,9 @@ export function findPath(
 ): GridPosition[] {
   if (!isWalkable(world, to.x, to.y, blocked)) return [];
   if (from.x === to.x && from.y === to.y) return [];
+  // Chebyshev is an admissible lower bound on path length, so any target whose
+  // straight-line distance already exceeds the cap is unreachable within budget.
+  if (heuristic(from, to) > MAX_PATH_LENGTH) return [];
 
   const open: Node[] = [];
   const closed = new Set<number>();
@@ -99,7 +111,7 @@ export function findPath(
       openMap.set(nk, node);
     }
 
-    if (closed.size > 2048) break;
+    if (closed.size > MAX_CLOSED) break;
   }
 
   return [];

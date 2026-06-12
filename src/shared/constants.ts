@@ -1,5 +1,10 @@
 export const TICK_DURATION_MS = 200;
 
+// Public chat range — players hear chat (bubble + log) only from others within
+// this Chebyshev tile distance. Independent of the view (interest) radius so
+// you can see far players without reading their chat.
+export const CHAT_RADIUS = 15;
+
 export const GRID_WIDTH = 256;
 export const GRID_HEIGHT = 256;
 export const TILE_SIZE = 1;
