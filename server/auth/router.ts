@@ -22,7 +22,10 @@ export const authRouter = express.Router();
 authRouter.use(express.json());
 
 authRouter.post('/register', async (req, res) => {
-  const { username, password } = req.body as { username?: string; password?: string };
+  // req.body is undefined when the request has no body or a non-JSON content
+  // type (express.json leaves it unset); guard so destructuring can't throw an
+  // uncaught TypeError and crash the handler.
+  const { username, password } = (req.body ?? {}) as { username?: string; password?: string };
 
   if (!username || !password) {
     res.status(400).json({ error: 'username and password required' });
@@ -58,7 +61,7 @@ authRouter.post('/register', async (req, res) => {
 });
 
 authRouter.post('/login', async (req, res) => {
-  const { username, password } = req.body as { username?: string; password?: string };
+  const { username, password } = (req.body ?? {}) as { username?: string; password?: string };
 
   if (!username || !password) {
     res.status(400).json({ error: 'username and password required' });
