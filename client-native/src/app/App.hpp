@@ -184,7 +184,7 @@ private:
   // player; entries are added on first sight and pruned when the NPC leaves.
   std::unordered_map<std::string, float>   npcSmoothedYaw_;
   ui::MinimapRenderer                      minimap_;
-  float                                    minimapTileRadius_ = 12.f;
+  float                                    minimapTileRadius_ = 24.f;   // default fully zoomed out
   bool                                     cursorOverMinimap_ = false;  // geometric disc check, current frame
   ui::UiHoverState                         uiHover_;
   ui::ChatLog                              chatLog_;

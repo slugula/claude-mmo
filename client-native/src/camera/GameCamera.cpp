@@ -21,6 +21,10 @@ constexpr float kRotateSpeed      = 1.2f;        // radians / second when arrow 
 constexpr float kZoomSpeed        = 2.5f;        // world units per scroll tick
 constexpr float kDragSensitivity  = 0.005f;      // radians per pixel
 constexpr float kFollowSpeed      = 10.0f;       // larger = snappier follow
+// If the follow target jumps farther than this in one update (login, teleport),
+// snap the look-at point instead of easing — so logging in places the camera on
+// the player with no pan. Normal walking moves ≤ a couple tiles/tick.
+constexpr float kTeleportDist2    = 8.0f * 8.0f; // squared tiles
 
 }  // namespace
 
@@ -83,9 +87,14 @@ void GameCamera::update(float dt, GLFWwindow* w, const glm::vec3& target) {
   // a future Phase-4 player teleports.
   const float followT = 1.0f - std::exp(-kFollowSpeed * dt);
   targetPos_ = target;
-  currentTarget_.x += (targetPos_.x - currentTarget_.x) * followT;
-  currentTarget_.y += (targetPos_.y - currentTarget_.y) * followT;
-  currentTarget_.z += (targetPos_.z - currentTarget_.z) * followT;
+  const glm::vec3 d = targetPos_ - currentTarget_;
+  if ((d.x * d.x + d.z * d.z) > kTeleportDist2) {
+    currentTarget_ = targetPos_;   // big jump (login / teleport) → snap, no pan
+  } else {
+    currentTarget_.x += d.x * followT;
+    currentTarget_.y += d.y * followT;
+    currentTarget_.z += d.z * followT;
+  }
 }
 
 glm::vec3 GameCamera::cameraPosition() const {
