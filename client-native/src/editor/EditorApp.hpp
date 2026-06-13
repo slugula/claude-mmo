@@ -290,6 +290,7 @@ private:
   void worldAssignCell(int cx, int cy, const std::string& mapFile);
   void worldEraseCell(int cx, int cy);
   void worldRefreshNeighbors();                        // (re)load adjacent chunk ghosts
+  void worldEnsureManifestLoaded();                    // lazy one-time world.json autoload
   void worldDestroyThumbs();                           // free thumbnail GL textures
   GLuint worldThumbnail(const std::string& mapFile);   // cached per-mapFile texture
   std::filesystem::path worldDir() const;              // manifest directory

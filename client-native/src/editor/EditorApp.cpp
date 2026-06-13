@@ -2356,6 +2356,10 @@ void EditorApp::rebuildBlockedOverlay() {
 
 // -----------------------------------------------------------------------
 void EditorApp::initNewMap(int w, int h) {
+  // A brand-new map has no place in the world yet, so it must not inherit the
+  // previously-open map's neighbor ghosts. Clearing the path first makes the
+  // worldRefreshNeighbors() call below a no-op (no manifest cell matches).
+  currentFilePath_.clear();
   map_ = {};
   map_.width  = w;
   map_.height = h;
@@ -2385,6 +2389,7 @@ void EditorApp::initNewMap(int w, int h) {
   minimap_.init(w, h);
   minimap_.rebuild(map_, npcSpawns_);
   camera_.snapTo({ static_cast<float>(w) * 0.5f, 0.0f, static_cast<float>(h) * 0.5f });
+  worldRefreshNeighbors();   // unassigned map → clears any lingering ghosts
 }
 
 void EditorApp::rebuildTerrainGL() {

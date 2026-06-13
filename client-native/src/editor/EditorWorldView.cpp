@@ -184,9 +184,27 @@ GLuint EditorApp::worldThumbnail(const std::string& mapFile) {
 // to its world position. Rendered after the main terrain in render3DViewport;
 // drawn as border tiles in the 2D grid.
 
+// One-time autoload of the canonical public/maps/world.json so neighbor ghosts
+// resolve even before the World View window has been opened (e.g. opening an
+// assigned map straight from File ▸ Open on a fresh launch).
+void EditorApp::worldEnsureManifestLoaded() {
+  if (worldAutoloaded_) return;
+  worldAutoloaded_ = true;
+  const auto p = canonicalMapsDir() / "world.json";
+  std::error_code ec;
+  if (!std::filesystem::exists(p, ec)) return;
+  shared::WorldManifest loaded;
+  if (shared::loadWorldManifest(p, loaded)) {
+    worldManifest_     = std::move(loaded);
+    worldManifestPath_ = p.string();
+    worldDirty_ = false;
+  }
+}
+
 void EditorApp::worldRefreshNeighbors() {
   neighbors_.clear();
   if (!neighborPreviewEnabled_ || currentFilePath_.empty()) return;
+  worldEnsureManifestLoaded();   // ghosts work before the World View is opened
 
   // Which cell (if any) is the open map assigned to? Compare canonical paths
   // so relative manifest entries match the absolute currentFilePath_.
@@ -241,21 +259,11 @@ void EditorApp::worldRefreshNeighbors() {
 // ---- World View window ------------------------------------------------------
 
 void EditorApp::drawWorldView() {
-  // One-time autoload of the canonical world.json so the grid is populated
-  // the first time the window opens.
+  // Populate the grid from world.json the first time it's needed (may already
+  // have been loaded lazily by worldRefreshNeighbors).
   if (!worldAutoloaded_) {
-    worldAutoloaded_ = true;
-    const auto p = canonicalMapsDir() / "world.json";
-    std::error_code ec;
-    if (std::filesystem::exists(p, ec)) {
-      shared::WorldManifest loaded;
-      if (shared::loadWorldManifest(p, loaded)) {
-        worldManifest_     = std::move(loaded);
-        worldManifestPath_ = p.string();
-        worldDirty_ = false;
-        worldRefreshNeighbors();
-      }
-    }
+    worldEnsureManifestLoaded();
+    worldRefreshNeighbors();
   }
 
   // Workspace pane: renderFrame pins position/size to the content area right
@@ -499,6 +507,9 @@ void EditorApp::drawWorldView() {
       if (shared::saveWorldMap(path, blank)) {
         worldAssignCell(popCx, popCy, nameBuf);
         worldThumbs_.erase(nameBuf);   // (re)rasterise if a stale thumb existed
+        // Open it for editing right away: since it's now assigned to this cell,
+        // worldOpenChunk loads the correct neighbor ghosts around it.
+        worldOpenChunk(popCx, popCy);
       }
     }
 
