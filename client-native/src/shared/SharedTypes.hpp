@@ -41,6 +41,9 @@ struct TileData {
   int          x            = 0;
   int          y            = 0;
   bool         walkable     = true;
+  // Filler tile in an unassigned world-grid cell (multi-chunk worlds). The
+  // renderer skips these entirely; absent in authored map JSON (defaults off).
+  bool         isVoid       = false;
   TileType     type         = TileType::grass;
   std::string  obstacle     = "";   // empty = none; otherwise a DB object ID e.g. "tree"
   bool         blocksRanged = false;

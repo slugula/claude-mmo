@@ -58,6 +58,7 @@ function voidTile(x: number, y: number): TileData {
   return {
     x, y,
     walkable: false,
+    isVoid: true,             // client skips rendering void tiles entirely
     type: 'grass',
     obstacle: 'none',
     blocksRanged: false,

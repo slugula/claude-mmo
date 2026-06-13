@@ -41,6 +41,11 @@
 
 namespace editor {
 
+// Primary editor workspaces, switched via the left mode rail. Map shows the
+// docked map-editing layout (toolbar / 3D / 2D grid / properties / minimap);
+// World and Database each fill the content area with their dedicated view.
+enum class EditorMode { Map, World, Database };
+
 class EditorApp {
 public:
   EditorApp() = default;
@@ -70,6 +75,8 @@ private:
   void drawGridView();
   void drawMinimapWindow();
   void drawMenuBar();
+  void drawModeRail(float railW);  // vertical Map/World/Database switcher
+  void setMode(EditorMode m);      // switch workspace (handles lazy DB load)
 
   // ---- Editing
   void applyToolAt(int tx, int ty, float dt, bool rightClick,
@@ -177,6 +184,7 @@ private:
   std::vector<std::string>      recentFiles_;   // ordered most-recently-used first
 
   // ---- Editor state
+  EditorMode    mode_           = EditorMode::Map;
   EditorTool    activeTool_     = EditorTool::PaintTerrain;
   EditorTool    prevTool_       = EditorTool::PaintTerrain;
   BrushState    brush_;

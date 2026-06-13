@@ -74,6 +74,9 @@ TerrainMeshData buildTerrainMesh(const shared::WorldMapFile& map) {
       for (int tx : {col - 1, col}) {
         for (int ty : {H - row - 1, H - row}) {
           if (tx < 0 || tx >= W || ty < 0 || ty >= H) continue;
+          // Void filler tiles (unassigned world cells) aren't rendered, so
+          // excluding them here keeps real chunk borders from darkening.
+          if (tiles[ty][tx].isVoid) continue;
           auto [tr, tg, tb] = hexToRgb01(tiles[ty][tx].groundColor);
           r += tr; g += tg; b += tb; ++count;
         }
@@ -130,8 +133,11 @@ TerrainMeshData buildTerrainMesh(const shared::WorldMapFile& map) {
   }
 
   // ---- Triangle indices: two triangles per tile, BL→TR diagonal -----------
+  // Void filler tiles emit no geometry, so unassigned world cells render as
+  // nothing (sky) instead of dark ground.
   for (int row = 0; row < H; ++row) {
     for (int col = 0; col < W; ++col) {
+      if (tiles[H - row - 1][col].isVoid) continue;
       const uint32_t i0 = static_cast<uint32_t>(row * (W + 1) + col);
       const uint32_t i1 = i0 + 1;
       const uint32_t i2 = i0 + (W + 1);

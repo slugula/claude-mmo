@@ -1,0 +1,34 @@
+{
+   "version": 1,
+   "chunkSize": 64,
+   "spawn": {
+      "x": 32,
+      "y": 32
+   },
+   "chunks": [
+      {
+         "cx": 1,
+         "cy": 1,
+         "mapFile": "chunk_1_1.json",
+         "name": "chunk_1_1"
+      },
+      {
+         "cx": 0,
+         "cy": 0,
+         "mapFile": "worldMap.json",
+         "name": "worldMap"
+      },
+      {
+         "cx": 1,
+         "cy": 0,
+         "mapFile": "chunk_1_1.json",
+         "name": "chunk_1_1"
+      },
+      {
+         "cx": 2,
+         "cy": 0,
+         "mapFile": "worldMap.json",
+         "name": "worldMap"
+      }
+   ]
+}

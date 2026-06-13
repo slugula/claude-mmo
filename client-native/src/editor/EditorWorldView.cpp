@@ -131,6 +131,7 @@ void EditorApp::worldOpenChunk(int cx, int cy) {
   const auto path = worldDir() / cell->mapFile;
   // openRecentFile loads + rebuilds GL + recents + title + neighbor ghosts.
   openRecentFile(path.string());
+  setMode(EditorMode::Map);   // jump to the map workspace to edit it
 }
 
 void EditorApp::worldDestroyThumbs() {
@@ -257,12 +258,19 @@ void EditorApp::drawWorldView() {
     }
   }
 
-  bool open = true;
-  ImGui::SetNextWindowSize(ImVec2(640, 480), ImGuiCond_FirstUseEver);
-  const std::string title = std::string("World View") +
-      (worldDirty_ ? " *" : "") + "###worldview";
-  if (!ImGui::Begin(title.c_str(), &open)) { ImGui::End(); if (!open) showWorldView_ = false; return; }
-  if (!open) showWorldView_ = false;
+  // Workspace pane: renderFrame pins position/size to the content area right
+  // of the mode rail, so this window is fixed (no title bar, close via rail).
+  const ImGuiWindowFlags paneFlags =
+      ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+      ImGuiWindowFlags_NoMove     | ImGuiWindowFlags_NoCollapse |
+      ImGuiWindowFlags_NoDocking  | ImGuiWindowFlags_NoBringToFrontOnFocus;
+  if (!ImGui::Begin("##worldview", nullptr, paneFlags)) { ImGui::End(); return; }
+
+  ImGui::TextUnformatted(worldManifestPath_.empty()
+      ? "World Editor — unsaved world"
+      : ("World Editor — " + std::filesystem::path(worldManifestPath_).filename().string() +
+         (worldDirty_ ? " *" : "")).c_str());
+  ImGui::SameLine(0.0f, 24.0f);
 
   // ---- Toolbar row ----
   if (ImGui::Button("New World"))  worldNewManifest();

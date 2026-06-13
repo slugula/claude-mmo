@@ -78,6 +78,9 @@ export interface TileData {
   x: number;
   y: number;
   walkable: boolean;
+  // True for filler tiles in unassigned world-grid cells (multi-chunk worlds).
+  // The client skips rendering these entirely; absent/false on authored tiles.
+  isVoid?: boolean;
   type: TileType;
   obstacle: string;     // empty = none; otherwise a DB object ID e.g. "tree", "rock"
   blocksRanged: boolean;

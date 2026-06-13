@@ -691,22 +691,26 @@ void EditorApp::renderFrame(float dt) {
     pushUndo();
   }
 
-  // ---- 3D viewport FBO render ------------------------------------------
-  render3DViewport(dt);
+  // ---- 3D viewport FBO render (Map workspace only) -----------------------
+  if (mode_ == EditorMode::Map) render3DViewport(dt);
 
   // ---- DB model preview FBO render (runs before ImGui so the texture is ready) --
-  if (showDbWindow_) dbRenderPreview(dt);
+  if (mode_ == EditorMode::Database && showDbWindow_) dbRenderPreview(dt);
 
   // ---- ImGui frame -----------------------------------------------------
   ImGui_ImplOpenGL3_NewFrame();
   ImGui_ImplGlfw_NewFrame();
   ImGui::NewFrame();
 
-  // ---- Full-screen DockSpace host window --------------------------------
+  // ---- Left mode rail (Map / World / Database workspaces) ---------------
+  constexpr float kRailW = 64.0f;
+  drawModeRail(kRailW);
+
+  // ---- Full-screen DockSpace host window (inset right of the rail) ------
   {
     const ImGuiViewport* vp = ImGui::GetMainViewport();
-    ImGui::SetNextWindowPos(vp->WorkPos);
-    ImGui::SetNextWindowSize(vp->WorkSize);
+    ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + kRailW, vp->WorkPos.y));
+    ImGui::SetNextWindowSize(ImVec2(vp->WorkSize.x - kRailW, vp->WorkSize.y));
     ImGui::SetNextWindowViewport(vp->ID);
 
     ImGuiWindowFlags hostFlags =
@@ -759,14 +763,35 @@ void EditorApp::renderFrame(float dt) {
     ImGui::End();
   }
 
-  drawToolbar();
-  drawProperties();
-  drawPreferencesWindow();
-  draw3DViewportWindow();
-  drawGridView();
-  drawMinimapWindow();
-  if (showDbWindow_) drawDatabaseWindow();
-  if (showWorldView_) drawWorldView();
+  // ---- Workspace content --------------------------------------------------
+  // Each mode owns the content area right of the rail. World and Database fill
+  // it with a single fixed window; Map uses the docked multi-window layout.
+  const ImGuiViewport* vp = ImGui::GetMainViewport();
+  const float menuH = ImGui::GetFrameHeight();
+  const ImVec2 wsPos (vp->WorkPos.x + kRailW, vp->WorkPos.y + menuH);
+  const ImVec2 wsSize(vp->WorkSize.x - kRailW, vp->WorkSize.y - menuH);
+
+  switch (mode_) {
+    case EditorMode::Map:
+      drawToolbar();
+      drawProperties();
+      drawPreferencesWindow();
+      draw3DViewportWindow();
+      drawGridView();
+      drawMinimapWindow();
+      break;
+    case EditorMode::World:
+      ImGui::SetNextWindowPos(wsPos,  ImGuiCond_Always);
+      ImGui::SetNextWindowSize(wsSize, ImGuiCond_Always);
+      drawWorldView();
+      break;
+    case EditorMode::Database:
+      ImGui::SetNextWindowPos(wsPos,  ImGuiCond_Always);
+      ImGui::SetNextWindowSize(wsSize, ImGuiCond_Always);
+      if (showDbWindow_) drawDatabaseWindow();
+      if (!showDbWindow_) setMode(EditorMode::Map);   // closed via its X
+      break;
+  }
 
   // ---- Dialogs ----------------------------------------------------------
   if (showNewMapDialog_) { ImGui::OpenPopup("New Map"); showNewMapDialog_ = false; }
@@ -1083,6 +1108,53 @@ void EditorApp::render3DViewport(float dt) {
 }
 
 // -----------------------------------------------------------------------
+void EditorApp::setMode(EditorMode m) {
+  if (mode_ == m) return;
+  mode_ = m;
+  if (m == EditorMode::Database) {
+    showDbWindow_ = true;
+    if (!dbLoaded_) dbLoadAll();
+  }
+  if (m == EditorMode::World) showWorldView_ = true;
+}
+
+void EditorApp::drawModeRail(float railW) {
+  const ImGuiViewport* vp = ImGui::GetMainViewport();
+  ImGui::SetNextWindowPos(vp->WorkPos);
+  ImGui::SetNextWindowSize(ImVec2(railW, vp->WorkSize.y));
+  ImGui::SetNextWindowViewport(vp->ID);
+  const ImGuiWindowFlags flags =
+      ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+      ImGuiWindowFlags_NoMove     | ImGuiWindowFlags_NoCollapse |
+      ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoDocking |
+      ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoNavFocus;
+  ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(4, 8));
+  ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing,   ImVec2(4, 6));
+  ImGui::PushStyleColor(ImGuiCol_WindowBg, IM_COL32(22, 24, 28, 255));
+  ImGui::Begin("##moderail", nullptr, flags);
+
+  const float btnSide = railW - 8.0f;
+  auto modeBtn = [&](const char* label, EditorMode m, const char* tip) {
+    const bool active = (mode_ == m);
+    if (active) {
+      ImGui::PushStyleColor(ImGuiCol_Button,        IM_COL32(70, 110, 180, 255));
+      ImGui::PushStyleColor(ImGuiCol_ButtonHovered, IM_COL32(85, 125, 195, 255));
+      ImGui::PushStyleColor(ImGuiCol_ButtonActive,  IM_COL32(60, 100, 170, 255));
+    }
+    if (ImGui::Button(label, ImVec2(btnSide, btnSide))) setMode(m);
+    if (active) ImGui::PopStyleColor(3);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
+  };
+
+  modeBtn("Map",   EditorMode::Map,      "Map Editor — edit the open chunk map");
+  modeBtn("World", EditorMode::World,    "World Editor — assign chunk maps to the world grid");
+  modeBtn("DB",    EditorMode::Database, "Database — items, NPCs, objects, actions, skills");
+
+  ImGui::End();
+  ImGui::PopStyleColor();
+  ImGui::PopStyleVar(2);
+}
+
 void EditorApp::drawMenuBar() {
   if (ImGui::BeginMenu("File")) {
     if (ImGui::MenuItem("New Map...", "Ctrl+N")) showNewMapDialog_ = true;
@@ -1137,19 +1209,18 @@ void EditorApp::drawMenuBar() {
     ImGui::EndMenu();
   }
   if (ImGui::BeginMenu("World")) {
-    ImGui::MenuItem("World View", nullptr, &showWorldView_);
+    if (ImGui::MenuItem("World Editor", nullptr, mode_ == EditorMode::World))
+      setMode(EditorMode::World);
     ImGui::Separator();
-    if (ImGui::MenuItem("New World"))       { worldNewManifest(); showWorldView_ = true; }
-    if (ImGui::MenuItem("Open World..."))   { worldOpenManifest(); showWorldView_ = true; }
+    if (ImGui::MenuItem("New World"))       { worldNewManifest(); setMode(EditorMode::World); }
+    if (ImGui::MenuItem("Open World..."))   { worldOpenManifest(); setMode(EditorMode::World); }
     if (ImGui::MenuItem("Save World", nullptr, false, !worldManifest_.chunks.empty() || worldDirty_))
       worldSaveManifest();
     ImGui::EndMenu();
   }
   if (ImGui::BeginMenu("Database")) {
-    if (ImGui::MenuItem("Edit Database...")) {
-      showDbWindow_ = true;
-      if (!dbLoaded_) dbLoadAll();
-    }
+    if (ImGui::MenuItem("Edit Database...", nullptr, mode_ == EditorMode::Database))
+      setMode(EditorMode::Database);
     ImGui::EndMenu();
   }
   if (ImGui::BeginMenu("View")) {
