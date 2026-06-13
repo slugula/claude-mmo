@@ -290,7 +290,16 @@ App::~App() {
   if (outlineQuadVao_) glDeleteVertexArrays(1, &outlineQuadVao_);
 }
 
+// Wall-clock milliseconds since `t0`. Startup timing is logged so we know
+// whether boot-time asset loading is fast (no loading screen needed) or grows
+// into a visible blank-window freeze as content is added.
+static double msSince(std::chrono::steady_clock::time_point t0) {
+  return std::chrono::duration<double, std::milli>(
+      std::chrono::steady_clock::now() - t0).count();
+}
+
 bool App::init() {
+  const auto initStart = std::chrono::steady_clock::now();
   if (!window_.init(kInitialWidth, kInitialHeight, kTitle)) return false;
 
   render::installGlDebugCallback();
@@ -685,6 +694,7 @@ bool App::init() {
   }
 
   lastFrameTime_ = std::chrono::steady_clock::now();
+  std::fprintf(stdout, "[App] init() complete in %.1f ms\n", msSince(initStart));
   return true;
 }
 
@@ -729,6 +739,7 @@ void App::generateAndBuildTerrain() {
 // when the server sends its authoritative map in the init message — so a shared
 // client renders the server's world, not a local/procedural one.
 void App::rebuildWorldFromMap() {
+  const auto rebuildStart = std::chrono::steady_clock::now();
   // Per-chunk terrain: slice the (possibly multi-chunk-assembled) map into
   // 64-tile render chunks; the ring around the spawn/player builds now, the
   // rest lazily as the player moves (see the per-frame update in renderFrame).
@@ -749,8 +760,9 @@ void App::rebuildWorldFromMap() {
   if (overlayRenderer_.valid())
     overlayRenderer_.rebuild(map_);
 
-  std::fprintf(stdout, "[App] world built: %d x %d tiles, %d x %d render chunks\n",
-               map_.width, map_.height, terrain_.chunksX(), terrain_.chunksY());
+  std::fprintf(stdout, "[App] world built: %d x %d tiles, %d x %d render chunks in %.1f ms\n",
+               map_.width, map_.height, terrain_.chunksX(), terrain_.chunksY(),
+               msSince(rebuildStart));
 }
 
 // Apply entity definitions from whichever source supplied them (localhost DB API
@@ -761,6 +773,7 @@ void App::applyEntityDefs(const std::vector<editor::NpcDef>&    npcs,
                           const std::vector<editor::ObjectDef>& objects,
                           const std::vector<editor::ActionDef>& actions,
                           const std::vector<editor::SkillDef>&  skills) {
+  const auto defsStart = std::chrono::steady_clock::now();
   // NPCs — names, attackable flag, data-driven models.
   for (const auto& def : npcs) {
     if (!def.name.empty()) ui::g_npcNames[def.id] = def.name;
@@ -817,6 +830,8 @@ void App::applyEntityDefs(const std::vector<editor::NpcDef>&    npcs,
   walls_.rebuildFromMap(map_);
 
   dbActionDefs_ = actions;
+  std::fprintf(stdout, "[App] applyEntityDefs: %zu npcs, %zu items, %zu objects (models+sprites) in %.1f ms\n",
+               npcs.size(), items.size(), objects.size(), msSince(defsStart));
 }
 
 void App::initHoverMesh() {
