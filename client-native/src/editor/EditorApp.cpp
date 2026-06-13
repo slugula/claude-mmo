@@ -525,6 +525,7 @@ bool EditorApp::init() {
       applyWaterSettings(s, waterUniforms_);
       if (!waterUniforms_.causticMapPath.empty())
         waterRenderer_.loadCausticMap(resolveFromExe(waterUniforms_.causticMapPath.c_str()).string());
+      editorDrawDistance_ = std::clamp(s.editorDrawDistance, 1, 8);
     }
   }
 
@@ -886,13 +887,13 @@ void EditorApp::render3DViewport(float dt) {
   terrainShader_.setFloat("u_fogStart",    fogStart_);
   terrainShader_.setFloat("u_aoEnabled",   aoEnabled_   ? 1.0f : 0.0f);
   terrainShader_.setFloat("u_aoStrength",  aoStrength_);
-  terrainMesh_.draw();
+  {
+    const int ring = worldMode_ ? editorDrawDistance_
+                                : std::max(map_.width, map_.height) / 64 + 1;
+    terrain_.update(activeCenterTileX(), activeCenterTileY(), ring);
+    terrain_.draw(viewProj);
+  }
 
-  // Neighbor-chunk ghosts (read-only seam-authoring preview). World offset and
-  // dimmed colours are baked into each mesh, so the terrain shader needs no
-  // extra uniforms.
-  for (const auto& np : neighbors_)
-    if (np.mesh.isValid()) np.mesh.draw();
 
   // Overlay surfaces (paths / floors / shaped ground). Rebuild lazily when the
   // overlayTiles signature changes (covers paint, undo/redo, load, resize).
@@ -1065,7 +1066,7 @@ void EditorApp::render3DViewport(float dt) {
     wireframeShader_.use();
     wireframeShader_.setMat4("u_viewProj", viewProj);
     wireframeShader_.setVec4("u_color", glm::vec4(0.0f, 0.0f, 0.0f, 0.30f));
-    terrainMesh_.draw();
+    terrain_.draw(viewProj);
     glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
     glDepthMask(GL_TRUE);
     glDisable(GL_BLEND);
@@ -1278,6 +1279,16 @@ void EditorApp::drawToolbar() {
     ImGui::SliderFloat("##str", &brush_.strength, 0.01f, 0.5f, "Pull:%.2f");
     ImGui::TextDisabled("Levels brush area");
     ImGui::TextDisabled("to its avg height");
+  }
+
+  if (worldMode_) {
+    ImGui::Separator();
+    ImGui::TextDisabled("-- World --");
+    ImGui::TextDisabled("Active (%d,%d)", activeCell_.first, activeCell_.second);
+    ImGui::SetNextItemWidth(-1);
+    ImGui::SliderInt("##wdd", &editorDrawDistance_, 1, 8, "Draw:%d");
+    if (!dirtyCells_.empty())
+      ImGui::TextDisabled("%d chunk(s) unsaved", static_cast<int>(dirtyCells_.size()));
   }
 
   ImGui::Separator();
@@ -1719,7 +1730,13 @@ void EditorApp::draw3DViewportWindow() {
       glm::vec3 ro, rd;
       input::screenToRay(px, py, viewport3dW_, viewport3dH_, vp, &ro, &rd);
 
-      const auto pick = input::pickTile(ro, rd, map_.vertexHeights, map_.width, map_.height);
+      // Chunk-culled pick over the resident (rendered) terrain chunks — matches
+      // the draw ring so clicks can't land on un-meshed/void area.
+      std::vector<input::PickRect> prs;
+      for (const auto& r : terrain_.residentRects())
+        prs.push_back({ r.x0, r.y0, r.w, r.h, r.aabbMin, r.aabbMax });
+      const auto pick = input::pickTileChunked(ro, rd, map_.vertexHeights,
+                                               map_.width, map_.height, prs);
       if (pick.hit) {
         hoveredTileX_ = pick.tileX;
         hoveredTileY_ = pick.tileY;
@@ -1886,37 +1903,6 @@ void EditorApp::drawGridView() {
 
       if (z >= 6.0f)
         dl->AddRect(ImVec2(px, py), ImVec2(px + z, py + z), IM_COL32(0, 0, 0, 40));
-    }
-  }
-
-  // ---- Neighbor-chunk border tiles (read-only ghosts) ---------------------
-  // When the open map is assigned to a world cell, draw a strip of each
-  // neighbor's tiles beyond the [0,W)/[0,H) range at reduced alpha so terrain,
-  // paths, and walls can be authored to line up across the seam. sx()/sy()
-  // accept out-of-range tile-space coords, so this is just an offset lookup.
-  for (const auto& np : neighbors_) {
-    const int nW = np.map.width, nH = np.map.height;
-    const int strip = neighborStripTiles_;
-    const int nx0 = (np.dcx > 0) ? 0 : (np.dcx < 0 ? std::max(0, nW - strip) : 0);
-    const int nx1 = (np.dcx > 0) ? std::min(nW, strip) : nW;
-    const int ny0 = (np.dcy > 0) ? 0 : (np.dcy < 0 ? std::max(0, nH - strip) : 0);
-    const int ny1 = (np.dcy > 0) ? std::min(nH, strip) : nH;
-    for (int ny = ny0; ny < ny1; ++ny) {
-      if (ny >= static_cast<int>(np.map.tiles.size())) break;
-      for (int nx = nx0; nx < nx1; ++nx) {
-        if (nx >= static_cast<int>(np.map.tiles[ny].size())) break;
-        const float txf = static_cast<float>(nx + np.dcx * nW);
-        const float tyf = static_cast<float>(ny + np.dcy * nH);
-        const float px = sx(txf + 1.0f);
-        const float py = sy(tyf);
-        if (px + z < canvasPos.x || px > canvasPos.x + canvasSize.x ||
-            py + z < canvasPos.y || py > canvasPos.y + canvasSize.y) continue;
-        float fr = 0.29f, fg = 0.49f, fb = 0.16f;
-        hexToRgbf(np.map.tiles[ny][nx].groundColor.c_str(), fr, fg, fb);
-        dl->AddRectFilled(ImVec2(px, py), ImVec2(px + z, py + z),
-          IM_COL32(static_cast<int>(fr * 140), static_cast<int>(fg * 140),
-                   static_cast<int>(fb * 140), 255));
-      }
     }
   }
 
@@ -2104,10 +2090,28 @@ void EditorApp::applyBrush(int cx, int cy, float dt, bool rightClick) {
     }
   }
 
-  if (dirtyTerrain)   { rebuildTerrainGL(); worldSyncEdgesToNeighbors(); }
+  // Brush footprint (+1 for the shared boundary vertices a sculpt touches).
+  const int bx0 = cx - half - 1, by0 = cy - half - 1;
+  const int bx1 = cx + half + 1, by1 = cy + half + 1;
+
+  if (dirtyTerrain) {
+    if (worldMode_) markTerrainDirtyRegion(bx0, by0, bx1, by1);
+    else            rebuildTerrainGL();
+  }
   if (dirtyWater)     waterRenderer_.rebuild(map_, waterUniforms_.waterOffset);
   if (dirtyObstacles) rebuildObstacles();
   if (dirtyMinimap)   minimap_.rebuild(map_, npcSpawns_);
+
+  // World mode: every cell the brush footprint overlaps is now dirty (Ctrl+S
+  // slices them back). A seam vertex naturally marks both adjacent cells.
+  if (worldMode_ && (dirtyTerrain || dirtyObstacles || dirtyWater || dirtyMinimap)) {
+    const int cx0 = std::max(0, bx0) / chunkSize_, cx1 = std::min(map_.width  - 1, bx1) / chunkSize_;
+    const int cy0 = std::max(0, by0) / chunkSize_, cy1 = std::min(map_.height - 1, by1) / chunkSize_;
+    for (int ccy = cy0; ccy <= cy1; ++ccy)
+      for (int ccx = cx0; ccx <= cx1; ++ccx)
+        if (assignedCells_.count({ ccx, ccy })) dirtyCells_.insert({ ccx, ccy });
+    dirty_ = true;
+  }
 }
 
 // -----------------------------------------------------------------------
@@ -2147,9 +2151,18 @@ void EditorApp::applyFlatten(int cx, int cy) {
   const float t = std::clamp(brush_.strength * 4.0f, 0.0f, 1.0f);
   for (int i : verts) vh[i] = std::clamp(vh[i] + (avg - vh[i]) * t, 0.0f, 1.0f);
 
-  rebuildTerrainGL();
+  const int hb = half + 1;
+  if (worldMode_) markTerrainDirtyRegion(cx - hb, cy - hb, cx + hb, cy + hb);
+  else            rebuildTerrainGL();
   rebuildObstacles();   // objects / walls follow terrain height
-  worldSyncEdgesToNeighbors();
+  if (worldMode_) {
+    const int cx0 = std::max(0, cx - hb) / chunkSize_, cx1 = std::min(W - 1, cx + hb) / chunkSize_;
+    const int cy0 = std::max(0, cy - hb) / chunkSize_, cy1 = std::min(H - 1, cy + hb) / chunkSize_;
+    for (int ccy = cy0; ccy <= cy1; ++ccy)
+      for (int ccx = cx0; ccx <= cx1; ++ccx)
+        if (assignedCells_.count({ ccx, ccy })) dirtyCells_.insert({ ccx, ccy });
+    dirty_ = true;
+  }
 }
 
 // -----------------------------------------------------------------------
@@ -2350,9 +2363,9 @@ void EditorApp::rebuildBlockedOverlay() {
 
 // -----------------------------------------------------------------------
 void EditorApp::initNewMap(int w, int h) {
-  // A brand-new map has no place in the world yet, so it must not inherit the
-  // previously-open map's neighbor ghosts. Clearing the path first makes the
-  // worldRefreshNeighbors() call below a no-op (no manifest cell matches).
+  // New standalone map: leave world mode (a fresh map isn't part of a world).
+  worldMode_ = false;
+  dirtyCells_.clear();
   currentFilePath_.clear();
   map_ = {};
   map_.width  = w;
@@ -2383,14 +2396,37 @@ void EditorApp::initNewMap(int w, int h) {
   minimap_.init(w, h);
   minimap_.rebuild(map_, npcSpawns_);
   camera_.snapTo({ static_cast<float>(w) * 0.5f, 0.0f, static_cast<float>(h) * 0.5f });
-  worldRefreshNeighbors();   // unassigned map → clears any lingering ghosts
 }
 
 void EditorApp::rebuildTerrainGL() {
-  terrainData_ = world::buildTerrainMesh(map_);
-  terrainMesh_.upload(terrainData_.positions, terrainData_.colors,
-                      terrainData_.triangleIndices, terrainData_.lineIndices,
-                      terrainData_.normals);
+  // Per-chunk terrain (both modes). The draw ring is centred on the active cell
+  // in world mode, or the map centre in single-map mode; a generous ring in
+  // single-map mode covers the whole (1-chunk-ish) map.
+  const int ring = worldMode_ ? editorDrawDistance_
+                              : std::max(map_.width, map_.height) / 64 + 1;
+  terrain_.reset(&map_, activeCenterTileX(), activeCenterTileY(), ring);
+}
+
+int EditorApp::activeCenterTileX() const {
+  return worldMode_ ? activeCell_.first * chunkSize_ + chunkSize_ / 2 : map_.width / 2;
+}
+int EditorApp::activeCenterTileY() const {
+  return worldMode_ ? activeCell_.second * chunkSize_ + chunkSize_ / 2 : map_.height / 2;
+}
+
+// Mark every render chunk overlapping the tile rect dirty (one markTileDirty per
+// covering chunk to avoid recomputing the same chunk's AABB repeatedly).
+void EditorApp::markTerrainDirtyRegion(int x0, int y0, int x1, int y1) {
+  const int CS = world::ChunkedTerrain::kChunkTiles;
+  x0 = std::max(0, x0); y0 = std::max(0, y0);
+  x1 = std::min(map_.width - 1, x1); y1 = std::min(map_.height - 1, y1);
+  for (int gy = y0; gy <= y1; gy += CS)
+    for (int gx = x0; gx <= x1; gx += CS)
+      terrain_.markTileDirty(gx, gy);
+  // Ensure the far edges' chunks are caught even when the rect isn't CS-aligned.
+  for (int gy = y0; gy <= y1; gy += CS) terrain_.markTileDirty(x1, gy);
+  for (int gx = x0; gx <= x1; gx += CS) terrain_.markTileDirty(gx, y1);
+  terrain_.markTileDirty(x1, y1);
 }
 
 void EditorApp::rebuildObstacles() {
@@ -2728,7 +2764,8 @@ void EditorApp::openFileDialog() {
   minimap_.init(map_.width, map_.height); minimap_.rebuild(map_, npcSpawns_);
   camera_.snapTo({ static_cast<float>(map_.width) * 0.5f, 0.0f,
                    static_cast<float>(map_.height) * 0.5f });
-  worldRefreshNeighbors();
+  worldMode_ = false;   // single-file open leaves world mode
+  dirtyCells_.clear();
 }
 
 void EditorApp::openRecentFile(const std::string& path) {
@@ -2746,27 +2783,19 @@ void EditorApp::openRecentFile(const std::string& path) {
   minimap_.init(map_.width, map_.height); minimap_.rebuild(map_, npcSpawns_);
   camera_.snapTo({ static_cast<float>(map_.width) * 0.5f, 0.0f,
                    static_cast<float>(map_.height) * 0.5f });
-  worldRefreshNeighbors();
+  worldMode_ = false;   // single-file open leaves world mode
+  dirtyCells_.clear();
 }
 
 void EditorApp::saveCurrentFile() {
+  // World mode: Ctrl+S slices every dirty chunk back to its file.
+  if (worldMode_) { worldSaveDirtyChunks(); return; }
   if (currentFilePath_.empty()) { saveAsDialog(); return; }
   map_.npcSpawns = npcSpawns_;
   shared::saveWorldMap(std::filesystem::path(currentFilePath_), map_);
   dirty_ = false;
   addRecentFile(currentFilePath_);
   updateWindowTitle();
-
-  // Save-through: persist shared-edge heights propagated into neighbor chunks
-  // so adjacent maps line up on disk (and for the server's assembly) without
-  // the user opening each neighbor.
-  for (auto& np : neighbors_) {
-    if (!np.dirty) continue;
-    if (shared::saveWorldMap(worldDir() / np.mapFile, np.map)) {
-      np.dirty = false;
-      std::fprintf(stdout, "[worldView] stitched shared edges into %s\n", np.mapFile.c_str());
-    }
-  }
 }
 
 void EditorApp::saveAsDialog() {
@@ -2832,6 +2861,7 @@ void EditorApp::saveSettings() {
   // Water settings (shared with the game client).
   storeWaterSettings(waterUniforms_, s);
   // Outline fields are client-only; write defaults so the file is valid.
+  s.editorDrawDistance = editorDrawDistance_;
   ::saveSettings(s, resolveFromExe("settings.cfg"));
 }
 

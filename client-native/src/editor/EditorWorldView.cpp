@@ -63,7 +63,6 @@ void EditorApp::worldNewManifest() {
   worldManifestPath_.clear();
   worldDirty_ = true;
   worldDestroyThumbs();
-  neighbors_.clear();
 }
 
 void EditorApp::worldOpenManifest() {
@@ -75,7 +74,8 @@ void EditorApp::worldOpenManifest() {
   worldManifestPath_ = std::filesystem::path(path).string();
   worldDirty_ = false;
   worldDestroyThumbs();
-  worldRefreshNeighbors();
+  // Assemble + enter world mode immediately so the whole world is editable.
+  enterWorldMode(worldManifestPath_);
 }
 
 void EditorApp::worldSaveManifest() {
@@ -99,7 +99,6 @@ void EditorApp::worldAssignCell(int cx, int cy, const std::string& mapFile) {
     worldManifest_.chunks.push_back(std::move(ref));
   }
   worldDirty_ = true;
-  worldRefreshNeighbors();
 }
 
 void EditorApp::worldEraseCell(int cx, int cy) {
@@ -108,15 +107,16 @@ void EditorApp::worldEraseCell(int cx, int cy) {
            [&](const shared::WorldChunkRef& c) { return c.cx == cx && c.cy == cy; }),
            cs.end());
   worldDirty_ = true;
-  worldRefreshNeighbors();
 }
 
 void EditorApp::worldOpenChunk(int cx, int cy) {
-  const auto* cell = worldCellAt(cx, cy);
-  if (!cell) return;
-  const auto path = worldDir() / cell->mapFile;
-  // openRecentFile loads + rebuilds GL + recents + title + neighbor ghosts.
-  openRecentFile(path.string());
+  if (!worldCellAt(cx, cy)) return;
+  // (Re)assemble when not yet in world mode, or when this cell isn't in the
+  // assembled world yet (e.g. just created). Otherwise just recenter — every
+  // chunk is already loaded and editable.
+  const bool needAssemble = !worldMode_ || !assignedCells_.count({ cx, cy });
+  if (needAssemble && !worldManifestPath_.empty()) enterWorldMode(worldManifestPath_);
+  worldFocusCell(cx, cy);
   setMode(EditorMode::Map);   // jump to the map workspace to edit it
 }
 
@@ -174,118 +174,82 @@ void EditorApp::worldEnsureManifestLoaded() {
   }
 }
 
-void EditorApp::worldRefreshNeighbors() {
-  neighbors_.clear();
-  if (!neighborPreviewEnabled_ || currentFilePath_.empty()) return;
-  worldEnsureManifestLoaded();   // ghosts work before the World View is opened
+// ---- World editing mode (assemble whole world, edit, slice-save) ------------
 
-  // Which cell (if any) is the open map assigned to? Compare canonical paths
-  // so relative manifest entries match the absolute currentFilePath_.
-  std::error_code ec;
-  const auto current = std::filesystem::canonical(currentFilePath_, ec);
-  if (ec) return;
-  const shared::WorldChunkRef* self = nullptr;
-  for (const auto& c : worldManifest_.chunks) {
-    const auto p = std::filesystem::canonical(worldDir() / c.mapFile, ec);
-    if (!ec && p == current) { self = &c; break; }
-  }
-  if (!self) return;
+void EditorApp::enterWorldMode(const std::string& manifestPath) {
+  shared::WorldManifest m;
+  if (!shared::loadWorldManifest(manifestPath, m)) return;
+  worldManifest_     = m;
+  worldManifestPath_ = manifestPath;
+  chunkSize_         = m.chunkSize > 0 ? m.chunkSize : 64;
+  const auto baseDir = std::filesystem::path(manifestPath).parent_path();
 
-  const int S = worldManifest_.chunkSize;
-  for (int dy = -1; dy <= 1; ++dy) {
-    for (int dx = -1; dx <= 1; ++dx) {
-      if (dx == 0 && dy == 0) continue;
-      const auto* cell = worldCellAt(self->cx + dx, self->cy + dy);
-      if (!cell) continue;
+  // One-time self-check of the assemble/slice flip math during bring-up.
+  static bool verified = false;
+  if (!verified) { verified = true; editor::verifyAssembleRoundTrip(m, baseDir); }
 
-      NeighborPreview np;
-      np.dcx = dx; np.dcy = dy;
-      np.mapFile = cell->mapFile;
-      if (!shared::loadWorldMap(worldDir() / cell->mapFile, np.map)) continue;
-      if (np.map.width != S || np.map.height != S) {
-        std::fprintf(stderr, "[worldView] neighbor %s is %dx%d, expected %d — skipping ghost\n",
-                     cell->mapFile.c_str(), np.map.width, np.map.height, S);
-        continue;
-      }
-      buildNeighborMesh(np);
-      neighbors_.push_back(std::move(np));
-    }
-  }
+  shared::WorldMapFile assembled;
+  if (!editor::assembleWorld(m, baseDir, assembled, assignedCells_)) return;
+
+  map_       = std::move(assembled);
+  npcSpawns_ = map_.npcSpawns;
+  worldMode_ = true;
+  worldDirty_ = false;
+  dirtyCells_.clear();
+  currentFilePath_.clear();
+  activeCell_ = { chunkSize_ > 0 ? m.spawn.x / chunkSize_ : 0,
+                  chunkSize_ > 0 ? m.spawn.y / chunkSize_ : 0 };
+
+  rebuildObstacles();
+  waterRenderer_.rebuild(map_, waterUniforms_.waterOffset);
+  minimap_.init(map_.width, map_.height); minimap_.rebuild(map_, npcSpawns_);
+  undo_.clear(); pushUndo();
+  worldFocusCell(activeCell_.first, activeCell_.second);
+  updateWindowTitle();
 }
 
-// Bake the world offset + a ghost dim into a neighbor's terrain mesh so it
-// renders with the unmodified terrain shader. The mesh's internal row flip
-// cancels per-map, so the cell offset is simply (+dcx*S, 0, +dcy*S).
-void EditorApp::buildNeighborMesh(NeighborPreview& np) {
-  const int S = worldManifest_.chunkSize;
-  auto md = world::buildTerrainMesh(np.map);
-  const float ox = static_cast<float>(np.dcx * S);
-  const float oz = static_cast<float>(np.dcy * S);
-  for (std::size_t i = 0; i + 2 < md.positions.size(); i += 3) {
-    md.positions[i]     += ox;
-    md.positions[i + 2] += oz;
-  }
-  for (std::size_t i = 0; i + 3 < md.colors.size(); i += 4) {
-    md.colors[i]     = md.colors[i]     * 0.45f + 0.18f;
-    md.colors[i + 1] = md.colors[i + 1] * 0.45f + 0.18f;
-    md.colors[i + 2] = md.colors[i + 2] * 0.45f + 0.18f;
-  }
-  np.mesh.upload(md.positions, md.colors, md.triangleIndices, {}, md.normals);
+void EditorApp::worldFocusCell(int cx, int cy) {
+  activeCell_ = { cx, cy };
+  rebuildTerrainGL();   // rebuild the draw ring centred on the new active cell
+  const float wx = cx * chunkSize_ + chunkSize_ * 0.5f;
+  const float wz = cy * chunkSize_ + chunkSize_ * 0.5f;
+  camera_.snapTo({ wx, 0.0f, wz });
 }
 
-// Shared-edge height propagation. The open chunk and each neighbor share a
-// vertex row/col (or single corner). The vertex grid is (CS+1)² indexed
-// row*(CS+1)+col; because the assembler maps a chunk's local rows to global
-// rows as gr = gh-(cy+1)*S+vy, a north/south neighbor shares MIRRORED rows
-// (open row 0 == (cy+1)-neighbor row CS), while east/west neighbors share the
-// same row. This copies the open map's boundary vertices into the matching
-// neighbor vertices so seams line up automatically; the neighbor is marked
-// dirty for save-through.
-void EditorApp::worldSyncEdgesToNeighbors() {
-  if (neighbors_.empty()) return;
-  const int CS = worldManifest_.chunkSize;       // tiles per side; CS+1 verts
-  if (CS <= 0 || map_.width != CS || map_.height != CS) return;
-  const int stride = CS + 1;
-  const auto& ovh = map_.vertexHeights;
-  if (static_cast<int>(ovh.size()) != stride * stride) return;
-
-  for (auto& np : neighbors_) {
-    if (static_cast<int>(np.map.vertexHeights.size()) != stride * stride) continue;
-    // Open-map boundary rows/cols touching this neighbor:
-    //   dcx>0 (east) → col CS; dcx<0 (west) → col 0; dcx==0 → all cols 0..CS.
-    //   dcy>0 → row 0; dcy<0 → row CS; dcy==0 → all rows 0..CS.
-    const int colLo = (np.dcx > 0) ? CS : 0;
-    const int colHi = (np.dcx != 0) ? colLo : CS;
-    const int rowLo = (np.dcy > 0) ? 0 : (np.dcy < 0 ? CS : 0);
-    const int rowHi = (np.dcy != 0) ? rowLo : CS;
-
-    bool changed = false;
-    for (int orow = rowLo; orow <= rowHi; ++orow) {
-      for (int ocol = colLo; ocol <= colHi; ++ocol) {
-        const int nrow = (np.dcy == 0) ? orow : (np.dcy > 0 ? CS : 0);
-        const int ncol = (np.dcx == 0) ? ocol : (np.dcx > 0 ? 0  : CS);
-        const float h = ovh[orow * stride + ocol];
-        float& dst = np.map.vertexHeights[nrow * stride + ncol];
-        if (dst != h) { dst = h; changed = true; }
-      }
-    }
-    if (changed) {
-      np.dirty = true;
-      buildNeighborMesh(np);
-      worldThumbs_.erase(np.mapFile);   // world-view thumbnail re-rasters
+void EditorApp::worldSaveDirtyChunks() {
+  if (!worldMode_) return;
+  const auto dir = worldDir();
+  int saved = 0;
+  for (const auto& cell : dirtyCells_) {
+    const auto* ref = worldCellAt(cell.first, cell.second);
+    if (!ref) continue;
+    shared::WorldMapFile sl =
+        editor::sliceChunk(map_, cell.first, cell.second, chunkSize_, worldManifest_.spawn);
+    if (shared::saveWorldMap(dir / ref->mapFile, sl)) {
+      ++saved;
+      worldThumbs_.erase(ref->mapFile);   // world-view thumbnail re-rasters
     }
   }
+  dirtyCells_.clear();
+  dirty_ = false;
+  if (worldDirty_ && !worldManifestPath_.empty() &&
+      shared::saveWorldManifest(worldManifestPath_, worldManifest_))
+    worldDirty_ = false;
+  updateWindowTitle();
+  std::fprintf(stdout, "[worldSave] saved %d dirty chunk(s)\n", saved);
+}
+
+void EditorApp::markCellDirtyAtTile(int gx, int gy) {
+  if (!worldMode_ || chunkSize_ <= 0) return;
+  const CellKey c{ gx / chunkSize_, gy / chunkSize_ };
+  if (assignedCells_.count(c)) dirtyCells_.insert(c);
 }
 
 // ---- World View window ------------------------------------------------------
 
 void EditorApp::drawWorldView() {
-  // Populate the grid from world.json the first time it's needed (may already
-  // have been loaded lazily by worldRefreshNeighbors).
-  if (!worldAutoloaded_) {
-    worldEnsureManifestLoaded();
-    worldRefreshNeighbors();
-  }
+  // Populate the grid from world.json the first time the window is shown.
+  if (!worldAutoloaded_) worldEnsureManifestLoaded();
 
   // Workspace pane: renderFrame pins position/size to the content area right
   // of the mode rail, so this window is fixed (no title bar, close via rail).
@@ -308,8 +272,9 @@ void EditorApp::drawWorldView() {
   ImGui::SameLine();
   if (ImGui::Button("Save World")) worldSaveManifest();
   ImGui::SameLine();
-  ImGui::Checkbox("Neighbor ghosts", &neighborPreviewEnabled_);
-  if (ImGui::IsItemEdited()) worldRefreshNeighbors();
+  if (ImGui::Button("Edit World")) {   // assemble + enter full-detail world editing
+    if (!worldManifestPath_.empty()) { enterWorldMode(worldManifestPath_); setMode(EditorMode::Map); }
+  }
   ImGui::SameLine();
   ImGui::TextDisabled("chunk %dpx  spawn (%d,%d)  %d chunk(s)",
                       worldManifest_.chunkSize,
@@ -467,7 +432,6 @@ void EditorApp::drawWorldView() {
           from->cx = hovCx; from->cy = hovCy;
         }
         worldDirty_ = true;
-        worldRefreshNeighbors();
       }
     }
     worldDragCx_ = INT_MIN;

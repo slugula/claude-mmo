@@ -85,6 +85,8 @@ struct AppSettings {
   int         chunkDrawDistance = 2;
   // Entity sync (interest) radius in tiles requested from the server.
   int         viewRadius        = 15;
+  // Level-editor world-mode draw distance (chunks rendered around active cell).
+  int         editorDrawDistance = 2;
 };
 
 inline bool saveSettings(const AppSettings& s, const std::filesystem::path& path) {
@@ -124,6 +126,7 @@ inline bool saveSettings(const AppSettings& s, const std::filesystem::path& path
   std::fprintf(f, "bankPosX=%f\nbankPosY=%f\n", s.bankPosX, s.bankPosY);
   std::fprintf(f, "chunkDrawDistance=%d\n", s.chunkDrawDistance);
   std::fprintf(f, "viewRadius=%d\n", s.viewRadius);
+  std::fprintf(f, "editorDrawDistance=%d\n", s.editorDrawDistance);
   std::fclose(f);
   return true;
 }
@@ -179,7 +182,8 @@ inline bool loadSettings(AppSettings& s, const std::filesystem::path& path) {
         fF("waterSpecular", s.waterSpecular) ||
         fF("bankPosX", s.bankPosX) || fF("bankPosY", s.bankPosY) ||
         fI("chunkDrawDistance", s.chunkDrawDistance) ||
-        fI("viewRadius", s.viewRadius)) {
+        fI("viewRadius", s.viewRadius) ||
+        fI("editorDrawDistance", s.editorDrawDistance)) {
       continue;
     }
     if (std::strcmp(key, "waterCausticMap") == 0) { s.waterCausticMap = val; continue; }

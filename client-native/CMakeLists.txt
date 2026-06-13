@@ -157,6 +157,7 @@ add_executable(level-editor
   src/editor/main.cpp
   src/editor/EditorApp.cpp
   src/editor/EditorWorldView.cpp
+  src/editor/WorldAssembly.cpp
   src/editor/EntityClient.cpp
   src/editor/MinimapRenderer.cpp
   src/editor/UndoStack.cpp

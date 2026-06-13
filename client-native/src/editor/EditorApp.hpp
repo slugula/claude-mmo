@@ -9,6 +9,7 @@
 #include "editor/EntityDefs.hpp"
 #include "editor/MinimapRenderer.hpp"
 #include "editor/UndoStack.hpp"
+#include "editor/WorldAssembly.hpp"   // CellKey, assembleWorld, sliceChunk
 #include "input/Picker.hpp"
 #include "render/Mesh.hpp"
 #include "render/MsaaFramebuffer.hpp"
@@ -21,6 +22,7 @@
 #include "world/ObstacleSystem.hpp"
 #include "world/SkinnedMesh.hpp"
 #include "world/TerrainBuilder.hpp"
+#include "world/ChunkedTerrain.hpp"
 #include "world/WallSystem.hpp"
 #include "world/WaterRenderer.hpp"
 #include "world/OverlayRenderer.hpp"
@@ -35,6 +37,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <optional>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -148,7 +151,7 @@ private:
   render::Shader  skinnedShader_;          // for animated obstacle models (fishing spots etc.)
   render::Shader  shadowInstancedShader_;
   render::ShadowMap shadowMap_;
-  render::Mesh    terrainMesh_;
+  world::ChunkedTerrain terrain_;          // per-chunk terrain meshes + draw ring (both modes)
   world::ObstacleSystem obstacles_;
   world::WallSystem     walls_;
   world::EntityRenderer entities_;   // NPC stand-ins
@@ -156,13 +159,6 @@ private:
   world::WaterRenderer  waterRenderer_;
   world::WaterUniforms  waterUniforms_;
   world::OverlayRenderer overlayRenderer_;
-
-  // Raw GPU buffers for incremental terrain updates.
-  // These are the VBOs owned by terrainMesh_; we cache them for SubData calls.
-  // Actually we just rebuild the full mesh on structural changes; for paint
-  // and sculpt we use targeted glBufferSubData via Mesh helpers.
-  // (TerrainBuilder returns the full mesh data; we store a CPU copy.)
-  world::TerrainMeshData terrainData_;
 
   // Hover indicator.
   GLuint hoverVao_       = 0;
@@ -286,19 +282,33 @@ private:
   void worldNewManifest();
   void worldOpenManifest();
   void worldSaveManifest();
-  void worldOpenChunk(int cx, int cy);                 // load cell's map into the editor
+  void worldOpenChunk(int cx, int cy);                 // focus a cell for editing (world mode)
   void worldAssignCell(int cx, int cy, const std::string& mapFile);
   void worldEraseCell(int cx, int cy);
-  void worldRefreshNeighbors();                        // (re)load adjacent chunk ghosts
   void worldEnsureManifestLoaded();                    // lazy one-time world.json autoload
-  // Copy the open chunk's shared edge/corner vertex heights into the loaded
-  // neighbor ghosts so seams line up automatically (persisted to the neighbor
-  // files on save). No-op unless the open map is assigned to a world cell.
-  void worldSyncEdgesToNeighbors();
   void worldDestroyThumbs();                           // free thumbnail GL textures
   GLuint worldThumbnail(const std::string& mapFile);   // cached per-mapFile texture
   std::filesystem::path worldDir() const;              // manifest directory
   shared::WorldChunkRef* worldCellAt(int cx, int cy);
+
+  // ---- World editing mode ----
+  // In world mode, map_ is the ASSEMBLED global world (all assigned chunks
+  // merged); edits mark per-cell dirty and Ctrl+S slices each dirty cell back
+  // to its file. Single-map mode (worldMode_ == false) edits one file as before.
+  bool                       worldMode_   = false;
+  int                        chunkSize_   = 64;
+  std::set<CellKey>          assignedCells_;     // cells with map data
+  std::set<CellKey>          dirtyCells_;        // cells edited since last save
+  CellKey                    activeCell_  = {0, 0};   // focus cell (camera + draw ring centre)
+  int                        editorDrawDistance_ = 2; // chunks rendered around active (persisted)
+
+  void enterWorldMode(const std::string& manifestPath);   // assemble + switch to world mode
+  void worldFocusCell(int cx, int cy);                    // recenter on a cell (no reload)
+  void worldSaveDirtyChunks();                            // slice dirty cells -> files
+  void markCellDirtyAtTile(int gx, int gy);               // tile/vertex edit -> owning cell(s)
+  void markTerrainDirtyRegion(int x0, int y0, int x1, int y1);  // ChunkedTerrain dirty for a rect
+  int  activeCenterTileX() const;                         // tile-space centre for the draw ring
+  int  activeCenterTileY() const;
 
   shared::WorldManifest worldManifest_;
   std::string  worldManifestPath_;        // empty = no world loaded
@@ -309,21 +319,6 @@ private:
   float        worldZoom_ = 96.0f;        // pixels per world cell (32..256)
   int          worldDragCx_ = INT_MIN, worldDragCy_ = INT_MIN;  // drag-move source cell
   std::unordered_map<std::string, GLuint> worldThumbs_;  // mapFile → 64×64 texture (0 = failed)
-
-  // Neighbor ghost preview — an adjacent chunk of the open map. Shared edges are
-  // editable: sculpting the open map's boundary writes through to the matching
-  // neighbor vertices here (dirty → persisted to mapFile on save).
-  struct NeighborPreview {
-    int                  dcx = 0, dcy = 0;  // cell offset relative to the open chunk
-    std::string          mapFile;           // neighbor's map file (for save-through)
-    bool                 dirty = false;     // shared edge edited since last save
-    shared::WorldMapFile map;               // working copy (edge edits applied here)
-    render::Mesh         mesh;              // ghost terrain (world offset + dim baked in)
-  };
-  void buildNeighborMesh(NeighborPreview& np);   // (re)bake the dimmed offset ghost mesh
-  std::vector<NeighborPreview> neighbors_;
-  bool neighborPreviewEnabled_ = true;
-  int  neighborStripTiles_     = 16;        // border tiles drawn in the 2D grid
 
   // ---- Database editor window
   void drawDatabaseWindow();
