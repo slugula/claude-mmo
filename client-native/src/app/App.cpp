@@ -679,6 +679,7 @@ bool App::init() {
       // Persisted bank window position (-1 = unset → centre on first open).
       if (s.bankPosX >= 0.f && s.bankPosY >= 0.f)
         ui::bankPanelSetPosition(s.bankPosX, s.bankPosY);
+      chunkDrawDistance_ = std::clamp(s.chunkDrawDistance, 1, 8);
     }
   }
 
@@ -727,12 +728,16 @@ void App::generateAndBuildTerrain() {
 // when the server sends its authoritative map in the init message — so a shared
 // client renders the server's world, not a local/procedural one.
 void App::rebuildWorldFromMap() {
-  const auto data = world::buildTerrainMesh(map_);
-  terrainMesh_.upload(data.positions, data.colors,
-                      data.triangleIndices, data.lineIndices,
-                      data.normals);
-  terrainTileW_   = data.width;
-  terrainTileH_   = data.height;
+  // Per-chunk terrain: slice the (possibly multi-chunk-assembled) map into
+  // 64-tile render chunks; the ring around the spawn/player builds now, the
+  // rest lazily as the player moves (see the per-frame update in renderFrame).
+  {
+    const int cx = currLocalPlayer_ ? currLocalPlayer_->tileX : map_.spawnPoint[0];
+    const int cy = currLocalPlayer_ ? currLocalPlayer_->tileY : map_.spawnPoint[1];
+    terrain_.reset(&map_, cx, cy, chunkDrawDistance_);
+  }
+  terrainTileW_   = map_.width;
+  terrainTileH_   = map_.height;
   hoveredTile_    = {};  // hover stale after rebuild
 
   obstacles_.rebuildFromMap(map_);
@@ -743,8 +748,8 @@ void App::rebuildWorldFromMap() {
   if (overlayRenderer_.valid())
     overlayRenderer_.rebuild(map_);
 
-  std::fprintf(stdout, "[App] world built: %d x %d tiles, %zu water tiles\n",
-               data.width, data.height, map_.waterTiles.size());
+  std::fprintf(stdout, "[App] world built: %d x %d tiles, %d x %d render chunks\n",
+               map_.width, map_.height, terrain_.chunksX(), terrain_.chunksY());
 }
 
 // Apply entity definitions from whichever source supplied them (localhost DB API
@@ -910,8 +915,18 @@ void App::renderFrame() {
   if (!ImGui::GetIO().WantCaptureMouse && !claySteals && fbW > 0 && fbH > 0) {
     glm::vec3 rayOrigin, rayDir;
     input::screenToRay(cursorX, cursorY, fbW, fbH, viewProj, &rayOrigin, &rayDir);
-    hoveredTile_ = input::pickTile(rayOrigin, rayDir, map_.vertexHeights,
-                                   terrainTileW_, terrainTileH_);
+    // Chunk-culled terrain pick: only resident (rendered) chunks are
+    // considered, so cost tracks the draw ring instead of O(W*H), and clicks
+    // can't land on unrendered/void areas.
+    {
+      const auto rects = terrain_.residentRects();
+      std::vector<input::PickRect> prs;
+      prs.reserve(rects.size());
+      for (const auto& r : rects)
+        prs.push_back({ r.x0, r.y0, r.w, r.h, r.aabbMin, r.aabbMax });
+      hoveredTile_ = input::pickTileChunked(rayOrigin, rayDir, map_.vertexHeights,
+                                            terrainTileW_, terrainTileH_, prs);
+    }
 
     // ---- Obstacle + entity ray-pick (secondary pass) -------------------------
     // Tests the ray against geometry-derived AABBs (inflated ×1.2) for all
@@ -1228,7 +1243,16 @@ void App::renderFrame() {
   terrainShader_.setFloat("u_fogStart",    fogStart_);
   terrainShader_.setFloat("u_aoEnabled",   aoEnabled_   ? 1.0f : 0.0f);
   terrainShader_.setFloat("u_aoStrength",  aoStrength_);
-  terrainMesh_.draw();
+  // Keep the chunk ring around the player resident (max 2 mesh builds/frame to
+  // avoid hitches), then draw frustum-culled chunks.
+  {
+    const int cx = currLocalPlayer_ ? currLocalPlayer_->tileX
+                                    : static_cast<int>(map_.spawnPoint[0]);
+    const int cy = currLocalPlayer_ ? currLocalPlayer_->tileY
+                                    : static_cast<int>(map_.spawnPoint[1]);
+    terrain_.update(cx, cy, chunkDrawDistance_);
+  }
+  terrain_.draw(viewProj);
 
   // ---- Overlay surfaces (paths / floors / shaped ground) ---------------------
   // Drawn right after terrain so obstacles, NPCs, and water composite on top.
@@ -1568,7 +1592,7 @@ void App::renderFrame() {
     wireframeShader_.setMat4("u_viewProj", viewProj);
     wireframeShader_.setVec4("u_color",    glm::vec4(1.0f, 1.0f, 1.0f, 1.0f));
     glDepthMask(GL_FALSE);
-    terrainMesh_.drawLines();
+    terrain_.drawLines();
     glDepthMask(GL_TRUE);
   }
 
@@ -2485,6 +2509,10 @@ void App::renderFrame() {
           ImGui::SetNextItemWidth(-1); ImGui::SliderInt("Lums##pal", &paletteLums_, 2, 64);
         }
         ImGui::Checkbox("Wireframe overlay", &wireframe_);
+        ImGui::SetNextItemWidth(-1);
+        ImGui::SliderInt("Draw distance (chunks)##cdd", &chunkDrawDistance_, 1, 8);
+        if (ImGui::IsItemHovered())
+          ImGui::SetTooltip("Terrain chunk ring rendered around the player\n(64 tiles per chunk; far chunks build lazily)");
         break;
       }
       case 4: {  // Outline
@@ -3378,6 +3406,7 @@ void App::saveSettings() {
   s.hoverTileB = hoverTileColor_.b; s.hoverTileA = hoverTileColor_.a;
   storeWaterSettings(waterUniforms_, s);
   { float bx, by; if (ui::bankPanelGetPosition(bx, by)) { s.bankPosX = bx; s.bankPosY = by; } }
+  s.chunkDrawDistance = chunkDrawDistance_;
   ::saveSettings(s, resolveFromExe("settings.cfg"));
 }
 

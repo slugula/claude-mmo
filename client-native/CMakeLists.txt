@@ -53,6 +53,7 @@ add_library(game_core STATIC
   src/world/ObstacleSystem.cpp
   src/world/SkinnedMesh.cpp
   src/world/TerrainBuilder.cpp
+  src/world/ChunkedTerrain.cpp
   src/world/WallSystem.cpp
   src/world/WaterMesh.cpp
   src/world/WaterRenderer.cpp

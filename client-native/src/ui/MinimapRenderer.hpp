@@ -21,6 +21,7 @@
 #include "shared/SharedTypes.hpp"
 
 #include <glad/glad.h>
+#include <climits>
 #include <cstdint>
 #include <string>
 #include <unordered_map>
@@ -34,6 +35,12 @@ public:
     static constexpr int kSize       = 156;
     // Base texture resolution: 4 pixels per tile (matches editor MinimapRenderer).
     static constexpr int kPxPerTile  = 4;
+    // Base texture covers a region of this many tiles around the player, not
+    // the whole map (a 640-tile multi-chunk world would need a 2560² texture).
+    // The region re-centers when the player drifts kRegionSlack tiles from the
+    // last build center. Maps smaller than the region behave exactly as before.
+    static constexpr int kRegionTiles = 192;
+    static constexpr int kRegionSlack = 32;
 
     MinimapRenderer() = default;
     ~MinimapRenderer() { destroy(); }
@@ -45,7 +52,9 @@ public:
     void init();
     void destroy();
 
-    // Rebuild the static base layer from map data.  Call after map load/reload.
+    // Register the map and reset the cached region. The actual region raster
+    // happens lazily inside updateFrame() once the player position is known.
+    // The map must outlive this renderer (App's map_ does).
     void buildBaseLayer(const shared::WorldMapFile& map);
 
     // Update the composite texture each frame.
@@ -71,11 +80,21 @@ public:
     bool isReady() const { return compositeFbo_ != 0 && compositeShader_.isValid(); }
 
 private:
-    // ---- Base texture (static, one tile = 4×4 px) ---------------------------
+    // ---- Base texture (region around the player, one tile = 4×4 px) ---------
     GLuint               baseTex_  = 0;
     int                  baseTexW_ = 0;
     int                  baseTexH_ = 0;
     std::vector<uint8_t> baseBuf_;
+
+    // Region state (tile coords). Center sentinel INT_MIN forces a rebuild.
+    const shared::WorldMapFile* map_ = nullptr;
+    int regionOriginX_ = 0, regionOriginY_ = 0;   // texture origin tile
+    int regionW_ = 0,       regionH_ = 0;          // region size in tiles
+    int regionCenterX_ = INT_MIN, regionCenterY_ = INT_MIN;
+
+    // Re-raster the region so it covers (centerTx, centerTy); no-op while the
+    // center is within kRegionSlack of the last build.
+    void ensureRegion(int centerTx, int centerTy);
 
     // ---- Composite FBO (156×156, rebuilt every frame) -----------------------
     GLuint               compositeFbo_ = 0;

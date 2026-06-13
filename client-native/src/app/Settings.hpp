@@ -79,6 +79,10 @@ struct AppSettings {
   // Top-left in screen pixels. -1 = unset → centre on first open.
   float       bankPosX = -1.0f;
   float       bankPosY = -1.0f;
+
+  // ---- Chunked terrain (client only) ----
+  // Draw distance in 64-tile render chunks around the player (ring radius).
+  int         chunkDrawDistance = 2;
 };
 
 inline bool saveSettings(const AppSettings& s, const std::filesystem::path& path) {
@@ -116,6 +120,7 @@ inline bool saveSettings(const AppSettings& s, const std::filesystem::path& path
                s.waterOffset, s.waterRefraction, s.waterDepthFade, s.waterShoreDepth, s.waterFoamContact, s.waterSpecular);
   std::fprintf(f, "waterCausticMap=%s\n", s.waterCausticMap.c_str());
   std::fprintf(f, "bankPosX=%f\nbankPosY=%f\n", s.bankPosX, s.bankPosY);
+  std::fprintf(f, "chunkDrawDistance=%d\n", s.chunkDrawDistance);
   std::fclose(f);
   return true;
 }
@@ -169,7 +174,8 @@ inline bool loadSettings(AppSettings& s, const std::filesystem::path& path) {
         fF("waterDepthFade", s.waterDepthFade) || fF("waterShoreDepth", s.waterShoreDepth) ||
         fF("waterFoamContact", s.waterFoamContact) ||
         fF("waterSpecular", s.waterSpecular) ||
-        fF("bankPosX", s.bankPosX) || fF("bankPosY", s.bankPosY)) {
+        fF("bankPosX", s.bankPosX) || fF("bankPosY", s.bankPosY) ||
+        fI("chunkDrawDistance", s.chunkDrawDistance)) {
       continue;
     }
     if (std::strcmp(key, "waterCausticMap") == 0) { s.waterCausticMap = val; continue; }

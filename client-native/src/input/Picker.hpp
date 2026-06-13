@@ -42,4 +42,19 @@ PickResult pickTile(const glm::vec3&          rayOrigin,
                     const std::vector<float>& vertexHeights,
                     int W, int H);
 
+// Chunk-culled variant for large (multi-chunk) worlds: slab-tests each
+// candidate rect's AABB, visits surviving rects nearest-first, runs the
+// heightfield test only inside the rect, and early-outs once a hit is closer
+// than the next rect's entry distance. With 64-tile render chunks this keeps
+// per-pick cost ~O(visible chunk count + 64*64) instead of O(W*H).
+struct PickRect {
+  int x0 = 0, y0 = 0, w = 0, h = 0;     // tile rect in world tile coords
+  glm::vec3 aabbMin{0.0f}, aabbMax{0.0f};
+};
+PickResult pickTileChunked(const glm::vec3&             rayOrigin,
+                           const glm::vec3&             rayDir,
+                           const std::vector<float>&    vertexHeights,
+                           int W, int H,
+                           const std::vector<PickRect>& rects);
+
 }  // namespace input

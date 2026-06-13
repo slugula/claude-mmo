@@ -6,9 +6,67 @@
 #include <cmath>
 #include <limits>
 
+#include <algorithm>
+
 namespace input {
 
 namespace {
+
+// Ray-vs-AABB slab test; writes the entry distance (clamped to 0 when the
+// origin is inside) on hit.
+bool rayAabb(const glm::vec3& orig, const glm::vec3& dir,
+             const glm::vec3& mn, const glm::vec3& mx, float* outTEnter) {
+  float tMin = 0.0f, tMax = std::numeric_limits<float>::max();
+  for (int i = 0; i < 3; ++i) {
+    if (std::abs(dir[i]) < 1e-9f) {
+      if (orig[i] < mn[i] || orig[i] > mx[i]) return false;
+      continue;
+    }
+    const float inv = 1.0f / dir[i];
+    float t0 = (mn[i] - orig[i]) * inv;
+    float t1 = (mx[i] - orig[i]) * inv;
+    if (t0 > t1) std::swap(t0, t1);
+    tMin = std::max(tMin, t0);
+    tMax = std::min(tMax, t1);
+    if (tMin > tMax) return false;
+  }
+  *outTEnter = tMin;
+  return true;
+}
+
+// Heightfield test over a tile rect; updates best/bestT in place.
+void pickTilesInRect(const glm::vec3& rayOrigin, const glm::vec3& rayDir,
+                     const std::vector<float>& vh, int W, int H,
+                     int rx0, int ry0, int rw, int rh,
+                     PickResult& best, float& bestT) {
+  const int x1 = std::min(W, rx0 + rw);
+  const int y1 = std::min(H, ry0 + rh);
+  for (int ty = std::max(0, ry0); ty < y1; ++ty) {
+    for (int tx = std::max(0, rx0); tx < x1; ++tx) {
+      const float hSW = vh[(H - ty)     * (W + 1) + tx]     * shared::kMaxTerrainH;
+      const float hSE = vh[(H - ty)     * (W + 1) + tx + 1] * shared::kMaxTerrainH;
+      const float hNW = vh[(H - ty - 1) * (W + 1) + tx]     * shared::kMaxTerrainH;
+      const float hNE = vh[(H - ty - 1) * (W + 1) + tx + 1] * shared::kMaxTerrainH;
+
+      const glm::vec3 SW(tx - 0.5f, hSW, ty - 0.5f);
+      const glm::vec3 SE(tx + 0.5f, hSE, ty - 0.5f);
+      const glm::vec3 NW(tx - 0.5f, hNW, ty + 0.5f);
+      const glm::vec3 NE(tx + 0.5f, hNE, ty + 0.5f);
+
+      float t;
+      if (rayTriangle(rayOrigin, rayDir, NW, SW, NE, &t) && t < bestT) {
+        bestT = t;
+        best.hit = true; best.tileX = tx; best.tileY = ty;
+        best.worldPos = rayOrigin + rayDir * t; best.rayT = t;
+      }
+      if (rayTriangle(rayOrigin, rayDir, NE, SW, SE, &t) && t < bestT) {
+        bestT = t;
+        best.hit = true; best.tileX = tx; best.tileY = ty;
+        best.worldPos = rayOrigin + rayDir * t; best.rayT = t;
+      }
+    }
+  }
+}
 
 }  // namespace
 
@@ -78,38 +136,34 @@ PickResult pickTile(const glm::vec3& rayOrigin, const glm::vec3& rayDir,
   //   i1 = (row,   col+1)   = NE       i3 = (row+1, col+1) = SE
   // so the two triangles per tile are (NW, SW, NE) and (NE, SW, SE).
 
-  for (int ty = 0; ty < H; ++ty) {
-    for (int tx = 0; tx < W; ++tx) {
-      const float hSW = vh[(H - ty)     * (W + 1) + tx]     * shared::kMaxTerrainH;
-      const float hSE = vh[(H - ty)     * (W + 1) + tx + 1] * shared::kMaxTerrainH;
-      const float hNW = vh[(H - ty - 1) * (W + 1) + tx]     * shared::kMaxTerrainH;
-      const float hNE = vh[(H - ty - 1) * (W + 1) + tx + 1] * shared::kMaxTerrainH;
+  pickTilesInRect(rayOrigin, rayDir, vh, W, H, 0, 0, W, H, best, bestT);
+  return best;
+}
 
-      const glm::vec3 SW(tx - 0.5f, hSW, ty - 0.5f);
-      const glm::vec3 SE(tx + 0.5f, hSE, ty - 0.5f);
-      const glm::vec3 NW(tx - 0.5f, hNW, ty + 0.5f);
-      const glm::vec3 NE(tx + 0.5f, hNE, ty + 0.5f);
+PickResult pickTileChunked(const glm::vec3& rayOrigin, const glm::vec3& rayDir,
+                           const std::vector<float>& vh, int W, int H,
+                           const std::vector<PickRect>& rects) {
+  PickResult best;
+  float bestT = std::numeric_limits<float>::max();
+  if (static_cast<int>(vh.size()) != (W + 1) * (H + 1)) return best;
 
-      float t;
-      if (rayTriangle(rayOrigin, rayDir, NW, SW, NE, &t) && t < bestT) {
-        bestT          = t;
-        best.hit       = true;
-        best.tileX     = tx;
-        best.tileY     = ty;
-        best.worldPos  = rayOrigin + rayDir * t;
-        best.rayT      = t;
-      }
-      if (rayTriangle(rayOrigin, rayDir, NE, SW, SE, &t) && t < bestT) {
-        bestT          = t;
-        best.hit       = true;
-        best.tileX     = tx;
-        best.tileY     = ty;
-        best.worldPos  = rayOrigin + rayDir * t;
-        best.rayT      = t;
-      }
-    }
+  // Broad phase: slab-test each chunk AABB, keep entries sorted nearest-first.
+  std::vector<std::pair<float, const PickRect*>> hits;
+  hits.reserve(rects.size());
+  for (const auto& r : rects) {
+    float tEnter;
+    if (rayAabb(rayOrigin, rayDir, r.aabbMin, r.aabbMax, &tEnter))
+      hits.emplace_back(tEnter, &r);
   }
+  std::sort(hits.begin(), hits.end(),
+            [](const auto& a, const auto& b) { return a.first < b.first; });
 
+  // Narrow phase nearest-first; once a hit is closer than the next chunk's
+  // entry distance, no farther chunk can beat it.
+  for (const auto& [tEnter, r] : hits) {
+    if (best.hit && bestT < tEnter) break;
+    pickTilesInRect(rayOrigin, rayDir, vh, W, H, r->x0, r->y0, r->w, r->h, best, bestT);
+  }
   return best;
 }
 

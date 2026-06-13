@@ -109,10 +109,35 @@ void MinimapRenderer::destroy()
 }
 
 // ── buildBaseLayer ────────────────────────────────────────────────────────────
+// Registers the map and invalidates the cached region; the raster itself runs
+// lazily in updateFrame() via ensureRegion() once the player position is known.
 void MinimapRenderer::buildBaseLayer(const shared::WorldMapFile& map)
 {
-    const int texW = map.width  * kPxPerTile;
-    const int texH = map.height * kPxPerTile;
+    map_ = &map;
+    regionCenterX_ = regionCenterY_ = INT_MIN;   // force re-raster
+}
+
+// ── ensureRegion ──────────────────────────────────────────────────────────────
+// Rasterises the kRegionTiles² window of the map around (centerTx, centerTy)
+// into the base texture. Skipped while the center stays within kRegionSlack
+// tiles of the last build. Maps smaller than the region raster whole.
+void MinimapRenderer::ensureRegion(int centerTx, int centerTy)
+{
+    if (!map_) return;
+    const auto& map = *map_;
+    if (regionCenterX_ != INT_MIN &&
+        std::abs(centerTx - regionCenterX_) <= kRegionSlack &&
+        std::abs(centerTy - regionCenterY_) <= kRegionSlack) return;
+
+    regionCenterX_ = centerTx;
+    regionCenterY_ = centerTy;
+    regionW_ = std::min(kRegionTiles, map.width);
+    regionH_ = std::min(kRegionTiles, map.height);
+    regionOriginX_ = std::clamp(centerTx - regionW_ / 2, 0, map.width  - regionW_);
+    regionOriginY_ = std::clamp(centerTy - regionH_ / 2, 0, map.height - regionH_);
+
+    const int texW = regionW_ * kPxPerTile;
+    const int texH = regionH_ * kPxPerTile;
     if (texW <= 0 || texH <= 0) return;
 
     // Reallocate base texture if size changed.
@@ -130,12 +155,15 @@ void MinimapRenderer::buildBaseLayer(const shared::WorldMapFile& map)
 
     baseBuf_.assign(static_cast<size_t>(texW * texH * 4), 0);
 
-    // ---- Terrain tiles -------------------------------------------------------
-    for (int ty = 0; ty < map.height; ++ty) {
+    // ---- Terrain tiles (region window; void tiles stay black) ---------------
+    for (int ry = 0; ry < regionH_; ++ry) {
+        const int ty = regionOriginY_ + ry;
         if (ty >= static_cast<int>(map.tiles.size())) continue;
-        for (int tx = 0; tx < map.width; ++tx) {
+        for (int rx = 0; rx < regionW_; ++rx) {
+            const int tx = regionOriginX_ + rx;
             if (tx >= static_cast<int>(map.tiles[ty].size())) continue;
             const auto& tile = map.tiles[ty][tx];
+            if (tile.isVoid) continue;   // unassigned world cell → black
 
             uint8_t r, g, b;
             hexToRgb8(tile.groundColor, r, g, b);
@@ -144,9 +172,7 @@ void MinimapRenderer::buildBaseLayer(const shared::WorldMapFile& map)
                 obstacleColor(tile.obstacle, r, g, b);
             }
 
-            const int px = tx * kPxPerTile;
-            const int py = ty * kPxPerTile;
-            fillRect(px, py, kPxPerTile, kPxPerTile, r, g, b);
+            fillRect(rx * kPxPerTile, ry * kPxPerTile, kPxPerTile, kPxPerTile, r, g, b);
         }
     }
 
@@ -158,13 +184,14 @@ void MinimapRenderer::buildBaseLayer(const shared::WorldMapFile& map)
     {
         const auto& mats = world::overlayMaterials();
         for (const auto& ov : map.overlayTiles) {
-            if (ov.tileX < 0 || ov.tileY < 0 ||
-                ov.tileX >= map.width || ov.tileY >= map.height) continue;
+            if (ov.tileX < regionOriginX_ || ov.tileY < regionOriginY_ ||
+                ov.tileX >= regionOriginX_ + regionW_ ||
+                ov.tileY >= regionOriginY_ + regionH_) continue;
             if (ov.materialId <= 0 ||
                 ov.materialId >= static_cast<int>(mats.size())) continue;
             const auto& m = mats[static_cast<size_t>(ov.materialId)];
-            const int px0 = ov.tileX * kPxPerTile;
-            const int py0 = ov.tileY * kPxPerTile;
+            const int px0 = (ov.tileX - regionOriginX_) * kPxPerTile;
+            const int py0 = (ov.tileY - regionOriginY_) * kPxPerTile;
             for (int sy = 0; sy < kPxPerTile; ++sy) {
                 for (int sx = 0; sx < kPxPerTile; ++sx) {
                     const float u = 1.0f - (sx + 0.5f) / static_cast<float>(kPxPerTile);
@@ -180,10 +207,11 @@ void MinimapRenderer::buildBaseLayer(const shared::WorldMapFile& map)
     // +tileX = right, +tileY = down in the base texture. Lines hug the inside
     // edge so building perimeters read as a continuous white outline.
     for (const auto& w : map.walls) {
-        if (w.tileX < 0 || w.tileY < 0 ||
-            w.tileX >= map.width || w.tileY >= map.height) continue;
-        const int px = w.tileX * kPxPerTile;
-        const int py = w.tileY * kPxPerTile;
+        if (w.tileX < regionOriginX_ || w.tileY < regionOriginY_ ||
+            w.tileX >= regionOriginX_ + regionW_ ||
+            w.tileY >= regionOriginY_ + regionH_) continue;
+        const int px = (w.tileX - regionOriginX_) * kPxPerTile;
+        const int py = (w.tileY - regionOriginY_) * kPxPerTile;
         const int n  = kPxPerTile;
         constexpr uint8_t R = 255, G = 255, B = 255;
         const int o = w.orient & 7;
@@ -219,6 +247,8 @@ void MinimapRenderer::updateFrame(
     int destTileX,
     int destTileY)
 {
+    // Lazy region (re)build now that the player position is known.
+    ensureRegion(static_cast<int>(playerX), static_cast<int>(playerY));
     if (!compositeFbo_ || !compositeShader_.isValid() || !baseTex_) return;
 
     // ---- Build indicator dots -----------------------------------------------
@@ -301,9 +331,12 @@ void MinimapRenderer::updateFrame(
     // Player UV in base texture space — uses interpolated float position for smooth scroll.
     glm::vec2 playerUV{0.5f, 0.5f};  // fallback = center
     if (baseTexW_ > 0 && baseTexH_ > 0) {
-        playerUV.x = (playerX * static_cast<float>(kPxPerTile) + static_cast<float>(kPxPerTile) * 0.5f)
+        // Player position relative to the rasterised region window.
+        const float rx = playerX - static_cast<float>(regionOriginX_);
+        const float ry = playerY - static_cast<float>(regionOriginY_);
+        playerUV.x = (rx * static_cast<float>(kPxPerTile) + static_cast<float>(kPxPerTile) * 0.5f)
                      / static_cast<float>(baseTexW_);
-        playerUV.y = (playerY * static_cast<float>(kPxPerTile) + static_cast<float>(kPxPerTile) * 0.5f)
+        playerUV.y = (ry * static_cast<float>(kPxPerTile) + static_cast<float>(kPxPerTile) * 0.5f)
                      / static_cast<float>(baseTexH_);
     }
     compositeShader_.setVec2("uPlayerUV", playerUV);

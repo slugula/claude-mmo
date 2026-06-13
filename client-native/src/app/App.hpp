@@ -23,6 +23,7 @@
 #include "world/SpriteCache.hpp"
 #include "world/WaterRenderer.hpp"
 #include "world/OverlayRenderer.hpp"
+#include "world/ChunkedTerrain.hpp"
 
 #include <glad/glad.h>
 
@@ -91,7 +92,7 @@ private:
   render::Shader                           shadowInstancedShader_;
   render::Shader                           shadowSkinnedShader_;
   render::ShadowMap                        shadowMap_;
-  render::Mesh                             terrainMesh_;
+  world::ChunkedTerrain                    terrain_;        // per-chunk terrain meshes + draw ring
   world::ObstacleSystem                    obstacles_;
   world::WallSystem                        walls_;
   world::WaterRenderer                     waterRenderer_;
@@ -270,6 +271,9 @@ private:
   int                                      terrainTileW_    = 0;
   int                                      terrainTileH_    = 0;
   bool                                     wireframe_       = false;
+  // Draw distance in 64-tile render chunks around the player (debug panel
+  // slider; persisted in settings.cfg).
+  int                                      chunkDrawDistance_ = 2;
   // Screen-space outline settings
   float     outlineRadius_    = 3.0f;
   float     outlineDepthBias_ = 0.002f;

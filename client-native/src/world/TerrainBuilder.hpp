@@ -45,4 +45,12 @@ struct TerrainMeshData {
 
 TerrainMeshData buildTerrainMesh(const shared::WorldMapFile& map);
 
+// Sub-rect build for chunked rendering: emits geometry only for tiles
+// [x0, x0+w) × [y0, y0+h), with vertex positions in WORLD space (same frame as
+// the full build, so cameras/picking/shaders need no per-chunk transform).
+// Corner colors/AO/normals sample the FULL map across rect borders, so chunk
+// seams shade identically to a monolithic build. Void tiles emit no geometry.
+TerrainMeshData buildTerrainMeshRect(const shared::WorldMapFile& map,
+                                     int x0, int y0, int w, int h);
+
 }  // namespace world
