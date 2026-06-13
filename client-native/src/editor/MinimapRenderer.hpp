@@ -7,6 +7,15 @@
 
 namespace editor {
 
+// Rasterise a map's base layer (terrain groundColor + obstacle tints + shaped
+// overlays incl. water + white wall/pillar lines) into an RGBA8 buffer at
+// `pxPerTile` resolution. Texture-native orientation: +tileX → +U (right),
+// tile (0,0) at the top-left. This is the same raster the minimap windows use,
+// so callers (minimap, World-view thumbnails) all match 1:1. NPC/spawn markers
+// are NOT included — add those per use site.
+void rasterMapBase(const shared::WorldMapFile& map, int pxPerTile,
+                   std::vector<uint8_t>& outBuf, int& outW, int& outH);
+
 // Generates and manages the OSRS-style 4×4 px-per-tile minimap texture.
 // The texture is 256×256 for a 64×64 map (scalable for other sizes).
 // Reconstructed fully whenever the map changes.

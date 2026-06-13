@@ -44,20 +44,6 @@ std::filesystem::path canonicalMapsDir() {
   return dir;
 }
 
-bool parseHex(const char* s, float& r, float& g, float& b) {
-  if (!s || s[0] != '#' || std::strlen(s) < 7) return false;
-  auto nib = [](char c) -> int {
-    if (c >= '0' && c <= '9') return c - '0';
-    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
-    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
-    return 0;
-  };
-  r = static_cast<float>(nib(s[1]) * 16 + nib(s[2])) / 255.0f;
-  g = static_cast<float>(nib(s[3]) * 16 + nib(s[4])) / 255.0f;
-  b = static_cast<float>(nib(s[5]) * 16 + nib(s[6])) / 255.0f;
-  return true;
-}
-
 }  // namespace
 
 std::filesystem::path EditorApp::worldDir() const {
@@ -140,8 +126,11 @@ void EditorApp::worldDestroyThumbs() {
   worldThumbs_.clear();
 }
 
-// 64×64 ground-colour thumbnail, lazily rasterised per mapFile and cached.
-// Failure (missing/unreadable map) caches 0 so we don't retry every frame.
+// Full-detail thumbnail (4px/tile: terrain + water/overlays + wall lines),
+// rasterised once per mapFile via the shared minimap raster so it matches the
+// in-game minimap 1:1. Texture is native orientation (+tileX → +U); the World
+// view flips U on display so east reads left, like the map view. Failure caches
+// 0 so we don't retry every frame.
 GLuint EditorApp::worldThumbnail(const std::string& mapFile) {
   if (auto it = worldThumbs_.find(mapFile); it != worldThumbs_.end())
     return it->second;
@@ -149,28 +138,12 @@ GLuint EditorApp::worldThumbnail(const std::string& mapFile) {
   GLuint tex = 0;
   shared::WorldMapFile m;
   if (shared::loadWorldMap(worldDir() / mapFile, m) && m.width > 0 && m.height > 0) {
-    const int W = m.width, H = m.height;
-    std::vector<uint32_t> px(static_cast<std::size_t>(W) * H, 0xFF000000u);
-    for (int ty = 0; ty < H; ++ty) {
-      for (int tx = 0; tx < W; ++tx) {
-        float r = 0.49f, g = 0.78f, b = 0.31f;
-        parseHex(m.tiles[ty][tx].groundColor.c_str(), r, g, b);
-        if (!m.tiles[ty][tx].obstacle.empty() && m.tiles[ty][tx].obstacle != "none") {
-          r *= 0.55f; g *= 0.55f; b *= 0.55f;
-        }
-        // Horizontal flip to match the 2D grid / minimap orientation
-        // (east = screen-left).
-        px[static_cast<std::size_t>(ty) * W + (W - 1 - tx)] =
-            0xFF000000u |
-            (static_cast<uint32_t>(b * 255.0f) << 16) |
-            (static_cast<uint32_t>(g * 255.0f) << 8)  |
-             static_cast<uint32_t>(r * 255.0f);
-      }
-    }
+    std::vector<uint8_t> buf; int w = 0, h = 0;
+    editor::rasterMapBase(m, 4, buf, w, h);
     glGenTextures(1, &tex);
     glBindTexture(GL_TEXTURE_2D, tex);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, W, H, 0, GL_RGBA, GL_UNSIGNED_BYTE, px.data());
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, buf.data());
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glBindTexture(GL_TEXTURE_2D, 0);
   }
@@ -320,24 +293,28 @@ void EditorApp::drawWorldView() {
     }
   }
 
-  const float z  = worldZoom_;
-  const float ox = canvasPos.x + worldOffX_ + 16.0f;
-  const float oy = canvasPos.y + worldOffY_ + 16.0f;
-  auto cellMin = [&](int cx, int cy) { return ImVec2(ox + cx * z, oy + cy * z); };
-
-  // Hovered cell under the mouse (non-negative cells only — v1 world space).
-  int hovCx = -1, hovCy = -1;
-  if (hovered) {
-    const float fx = (io.MousePos.x - ox) / z;
-    const float fy = (io.MousePos.y - oy) / z;
-    if (fx >= 0.0f && fy >= 0.0f) { hovCx = static_cast<int>(fx); hovCy = static_cast<int>(fy); }
-  }
-
   // Visible grid extent: bounding box of assigned chunks plus margin, at least 4×4.
   int maxCx = 3, maxCy = 3;
   for (const auto& c : worldManifest_.chunks) {
     maxCx = std::max(maxCx, c.cx + 2);
     maxCy = std::max(maxCy, c.cy + 2);
+  }
+
+  const float z  = worldZoom_;
+  const float ox = canvasPos.x + worldOffX_ + 16.0f;
+  const float oy = canvasPos.y + worldOffY_ + 16.0f;
+  // Horizontal flip: higher cx (further east) draws further LEFT, matching the
+  // map view and 3D (lookAtLH puts +tileX/east on the screen-left). Without this
+  // the World grid disagreed with where chunks actually sit in-game.
+  auto cellMin = [&](int cx, int cy) { return ImVec2(ox + (maxCx - cx) * z, oy + cy * z); };
+
+  // Hovered cell under the mouse (non-negative cells only — v1 world space).
+  int hovCx = -1, hovCy = -1;
+  if (hovered) {
+    const float fy = (io.MousePos.y - oy) / z;
+    const int   col = static_cast<int>(std::floor((io.MousePos.x - ox) / z));  // screen column from left
+    const int   cx  = maxCx - col;                                            // inverse of the flip
+    if (cx >= 0 && fy >= 0.0f) { hovCx = cx; hovCy = static_cast<int>(fy); }
   }
 
   const int S = worldManifest_.chunkSize;
@@ -367,7 +344,9 @@ void EditorApp::drawWorldView() {
       const auto* cell = worldCellAt(cx, cy);
       if (cell) {
         if (GLuint tex = worldThumbnail(cell->mapFile))
-          dl->AddImage((ImTextureID)(uintptr_t)tex, a, b);
+          // Flip U so the thumbnail's +tileX (east) reads on the left, matching
+          // the flipped grid and the map view.
+          dl->AddImage((ImTextureID)(uintptr_t)tex, a, b, ImVec2(1, 0), ImVec2(0, 1));
         else
           dl->AddRectFilled(a, b, IM_COL32(70, 50, 50, 255));
         const bool isOpen = (cx == openCx && cy == openCy);

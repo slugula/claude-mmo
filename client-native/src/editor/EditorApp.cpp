@@ -788,8 +788,7 @@ void EditorApp::renderFrame(float dt) {
     case EditorMode::Database:
       ImGui::SetNextWindowPos(wsPos,  ImGuiCond_Always);
       ImGui::SetNextWindowSize(wsSize, ImGuiCond_Always);
-      if (showDbWindow_) drawDatabaseWindow();
-      if (!showDbWindow_) setMode(EditorMode::Map);   // closed via its X
+      drawDatabaseWindow();   // fills the content area; rail switches away
       break;
   }
 
@@ -1208,19 +1207,13 @@ void EditorApp::drawMenuBar() {
     if (ImGui::MenuItem("Resize...")) { resizeW_ = map_.width; resizeH_ = map_.height; showResizeDialog_ = true; }
     ImGui::EndMenu();
   }
+  // World/Database mode switching lives on the left rail; the menus keep only
+  // the world-manifest file actions (no nav duplication).
   if (ImGui::BeginMenu("World")) {
-    if (ImGui::MenuItem("World Editor", nullptr, mode_ == EditorMode::World))
-      setMode(EditorMode::World);
-    ImGui::Separator();
     if (ImGui::MenuItem("New World"))       { worldNewManifest(); setMode(EditorMode::World); }
     if (ImGui::MenuItem("Open World..."))   { worldOpenManifest(); setMode(EditorMode::World); }
     if (ImGui::MenuItem("Save World", nullptr, false, !worldManifest_.chunks.empty() || worldDirty_))
       worldSaveManifest();
-    ImGui::EndMenu();
-  }
-  if (ImGui::BeginMenu("Database")) {
-    if (ImGui::MenuItem("Edit Database...", nullptr, mode_ == EditorMode::Database))
-      setMode(EditorMode::Database);
     ImGui::EndMenu();
   }
   if (ImGui::BeginMenu("View")) {
@@ -3684,16 +3677,18 @@ void EditorApp::drawDatabaseWindow() {
   // Lazy init of preview FBO (requires GL context to be current)
   if (!dbPreviewFbo_) dbInitPreviewFbo();
 
-  ImGui::SetNextWindowSize(ImVec2(900, 620), ImGuiCond_FirstUseEver);
-  ImGui::SetNextWindowPos(ImVec2(80, 80), ImGuiCond_FirstUseEver);
-  bool open = true;
-  if (!ImGui::Begin("Database Editor", &open,
-        ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_MenuBar)) {
+  // Fixed workspace pane: renderFrame pins position/size to the content area
+  // right of the mode rail (Database mode). No title bar / close button — the
+  // rail switches modes.
+  const ImGuiWindowFlags paneFlags =
+      ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+      ImGuiWindowFlags_NoMove     | ImGuiWindowFlags_NoCollapse |
+      ImGuiWindowFlags_NoDocking  | ImGuiWindowFlags_NoBringToFrontOnFocus |
+      ImGuiWindowFlags_MenuBar;
+  if (!ImGui::Begin("##database", nullptr, paneFlags)) {
     ImGui::End();
-    showDbWindow_ = open;
     return;
   }
-  showDbWindow_ = open;
 
   // Menu bar inside the window
   if (ImGui::BeginMenuBar()) {
