@@ -200,31 +200,79 @@ void EditorApp::worldRefreshNeighbors() {
 
       NeighborPreview np;
       np.dcx = dx; np.dcy = dy;
+      np.mapFile = cell->mapFile;
       if (!shared::loadWorldMap(worldDir() / cell->mapFile, np.map)) continue;
       if (np.map.width != S || np.map.height != S) {
         std::fprintf(stderr, "[worldView] neighbor %s is %dx%d, expected %d — skipping ghost\n",
                      cell->mapFile.c_str(), np.map.width, np.map.height, S);
         continue;
       }
-
-      // Bake the world offset and a ghost dim into the mesh so it renders with
-      // the unmodified terrain shader. Tile y maps to world Z = y (the mesh's
-      // internal row flip cancels per-map), so the cell offset is simply
-      // (+dx*S, 0, +dy*S).
-      auto md = world::buildTerrainMesh(np.map);
-      const float ox = static_cast<float>(dx * S);
-      const float oz = static_cast<float>(dy * S);
-      for (std::size_t i = 0; i + 2 < md.positions.size(); i += 3) {
-        md.positions[i]     += ox;
-        md.positions[i + 2] += oz;
-      }
-      for (std::size_t i = 0; i + 3 < md.colors.size(); i += 4) {
-        md.colors[i]     = md.colors[i]     * 0.45f + 0.18f;
-        md.colors[i + 1] = md.colors[i + 1] * 0.45f + 0.18f;
-        md.colors[i + 2] = md.colors[i + 2] * 0.45f + 0.18f;
-      }
-      np.mesh.upload(md.positions, md.colors, md.triangleIndices, {}, md.normals);
+      buildNeighborMesh(np);
       neighbors_.push_back(std::move(np));
+    }
+  }
+}
+
+// Bake the world offset + a ghost dim into a neighbor's terrain mesh so it
+// renders with the unmodified terrain shader. The mesh's internal row flip
+// cancels per-map, so the cell offset is simply (+dcx*S, 0, +dcy*S).
+void EditorApp::buildNeighborMesh(NeighborPreview& np) {
+  const int S = worldManifest_.chunkSize;
+  auto md = world::buildTerrainMesh(np.map);
+  const float ox = static_cast<float>(np.dcx * S);
+  const float oz = static_cast<float>(np.dcy * S);
+  for (std::size_t i = 0; i + 2 < md.positions.size(); i += 3) {
+    md.positions[i]     += ox;
+    md.positions[i + 2] += oz;
+  }
+  for (std::size_t i = 0; i + 3 < md.colors.size(); i += 4) {
+    md.colors[i]     = md.colors[i]     * 0.45f + 0.18f;
+    md.colors[i + 1] = md.colors[i + 1] * 0.45f + 0.18f;
+    md.colors[i + 2] = md.colors[i + 2] * 0.45f + 0.18f;
+  }
+  np.mesh.upload(md.positions, md.colors, md.triangleIndices, {}, md.normals);
+}
+
+// Shared-edge height propagation. The open chunk and each neighbor share a
+// vertex row/col (or single corner). The vertex grid is (CS+1)² indexed
+// row*(CS+1)+col; because the assembler maps a chunk's local rows to global
+// rows as gr = gh-(cy+1)*S+vy, a north/south neighbor shares MIRRORED rows
+// (open row 0 == (cy+1)-neighbor row CS), while east/west neighbors share the
+// same row. This copies the open map's boundary vertices into the matching
+// neighbor vertices so seams line up automatically; the neighbor is marked
+// dirty for save-through.
+void EditorApp::worldSyncEdgesToNeighbors() {
+  if (neighbors_.empty()) return;
+  const int CS = worldManifest_.chunkSize;       // tiles per side; CS+1 verts
+  if (CS <= 0 || map_.width != CS || map_.height != CS) return;
+  const int stride = CS + 1;
+  const auto& ovh = map_.vertexHeights;
+  if (static_cast<int>(ovh.size()) != stride * stride) return;
+
+  for (auto& np : neighbors_) {
+    if (static_cast<int>(np.map.vertexHeights.size()) != stride * stride) continue;
+    // Open-map boundary rows/cols touching this neighbor:
+    //   dcx>0 (east) → col CS; dcx<0 (west) → col 0; dcx==0 → all cols 0..CS.
+    //   dcy>0 → row 0; dcy<0 → row CS; dcy==0 → all rows 0..CS.
+    const int colLo = (np.dcx > 0) ? CS : 0;
+    const int colHi = (np.dcx != 0) ? colLo : CS;
+    const int rowLo = (np.dcy > 0) ? 0 : (np.dcy < 0 ? CS : 0);
+    const int rowHi = (np.dcy != 0) ? rowLo : CS;
+
+    bool changed = false;
+    for (int orow = rowLo; orow <= rowHi; ++orow) {
+      for (int ocol = colLo; ocol <= colHi; ++ocol) {
+        const int nrow = (np.dcy == 0) ? orow : (np.dcy > 0 ? CS : 0);
+        const int ncol = (np.dcx == 0) ? ocol : (np.dcx > 0 ? 0  : CS);
+        const float h = ovh[orow * stride + ocol];
+        float& dst = np.map.vertexHeights[nrow * stride + ncol];
+        if (dst != h) { dst = h; changed = true; }
+      }
+    }
+    if (changed) {
+      np.dirty = true;
+      buildNeighborMesh(np);
+      worldThumbs_.erase(np.mapFile);   // world-view thumbnail re-rasters
     }
   }
 }

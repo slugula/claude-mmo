@@ -2104,7 +2104,7 @@ void EditorApp::applyBrush(int cx, int cy, float dt, bool rightClick) {
     }
   }
 
-  if (dirtyTerrain)   rebuildTerrainGL();
+  if (dirtyTerrain)   { rebuildTerrainGL(); worldSyncEdgesToNeighbors(); }
   if (dirtyWater)     waterRenderer_.rebuild(map_, waterUniforms_.waterOffset);
   if (dirtyObstacles) rebuildObstacles();
   if (dirtyMinimap)   minimap_.rebuild(map_, npcSpawns_);
@@ -2149,6 +2149,7 @@ void EditorApp::applyFlatten(int cx, int cy) {
 
   rebuildTerrainGL();
   rebuildObstacles();   // objects / walls follow terrain height
+  worldSyncEdgesToNeighbors();
 }
 
 // -----------------------------------------------------------------------
@@ -2755,6 +2756,17 @@ void EditorApp::saveCurrentFile() {
   dirty_ = false;
   addRecentFile(currentFilePath_);
   updateWindowTitle();
+
+  // Save-through: persist shared-edge heights propagated into neighbor chunks
+  // so adjacent maps line up on disk (and for the server's assembly) without
+  // the user opening each neighbor.
+  for (auto& np : neighbors_) {
+    if (!np.dirty) continue;
+    if (shared::saveWorldMap(worldDir() / np.mapFile, np.map)) {
+      np.dirty = false;
+      std::fprintf(stdout, "[worldView] stitched shared edges into %s\n", np.mapFile.c_str());
+    }
+  }
 }
 
 void EditorApp::saveAsDialog() {

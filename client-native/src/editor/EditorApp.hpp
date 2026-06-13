@@ -291,6 +291,10 @@ private:
   void worldEraseCell(int cx, int cy);
   void worldRefreshNeighbors();                        // (re)load adjacent chunk ghosts
   void worldEnsureManifestLoaded();                    // lazy one-time world.json autoload
+  // Copy the open chunk's shared edge/corner vertex heights into the loaded
+  // neighbor ghosts so seams line up automatically (persisted to the neighbor
+  // files on save). No-op unless the open map is assigned to a world cell.
+  void worldSyncEdgesToNeighbors();
   void worldDestroyThumbs();                           // free thumbnail GL textures
   GLuint worldThumbnail(const std::string& mapFile);   // cached per-mapFile texture
   std::filesystem::path worldDir() const;              // manifest directory
@@ -306,12 +310,17 @@ private:
   int          worldDragCx_ = INT_MIN, worldDragCy_ = INT_MIN;  // drag-move source cell
   std::unordered_map<std::string, GLuint> worldThumbs_;  // mapFile → 64×64 texture (0 = failed)
 
-  // Neighbor-edge ghost preview (read-only adjacent chunks of the open map).
+  // Neighbor ghost preview — an adjacent chunk of the open map. Shared edges are
+  // editable: sculpting the open map's boundary writes through to the matching
+  // neighbor vertices here (dirty → persisted to mapFile on save).
   struct NeighborPreview {
     int                  dcx = 0, dcy = 0;  // cell offset relative to the open chunk
-    shared::WorldMapFile map;               // read-only copy for 2D-grid border tiles
+    std::string          mapFile;           // neighbor's map file (for save-through)
+    bool                 dirty = false;     // shared edge edited since last save
+    shared::WorldMapFile map;               // working copy (edge edits applied here)
     render::Mesh         mesh;              // ghost terrain (world offset + dim baked in)
   };
+  void buildNeighborMesh(NeighborPreview& np);   // (re)bake the dimmed offset ghost mesh
   std::vector<NeighborPreview> neighbors_;
   bool neighborPreviewEnabled_ = true;
   int  neighborStripTiles_     = 16;        // border tiles drawn in the 2D grid
