@@ -342,14 +342,16 @@ void MinimapRenderer::updateFrame(
     compositeShader_.setVec2("uPlayerUV", playerUV);
     compositeShader_.setFloat("uYaw", cameraYaw);
 
-    // zoomUV: how many UV units one "tileRadius circle unit" covers.
-    // One tile = kPxPerTile pixels = kPxPerTile/baseTexW_ UV units.
-    // So tileRadius tiles = tileRadius * kPxPerTile / baseTexW_ UV units.
-    // Dividing by tileRadius: 1 circle unit = kPxPerTile / baseTexW_ UV units.
-    float zoomUV = 0.25f; // fallback
-    if (baseTexW_ > 0 && tileRadius > 0.0f)
-        zoomUV = (static_cast<float>(kPxPerTile) / static_cast<float>(baseTexW_)) * tileRadius;
-    compositeShader_.setFloat("uZoomUV", zoomUV);
+    // zoomUV: how many UV units one "tileRadius circle unit" covers, per axis.
+    // One tile = kPxPerTile pixels = kPxPerTile/texDim UV units, so a circle
+    // unit covers (kPxPerTile/texDim) * tileRadius. The axes differ when the
+    // region texture is non-square (non-square multi-chunk worlds).
+    glm::vec2 zoomUV{0.25f, 0.25f}; // fallback
+    if (baseTexW_ > 0 && baseTexH_ > 0 && tileRadius > 0.0f) {
+        zoomUV.x = (static_cast<float>(kPxPerTile) / static_cast<float>(baseTexW_)) * tileRadius;
+        zoomUV.y = (static_cast<float>(kPxPerTile) / static_cast<float>(baseTexH_)) * tileRadius;
+    }
+    compositeShader_.setVec2("uZoomUV", zoomUV);
 
     compositeShader_.setInt("uDotCount", dotCount);
 

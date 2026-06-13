@@ -120,15 +120,24 @@ export function assembleWorld(manifestPath: string, manifest: WorldManifest): As
     // Vertex heights: chunk grid is (S+1)×(S+1); edge rows/columns are shared
     // with neighbors. Last writer wins; warn when an already-written shared
     // vertex disagrees so authors know two chunk edges don't line up.
+    //
+    // IMPORTANT: the height grid is stored VERTICALLY FLIPPED relative to tile
+    // rows — row r corresponds to tile y = H - r (the client's TerrainBuilder
+    // and Picker both read it that way: tile ty's corners live at rows H-ty-1
+    // and H-ty). So a chunk's local row vy maps to global row
+    //   gr = gh - (cy+1)*S + vy
+    // not (cy*S + vy). With a single chunk row the two coincide, which is why
+    // 1-row worlds looked correct before this fix.
     const vh = data.vertexHeights;
     if (vh) {
+      const grBase = gh - (chunk.cy + 1) * S;
       for (let vy = 0; vy <= S; vy++) {
         for (let vx = 0; vx <= S; vx++) {
-          const gi = (oy + vy) * (gw + 1) + (ox + vx);
+          const gi = (grBase + vy) * (gw + 1) + (ox + vx);
           const v = vh[vy * (S + 1) + vx] ?? 0;
           const prevOwner = vertexOwner.get(gi);
           if (prevOwner !== undefined && Math.abs(vertexHeights[gi] - v) > 1e-4) {
-            mismatches.push(`(${ox + vx},${oy + vy}) ${prevOwner}=${vertexHeights[gi].toFixed(3)} vs ${chunk.mapFile}=${v.toFixed(3)}`);
+            mismatches.push(`col ${ox + vx}, row ${grBase + vy}: ${prevOwner}=${vertexHeights[gi].toFixed(3)} vs ${chunk.mapFile}=${v.toFixed(3)}`);
           }
           vertexHeights[gi] = v;
           vertexOwner.set(gi, chunk.mapFile);

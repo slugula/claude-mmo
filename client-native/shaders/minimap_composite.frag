@@ -18,7 +18,10 @@ out vec4 fragColor;
 uniform sampler2D uBaseTex;
 uniform vec2  uPlayerUV;    // player tile center in base texture UV [0,1]
 uniform float uYaw;         // camera alpha_ (radians); positive = CCW drag-right
-uniform float uZoomUV;      // UV units per circle unit: (kPxPerTile/baseW) * tileRadius
+uniform vec2  uZoomUV;      // UV units per circle unit, per axis:
+                            // (kPxPerTile/baseW, kPxPerTile/baseH) * tileRadius.
+                            // Separate axes because the region base texture can
+                            // be non-square on non-square (multi-chunk) worlds.
 
 // Entity squares (CPU-side circle space [-1,1] — after X-flip applied in CPU)
 uniform int   uDotCount;
