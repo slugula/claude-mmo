@@ -1167,12 +1167,7 @@ void App::renderFrame() {
 
       // Local player
       if (currLocalPlayer_) {
-        const auto shadowNow = std::chrono::steady_clock::now();
-        const auto shadowDtMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-            shadowNow - lastTickTime_).count();
-        const float shadowAlpha = std::clamp(
-            static_cast<float>(shadowDtMs) / static_cast<float>(shared::kTickDurationMs),
-            0.0f, 1.0f);
+        const float shadowAlpha = interpAlpha();
         float sfx = static_cast<float>(currLocalPlayer_->tileX);
         float sfy = static_cast<float>(currLocalPlayer_->tileY);
         float syWorld = tileWorldY(map_, currLocalPlayer_->tileX, currLocalPlayer_->tileY);
@@ -1191,10 +1186,7 @@ void App::renderFrame() {
       // Remote players — use per-player animation state (renderAs) so each
       // shadow matches that player's actual running/idle clip, not the local one.
       {
-        const auto rpNow   = std::chrono::steady_clock::now();
-        const auto rpDtMs  = std::chrono::duration_cast<std::chrono::milliseconds>(rpNow - lastTickTime_).count();
-        const float rpAlpha= std::clamp(static_cast<float>(rpDtMs) /
-                                        static_cast<float>(shared::kTickDurationMs), 0.0f, 1.0f);
+        const float rpAlpha = interpAlpha();
         for (const auto& [rpId, rp] : currRemotePlayers_) {
           if (rp.dying) continue;
           float rfx     = static_cast<float>(rp.tileX);
@@ -1368,10 +1360,7 @@ void App::renderFrame() {
   // Reuses the obstacle shader (same uniforms already bound). Build a
   // per-frame interpolated instance array from prev/curr state by id.
   {
-    const auto    dtMs  = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastTickTime_).count();
-    const float   alpha = std::clamp(static_cast<float>(dtMs) /
-                                     static_cast<float>(shared::kTickDurationMs),
-                                     0.0f, 1.0f);
+    const float   alpha = interpAlpha();
     std::vector<world::EntityRenderer::Instance> insts;
     std::vector<std::string> kinds;
     insts.reserve(currNpcs_.size());
@@ -1424,12 +1413,8 @@ void App::renderFrame() {
 
   // ---- Remote players — render each with independent animation & interpolation
   if (playerModel_.isLoaded() && network_.status() == net::Connection::Connected) {
-    // Compute tick alpha for remote player interpolation (same basis as NPCs).
-    const auto  nowRp   = std::chrono::steady_clock::now();
-    const auto  dtMsRp  = std::chrono::duration_cast<std::chrono::milliseconds>(nowRp - lastTickTime_).count();
-    const float rpAlpha = std::clamp(static_cast<float>(dtMsRp) /
-                                     static_cast<float>(shared::kTickDurationMs),
-                                     0.0f, 1.0f);
+    // Same interpolation basis as the local player + NPCs.
+    const float rpAlpha = interpAlpha();
 
     skinnedShader_.use();
     skinnedShader_.setMat4 ("u_viewProj",       viewProj);
@@ -1922,11 +1907,7 @@ void App::renderFrame() {
       float mmPx = localPlayer ? static_cast<float>(localPlayer->tileX) : 0.f;
       float mmPy = localPlayer ? static_cast<float>(localPlayer->tileY) : 0.f;
       if (localPlayer && prevLocalPlayer_) {
-        const float mmAlpha = std::clamp(
-            static_cast<float>(std::chrono::duration_cast<std::chrono::milliseconds>(
-                now - lastTickTime_).count())
-            / static_cast<float>(shared::kTickDurationMs),
-            0.0f, 1.0f);
+        const float mmAlpha = interpAlpha();
         mmPx = std::lerp(static_cast<float>(prevLocalPlayer_->tileX), mmPx, mmAlpha);
         mmPy = std::lerp(static_cast<float>(prevLocalPlayer_->tileY), mmPy, mmAlpha);
       }
@@ -2287,12 +2268,7 @@ void App::renderFrame() {
     // All positions are lerped with the same tick alpha used for entity render,
     // so health bars and chat bubbles track the animated models exactly.
     {
-      const auto  nowOv  = std::chrono::steady_clock::now();
-      const auto  dtMsOv = std::chrono::duration_cast<std::chrono::milliseconds>(
-                               nowOv - lastTickTime_).count();
-      const float tickAlpha = std::clamp(
-          static_cast<float>(dtMsOv) / static_cast<float>(shared::kTickDurationMs),
-          0.0f, 1.0f);
+      const float tickAlpha = interpAlpha();
 
       // Chat-bubble alpha: visible for 50 ticks, fades over last 10
       auto chatAlphaFor = [&](const std::string& msg, int msgTick) -> float {
@@ -2831,6 +2807,12 @@ void App::shutdownImGui() {
 // Player rendering — skinned glTF (Phase 5)
 // =====================================================================
 
+float App::interpAlpha() const {
+  const double since = std::chrono::duration<double, std::milli>(
+      std::chrono::steady_clock::now() - lastTickTime_).count();
+  return static_cast<float>(std::clamp(since / std::max(1.0, tickIntervalMs_), 0.0, 1.0));
+}
+
 void App::renderPlayer(const glm::mat4& viewProj, float dt) {
   if (!currLocalPlayer_) return;
   if (!playerModel_.isLoaded()) return;
@@ -2840,10 +2822,7 @@ void App::renderPlayer(const glm::mat4& viewProj, float dt) {
   float fy = static_cast<float>(currLocalPlayer_->tileY);
   float yWorld = tileWorldY(map_, currLocalPlayer_->tileX, currLocalPlayer_->tileY);
   if (prevLocalPlayer_) {
-    const auto now   = std::chrono::steady_clock::now();
-    const auto dtMs  = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastTickTime_).count();
-    const float alpha = std::clamp(static_cast<float>(dtMs) / static_cast<float>(shared::kTickDurationMs),
-                                   0.0f, 1.0f);
+    const float alpha = interpAlpha();
     fx = std::lerp(static_cast<float>(prevLocalPlayer_->tileX), fx, alpha);
     fy = std::lerp(static_cast<float>(prevLocalPlayer_->tileY), fy, alpha);
     const float prevY = tileWorldY(map_, prevLocalPlayer_->tileX, prevLocalPlayer_->tileY);
@@ -3216,7 +3195,18 @@ void App::processNetworkMessages() {
         const bool firstState = !currLocalPlayer_.has_value();
         prevLocalPlayer_ = currLocalPlayer_;
         currLocalPlayer_ = it->second;
-        lastTickTime_    = std::chrono::steady_clock::now();
+        {
+          const auto nowTick = std::chrono::steady_clock::now();
+          if (lastTickTime_.time_since_epoch().count() != 0) {
+            const double gap = std::chrono::duration<double, std::milli>(
+                nowTick - lastTickTime_).count();
+            // Ignore batched (<50ms) and hitch/first (>1000ms) gaps; EMA the rest
+            // so the interpolation window tracks the server's true cadence.
+            if (gap > 50.0 && gap < 1000.0)
+              tickIntervalMs_ = tickIntervalMs_ * 0.85 + gap * 0.15;
+          }
+          lastTickTime_ = nowTick;
+        }
 
         // Walk-to-bank: open the bank once we've arrived adjacent to the chest.
         if (pendingBankTileX_ >= 0) {

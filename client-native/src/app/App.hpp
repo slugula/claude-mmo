@@ -213,6 +213,15 @@ private:
   std::string                              oneShotClip_;
   audio::AudioEngine                       audio_;
   std::chrono::steady_clock::time_point    lastTickTime_{};
+  // EMA of the real interval between received state snapshots. Node's 200ms
+  // setInterval drifts (~205-210ms with spikes), so interpolating against a
+  // fixed 200ms made the player freeze a few ms at every tile — a per-tile
+  // jerk. Driving interpolation off the measured interval removes it.
+  double                                   tickIntervalMs_ =
+      static_cast<double>(shared::kTickDurationMs);
+  // Shared interpolation fraction [0,1] from the prev→curr snapshot, used
+  // identically by local + remote players, NPCs, shadows, minimap, overlays.
+  float interpAlpha() const;
   int                                      currentTick_       = 0;
   char                                     loginUser_[64]     = {};
   char                                     loginPass_[64]     = {};
