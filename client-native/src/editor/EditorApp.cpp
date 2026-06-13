@@ -2054,10 +2054,16 @@ void EditorApp::drawMinimapWindow() {
   const GLuint mmTex = minimap_.texture();
   if (mmTex) {
     const ImVec2 avail = ImGui::GetContentRegionAvail();
-    const float  sz    = std::min(avail.x, avail.y);
+    // Preserve the map's aspect ratio (the assembled world can be non-square,
+    // e.g. 128×64) so it isn't stretched to fit a square box.
+    const float tw = static_cast<float>(std::max(1, minimap_.texW()));
+    const float th = static_cast<float>(std::max(1, minimap_.texH()));
+    const float box = std::min(avail.x, avail.y);
+    float imgW = box, imgH = box;
+    if (tw >= th) imgH = box * th / tw; else imgW = box * tw / th;
     // Mirror horizontally (u0=1, u1=0) so +tileX (east) appears on the LEFT,
     // matching the 3D viewport's lookAtLH convention (east = screen-left).
-    ImGui::Image((ImTextureID)(uintptr_t)(mmTex), ImVec2(sz, sz), ImVec2(1, 0), ImVec2(0, 1));
+    ImGui::Image((ImTextureID)(uintptr_t)(mmTex), ImVec2(imgW, imgH), ImVec2(1, 0), ImVec2(0, 1));
   } else {
     ImGui::TextDisabled("(no minimap)");
   }
