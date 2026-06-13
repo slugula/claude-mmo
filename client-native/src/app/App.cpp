@@ -680,6 +680,7 @@ bool App::init() {
       if (s.bankPosX >= 0.f && s.bankPosY >= 0.f)
         ui::bankPanelSetPosition(s.bankPosX, s.bankPosY);
       chunkDrawDistance_ = std::clamp(s.chunkDrawDistance, 1, 8);
+      viewRadius_        = std::clamp(s.viewRadius, 5, 48);
     }
   }
 
@@ -2513,6 +2514,15 @@ void App::renderFrame() {
         ImGui::SliderInt("Draw distance (chunks)##cdd", &chunkDrawDistance_, 1, 8);
         if (ImGui::IsItemHovered())
           ImGui::SetTooltip("Terrain chunk ring rendered around the player\n(64 tiles per chunk; far chunks build lazily)");
+        ImGui::SetNextItemWidth(-1);
+        if (ImGui::SliderInt("Entity sync radius (tiles)##evr", &viewRadius_, 5, 48) &&
+            !ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+          network_.sendSetViewRadius(viewRadius_);
+        }
+        if (ImGui::IsItemDeactivatedAfterEdit())
+          network_.sendSetViewRadius(viewRadius_);
+        if (ImGui::IsItemHovered())
+          ImGui::SetTooltip("How far the server syncs players/NPCs/items around you\n(server clamps to its max; patch size grows ~quadratically)");
         break;
       }
       case 4: {  // Outline
@@ -2999,6 +3009,9 @@ void App::processNetworkMessages() {
       }
       currLocalPlayer_.reset();
       prevLocalPlayer_.reset();
+      // Apply the persisted entity sync radius for this session (server
+      // default is 15; only worth sending when it differs).
+      if (viewRadius_ != 15) network_.sendSetViewRadius(viewRadius_);
     } else if (hdr.type == "state") {
       shared::StateMessage st;
       if (auto ec = glz::read<kPermissive>(st, raw)) {
@@ -3407,6 +3420,7 @@ void App::saveSettings() {
   storeWaterSettings(waterUniforms_, s);
   { float bx, by; if (ui::bankPanelGetPosition(bx, by)) { s.bankPosX = bx; s.bankPosY = by; } }
   s.chunkDrawDistance = chunkDrawDistance_;
+  s.viewRadius        = viewRadius_;
   ::saveSettings(s, resolveFromExe("settings.cfg"));
 }
 

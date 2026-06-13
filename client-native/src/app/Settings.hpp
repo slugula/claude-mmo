@@ -83,6 +83,8 @@ struct AppSettings {
   // ---- Chunked terrain (client only) ----
   // Draw distance in 64-tile render chunks around the player (ring radius).
   int         chunkDrawDistance = 2;
+  // Entity sync (interest) radius in tiles requested from the server.
+  int         viewRadius        = 15;
 };
 
 inline bool saveSettings(const AppSettings& s, const std::filesystem::path& path) {
@@ -121,6 +123,7 @@ inline bool saveSettings(const AppSettings& s, const std::filesystem::path& path
   std::fprintf(f, "waterCausticMap=%s\n", s.waterCausticMap.c_str());
   std::fprintf(f, "bankPosX=%f\nbankPosY=%f\n", s.bankPosX, s.bankPosY);
   std::fprintf(f, "chunkDrawDistance=%d\n", s.chunkDrawDistance);
+  std::fprintf(f, "viewRadius=%d\n", s.viewRadius);
   std::fclose(f);
   return true;
 }
@@ -175,7 +178,8 @@ inline bool loadSettings(AppSettings& s, const std::filesystem::path& path) {
         fF("waterFoamContact", s.waterFoamContact) ||
         fF("waterSpecular", s.waterSpecular) ||
         fF("bankPosX", s.bankPosX) || fF("bankPosY", s.bankPosY) ||
-        fI("chunkDrawDistance", s.chunkDrawDistance)) {
+        fI("chunkDrawDistance", s.chunkDrawDistance) ||
+        fI("viewRadius", s.viewRadius)) {
       continue;
     }
     if (std::strcmp(key, "waterCausticMap") == 0) { s.waterCausticMap = val; continue; }

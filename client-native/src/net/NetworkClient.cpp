@@ -203,6 +203,15 @@ void NetworkClient::sendActionRaw(const std::string& body) {
   ws_->send(out);
 }
 
+void NetworkClient::sendSetViewRadius(int radius) {
+  // Top-level message (not a GameAction): the server's interest filter reads
+  // it directly and clamps to its own max.
+  if (!ws_ || status_.load() != Connection::Connected) return;
+  char buf[64];
+  std::snprintf(buf, sizeof(buf), "{\"type\":\"setViewRadius\",\"radius\":%d}", radius);
+  ws_->send(buf);
+}
+
 namespace {
 
 // JSON-escape a string. Covers control chars, quotes, and backslash —

@@ -72,6 +72,9 @@ public:
   void sendWithdrawItem(int bankSlot, int quantity);
   void sendCloseBank  ();
   void sendExamine    (const std::string& itemId);
+  // Top-level interest-management message (not a GameAction): how many tiles
+  // of entities the server should sync around this player.
+  void sendSetViewRadius(int radius);
 
   // ---- State accessors (main-thread reads) --------------------------------
 

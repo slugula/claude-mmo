@@ -14,7 +14,11 @@ import { CHAT_RADIUS } from '../src/shared/constants';
 const PORT = Number(process.env.PORT ?? 8080);
 const CHECKPOINT_INTERVAL_MS = 60_000;
 const DEFAULT_VIEW_RADIUS = 15;
-const MAX_VIEW_RADIUS = 25;
+// Patch size grows ~quadratically with radius; the periodic patch-size log
+// below is the guard rail — watch it before raising this further.
+const MAX_VIEW_RADIUS = 48;
+// Log interest-patch bandwidth every N ticks (~30s at 200ms ticks).
+const PATCH_LOG_INTERVAL_TICKS = 150;
 
 interface ClientActionsMessage {
   type: 'actions';
@@ -59,7 +63,15 @@ function chebyshev(ax: number, ay: number, bx: number, by: number): number {
   return Math.max(Math.abs(ax - bx), Math.abs(ay - by));
 }
 
+// Rolling patch-size telemetry: how many bytes each tick's interest-filtered
+// patches cost, summed over all clients. Logged every PATCH_LOG_INTERVAL_TICKS
+// so raising view radii has visible bandwidth numbers behind it.
+let patchBytesAccum = 0;
+let patchBytesMax = 0;
+let patchTicks = 0;
+
 function broadcast(patch: ServerStatePatch): void {
+  let tickBytes = 0;
   for (const [playerId, ws] of clients.entries()) {
     if (ws.readyState !== WebSocket.OPEN) continue;
 
@@ -134,7 +146,20 @@ function broadcast(patch: ServerStatePatch): void {
       rockHealth:     visibleRockHealth,
     };
 
-    ws.send(JSON.stringify({ type: 'state', ...filteredPatch }));
+    const payload = JSON.stringify({ type: 'state', ...filteredPatch });
+    tickBytes += payload.length;
+    ws.send(payload);
+  }
+
+  if (clients.size > 0) {
+    patchBytesAccum += tickBytes;
+    patchBytesMax = Math.max(patchBytesMax, tickBytes);
+    if (++patchTicks >= PATCH_LOG_INTERVAL_TICKS) {
+      const avg = Math.round(patchBytesAccum / patchTicks);
+      console.log(`[server] patch bandwidth: avg ${avg} B/tick, peak ${patchBytesMax} B/tick ` +
+                  `across ${clients.size} client(s) (~${Math.round(avg * 5 / 1024)} KB/s total)`);
+      patchBytesAccum = 0; patchBytesMax = 0; patchTicks = 0;
+    }
   }
 }
 

@@ -274,6 +274,9 @@ private:
   // Draw distance in 64-tile render chunks around the player (debug panel
   // slider; persisted in settings.cfg).
   int                                      chunkDrawDistance_ = 2;
+  // Entity sync (interest) radius in tiles, requested from the server via
+  // setViewRadius (server clamps to its own max). Persisted in settings.cfg.
+  int                                      viewRadius_        = 15;
   // Screen-space outline settings
   float     outlineRadius_    = 3.0f;
   float     outlineDepthBias_ = 0.002f;
