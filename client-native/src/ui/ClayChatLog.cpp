@@ -68,14 +68,26 @@ void chatAppendSystem(std::string line) {
     s_autoScroll = true;
 }
 
+// Only messages sent within this many ticks of the observed state are logged —
+// covers a few frames of client lag, but far less than the time it takes a
+// player to leave and re-enter chat range, so a lingering bubble that becomes
+// visible on re-approach is never logged late.
+static constexpr int kChatFreshTicks = 5;
+
 void chatObservePlayers(
-    const std::unordered_map<std::string, shared::PlayerState>& players)
+    const std::unordered_map<std::string, shared::PlayerState>& players,
+    int currentTick)
 {
     for (const auto& [id, pl] : players) {
-        if (pl.chatMessage.empty() || pl.chatMessageTick <= 0) continue;
+        if (pl.chatMessageTick <= 0) continue;
         auto it = s_seenChatTick.find(id);
         if (it != s_seenChatTick.end() && it->second >= pl.chatMessageTick) continue;
+        // Record the tick on first sight (even when out of range / stale) so the
+        // same message can't be logged later, then gate logging on hearing it
+        // fresh: in chat range (non-empty text) and sent ~now.
         s_seenChatTick[id] = pl.chatMessageTick;
+        if (pl.chatMessage.empty()) continue;                       // out of chat range at send
+        if (pl.chatMessageTick < currentTick - kChatFreshTicks) continue;  // stale bubble
         s_entries.push_back({ pl.playerName + ": " + pl.chatMessage, false });
         while (s_entries.size() > kMax) s_entries.pop_front();
         s_autoScroll = true;

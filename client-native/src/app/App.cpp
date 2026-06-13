@@ -3173,8 +3173,8 @@ void App::processNetworkMessages() {
       entities_.rebuildItems(droppedItems_, map_);
 
       // Phase 8 — feed chat + hit-splat detectors before we move-from players.
-      chatLog_.observePlayers(allPlayers_);
-      ui::chatObservePlayers(allPlayers_);
+      chatLog_.observePlayers(allPlayers_, currentTick_);
+      ui::chatObservePlayers(allPlayers_, currentTick_);
       // System messages from the server (NPC dialogue, "I can't reach that", etc.)
       {
         auto mit = st.messages.find(network_.playerId());

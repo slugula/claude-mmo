@@ -37,8 +37,10 @@ void drawBankPanel (const shared::PlayerState& p, net::NetworkClient* net,
 class ChatLog {
 public:
   void appendSystem(std::string line);
-  // Detect new chatMessage(tick) on any player and append.
-  void observePlayers(const std::unordered_map<std::string, shared::PlayerState>& players);
+  // Detect new chatMessage(tick) on any player and append. currentTick gates on
+  // message freshness so out-of-earshot chat isn't logged late on re-approach.
+  void observePlayers(const std::unordered_map<std::string, shared::PlayerState>& players,
+                      int currentTick);
   // Fixed bottom-left ImGui window with scrolling history + optional input.
   // Pass nullptr for net to suppress the input field (e.g. before login).
   void draw(net::NetworkClient* net);

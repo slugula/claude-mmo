@@ -675,12 +675,19 @@ void ChatLog::appendSystem(std::string line) {
 }
 
 void ChatLog::observePlayers(
-    const std::unordered_map<std::string, shared::PlayerState>& players) {
+    const std::unordered_map<std::string, shared::PlayerState>& players,
+    int currentTick) {
+  // Mirror ui::chatObservePlayers: record the tick on first sight (even out of
+  // range / stale) so it can't be logged later, and only log a message heard
+  // fresh and in chat range.
+  constexpr int kChatFreshTicks = 5;
   for (const auto& [id, pl] : players) {
-    if (pl.chatMessage.empty() || pl.chatMessageTick <= 0) continue;
+    if (pl.chatMessageTick <= 0) continue;
     auto it = seenChatTick_.find(id);
-    if (it != seenChatTick_.end() && it->second == pl.chatMessageTick) continue;
+    if (it != seenChatTick_.end() && it->second >= pl.chatMessageTick) continue;
     seenChatTick_[id] = pl.chatMessageTick;
+    if (pl.chatMessage.empty()) continue;
+    if (pl.chatMessageTick < currentTick - kChatFreshTicks) continue;
     std::string speaker = pl.playerName.empty() ? id : pl.playerName;
     entries_.push_back({ speaker + ": " + pl.chatMessage, false });
     while (entries_.size() > kMax) entries_.pop_front();

@@ -19,9 +19,14 @@ namespace ui {
 // Append a system (gold) message.
 void chatAppendSystem(std::string line);
 
-// Detect new chatMessage(tick) on any player and append as a player (white) line.
+// Detect new chatMessage(tick) on any player and append as a player (white)
+// line. currentTick = the server tick of the state being observed; a message is
+// only logged if it was sent on (about) this tick AND the speaker is in chat
+// range (server blanks chatMessage out of range), so messages sent while out of
+// earshot are never logged late when the speaker walks back into range.
 void chatObservePlayers(
-    const std::unordered_map<std::string, shared::PlayerState>& players);
+    const std::unordered_map<std::string, shared::PlayerState>& players,
+    int currentTick);
 
 // Build the Clay chat panel layout. Call between Clay_BeginLayout / Clay_EndLayout.
 // netc == nullptr suppresses the input field (e.g. before login).
