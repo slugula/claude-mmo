@@ -57,6 +57,10 @@ public:
     // The map must outlive this renderer (App's map_ does).
     void buildBaseLayer(const shared::WorldMapFile& map);
 
+    // Force the region to re-raster next frame (e.g. after streamed tiles
+    // changed the map within the current window).
+    void invalidateRegion() { regionCenterX_ = regionCenterY_ = INT_MIN; }
+
     // Update the composite texture each frame.
     // playerX/Y: sub-tick interpolated tile-space position (may be fractional).
     // localPlayer: used for dying-flag and other metadata; may be nullptr.

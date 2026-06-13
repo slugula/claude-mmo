@@ -227,16 +227,41 @@ struct MessageHeader {
   std::string type;
 };
 
-// Server -> client: init (sent once on connection)
+// Server -> client: init (sent once on connection).
+// Streaming worlds (world.json manifest) send only dims + spawn here and push
+// tile data as chunkData messages; the bulk arrays below are empty. Legacy
+// single-map worlds send the whole map inline (streaming == false), unchanged.
 struct InitMessage {
   std::string                        type;            // "init"
   std::string                        playerId;
-  std::vector<std::vector<TileData>> tiles;           // server's authoritative map
+  bool                               isNewPlayer = false;
+  bool                               streaming   = false;
+  int                                worldWidth  = 0;
+  int                                worldHeight = 0;
+  int                                chunkSize   = 0;
+  int                                spawnX      = 0;
+  int                                spawnY      = 0;
+  std::vector<std::vector<TileData>> tiles;           // server's authoritative map (legacy only)
   std::vector<float>                 vertexHeights;
   std::vector<WaterTile>             waterTiles;       // legacy water plane tiles
   std::vector<OverlayTile>           overlayTiles;     // OSRS-style shaped surface layer
   std::vector<WallSeg>               walls;            // wall + pillar edge features
-  bool                               isNewPlayer = false;
+};
+
+// Server -> client: one streamed terrain chunk (multi-chunk worlds). Coordinates
+// are GLOBAL/assembled, so the client writes the data straight back into its
+// flat map at these indices (no flip re-derivation). vh is the (vrows×vcols)
+// vertex-height sub-block whose top-left is global vertex (vrow0, vcol0).
+struct ChunkDataMessage {
+  std::string                        type;            // "chunkData"
+  int                                cx = 0, cy = 0;  // world cell
+  int                                gx0 = 0, gy0 = 0;// global tile origin
+  int                                w = 0, h = 0;    // tile rect size
+  std::vector<std::vector<TileData>> tiles;
+  int                                vrow0 = 0, vcol0 = 0, vrows = 0, vcols = 0;
+  std::vector<float>                 vh;
+  std::vector<WallSeg>               walls;
+  std::vector<OverlayTile>           overlayTiles;
 };
 
 // Server -> client: state patch (sent every 200 ms tick)

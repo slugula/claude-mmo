@@ -85,6 +85,11 @@ export class GameLoop {
   private worldSpawn: { x: number; y: number } | null = null;
   // Chest positions collected at load (assembly) or by the legacy scan.
   private chestTiles: { x: number; y: number }[] = [];
+  // Multi-chunk streaming metadata. chunkSize > 0 and assignedChunks non-empty
+  // only when a world.json manifest is loaded; otherwise the server uses the
+  // legacy whole-map init (no streaming).
+  private chunkSize = 0;
+  private assignedChunks = new Set<string>();   // "cx,cy" cells with map data
 
   constructor(broadcast: BroadcastFn) {
     this.broadcast = broadcast;
@@ -114,6 +119,8 @@ export class GameLoop {
       mapData = assembled;
       this.worldSpawn = assembled.spawn;
       this.chestTiles = assembled.chests;
+      this.chunkSize = manifest.chunkSize;
+      for (const c of manifest.chunks) this.assignedChunks.add(`${c.cx},${c.cy}`);
     } else {
       mapData = loadWorldMap();
     }
@@ -298,6 +305,68 @@ export class GameLoop {
   getOverlayTiles() { return this.overlayTiles; }
   getWalls() { return this.walls; }
   getVertexHeights(): number[] { return Array.from(this.state.world.vertexHeights); }
+
+  // ---- Multi-chunk streaming ------------------------------------------------
+  // Streaming is active only when a world.json manifest was loaded.
+  isStreaming(): boolean { return this.chunkSize > 0; }
+  getChunkSize(): number { return this.chunkSize; }
+  getWorldDims(): { width: number; height: number } {
+    return { width: this.state.world.width, height: this.state.world.height };
+  }
+  getSpawn(): { x: number; y: number } {
+    return this.worldSpawn ?? this.defaultSpawn();
+  }
+  /** Cells (in Chebyshev chunk-distance ≤ radius of (pcx,pcy)) that have map
+   *  data assigned — i.e. are worth streaming. */
+  chunksInRange(pcx: number, pcy: number, radius: number): { cx: number; cy: number }[] {
+    const out: { cx: number; cy: number }[] = [];
+    for (let cy = pcy - radius; cy <= pcy + radius; cy++) {
+      for (let cx = pcx - radius; cx <= pcx + radius; cx++) {
+        if (cx < 0 || cy < 0) continue;
+        if (this.assignedChunks.has(`${cx},${cy}`)) out.push({ cx, cy });
+      }
+    }
+    return out;
+  }
+
+  /** Slices the assembled flat world for one chunk cell. Coordinates are GLOBAL
+   *  (already-assembled, flip-correct) so the client writes them straight back
+   *  at the same indices. */
+  getChunkData(cx: number, cy: number): {
+    cx: number; cy: number; gx0: number; gy0: number; w: number; h: number;
+    tiles: TileData[][];
+    vrow0: number; vcol0: number; vrows: number; vcols: number; vh: number[];
+    walls: typeof GameLoop.prototype.walls;
+    overlayTiles: typeof GameLoop.prototype.overlayTiles;
+  } | null {
+    const S = this.chunkSize;
+    if (S <= 0) return null;
+    const W = this.state.world.width, H = this.state.world.height;
+    const gx0 = cx * S, gy0 = cy * S;
+    if (gx0 >= W || gy0 >= H) return null;
+    const w = Math.min(S, W - gx0), h = Math.min(S, H - gy0);
+
+    const tiles: TileData[][] = [];
+    for (let y = 0; y < h; y++) tiles.push(this.worldTiles[gy0 + y].slice(gx0, gx0 + w));
+
+    // Vertex heights span the flipped band [H-(cy+1)*S .. H-cy*S] × [gx0 .. gx0+w].
+    const vh = this.state.world.vertexHeights;
+    const vrow0 = Math.max(0, H - (cy + 1) * S);
+    const vrow1 = H - cy * S;                 // inclusive bottom edge of band
+    const vrows = vrow1 - vrow0 + 1;
+    const vcol0 = gx0, vcols = w + 1;
+    const sub: number[] = [];
+    for (let r = 0; r < vrows; r++)
+      for (let c = 0; c < vcols; c++)
+        sub.push(vh[(vrow0 + r) * (W + 1) + (vcol0 + c)] ?? 0);
+
+    const inRect = (tx: number, ty: number) =>
+      tx >= gx0 && tx < gx0 + w && ty >= gy0 && ty < gy0 + h;
+    const walls = this.walls.filter(wl => inRect(wl.tileX, wl.tileY));
+    const overlayTiles = this.overlayTiles.filter(o => inRect(o.tileX, o.tileY));
+
+    return { cx, cy, gx0, gy0, w, h, tiles, vrow0, vcol0, vrows, vcols, vh: sub, walls, overlayTiles };
+  }
 
   /** Returns a snapshot of all currently-connected players for checkpoint saves. */
   getPlayerStates(): Map<string, PlayerState> {

@@ -2977,10 +2977,34 @@ void App::processNetworkMessages() {
                    init.isNewPlayer ? "(new)" : "(returning)");
       isNewPlayer_ = init.isNewPlayer;
       if (isNewPlayer_) joinNameBuf_[0] = '\0';
-      // Adopt the server's authoritative map so the client renders the same
-      // world the server simulates (terrain, obstacles, water, walkability) —
-      // essential for shared builds where there's no local worldMap.json.
-      if (!init.tiles.empty()) {
+      depletedTiles_.clear();
+      if (init.streaming) {
+        // Streaming world: allocate an all-void flat map of the world's dims;
+        // chunkData messages fill it in around the player. Consumers keep
+        // reading the flat map_ unchanged — it just starts empty.
+        streaming_ = true;
+        map_.width  = init.worldWidth;
+        map_.height = init.worldHeight;
+        map_.spawnPoint = { init.spawnX, init.spawnY };
+        map_.tiles.assign(static_cast<std::size_t>(map_.height),
+                          std::vector<shared::TileData>(static_cast<std::size_t>(map_.width)));
+        for (int y = 0; y < map_.height; ++y)
+          for (int x = 0; x < map_.width; ++x) {
+            auto& t = map_.tiles[y][x];
+            t.x = x; t.y = y; t.walkable = false; t.isVoid = true;
+          }
+        map_.vertexHeights.assign(
+            static_cast<std::size_t>((map_.width + 1)) * (map_.height + 1), 0.0f);
+        map_.waterTiles.clear();
+        map_.overlayTiles.clear();
+        map_.walls.clear();
+        rebuildWorldFromMap();   // sets up empty chunked terrain / minimap region
+        network_.sendSetChunkRadius(chunkDrawDistance_);
+        std::fprintf(stdout, "[App] streaming world %dx%d, spawn (%d,%d)\n",
+                     map_.width, map_.height, init.spawnX, init.spawnY);
+      } else if (!init.tiles.empty()) {
+        // Legacy: adopt the server's whole authoritative map inline.
+        streaming_ = false;
         map_.height       = static_cast<int>(init.tiles.size());
         map_.width        = static_cast<int>(init.tiles[0].size());
         map_.tiles        = std::move(init.tiles);
@@ -2994,7 +3018,6 @@ void App::processNetworkMessages() {
           for (const auto& w : map_.waterTiles)
             map_.overlayTiles.push_back(
                 shared::OverlayTile{w.tileX, w.tileY, 0, shared::kWaterMaterialId});
-        depletedTiles_.clear();
         rebuildWorldFromMap();
       }
       // Entity definitions from the server (shared builds have no localhost DB).
@@ -3012,6 +3035,41 @@ void App::processNetworkMessages() {
       // Apply the persisted entity sync radius for this session (server
       // default is 15; only worth sending when it differs).
       if (viewRadius_ != 15) network_.sendSetViewRadius(viewRadius_);
+    } else if (hdr.type == "chunkData") {
+      // Streamed terrain chunk: patch it into the flat map_ at the global
+      // coordinates the server already computed, then flag a coalesced rebuild
+      // (done once after this drain loop, even if several chunks arrived).
+      shared::ChunkDataMessage cd;
+      if (glz::read<kPermissive>(cd, raw)) { std::fprintf(stderr, "[App] chunkData parse failed\n"); continue; }
+      if (map_.tiles.empty()) continue;   // chunkData before init — ignore
+      for (int y = 0; y < cd.h && y < static_cast<int>(cd.tiles.size()); ++y) {
+        const int gy = cd.gy0 + y;
+        if (gy < 0 || gy >= map_.height) continue;
+        for (int x = 0; x < cd.w && x < static_cast<int>(cd.tiles[y].size()); ++x) {
+          const int gx = cd.gx0 + x;
+          if (gx < 0 || gx >= map_.width) continue;
+          map_.tiles[gy][gx] = cd.tiles[y][x];
+          map_.tiles[gy][gx].x = gx; map_.tiles[gy][gx].y = gy;
+        }
+      }
+      // Vertex heights: write the sub-block at its global indices.
+      const int vw = map_.width + 1;
+      for (int r = 0; r < cd.vrows; ++r) {
+        const int gr = cd.vrow0 + r;
+        for (int c = 0; c < cd.vcols; ++c) {
+          const int gc = cd.vcol0 + c;
+          const std::size_t gi = static_cast<std::size_t>(gr) * vw + gc;
+          const std::size_t si = static_cast<std::size_t>(r) * cd.vcols + c;
+          if (gi < map_.vertexHeights.size() && si < cd.vh.size())
+            map_.vertexHeights[gi] = cd.vh[si];
+        }
+      }
+      // Append this chunk's sparse features (each chunk is sent once).
+      for (auto& w : cd.walls)        map_.walls.push_back(w);
+      for (auto& o : cd.overlayTiles) map_.overlayTiles.push_back(o);
+      // Mark the covering render chunk dirty; defer monolithic rebuilds.
+      terrain_.markTileDirty(cd.gx0, cd.gy0);
+      pendingChunkRebuild_ = true;
     } else if (hdr.type == "state") {
       shared::StateMessage st;
       if (auto ec = glz::read<kPermissive>(st, raw)) {
@@ -3257,6 +3315,19 @@ void App::processNetworkMessages() {
         }
       }
     }
+  }
+
+  // Coalesced rebuild after streamed chunk(s) arrived this frame: the monolithic
+  // systems read the full lists, so we rebuild them once regardless of how many
+  // chunks landed. Terrain chunks were already individually marked dirty and
+  // rebuild lazily in their own update(); the minimap re-rasters its region.
+  if (pendingChunkRebuild_) {
+    pendingChunkRebuild_ = false;
+    obstacles_.rebuildFromMap(map_, depletedTiles_);
+    walls_.rebuildFromMap(map_);
+    if (waterRenderer_.valid())   waterRenderer_.rebuild(map_, waterUniforms_.waterOffset);
+    if (overlayRenderer_.valid()) overlayRenderer_.rebuild(map_);
+    minimap_.invalidateRegion();
   }
 }
 

@@ -19,6 +19,13 @@ const DEFAULT_VIEW_RADIUS = 15;
 const MAX_VIEW_RADIUS = 48;
 // Log interest-patch bandwidth every N ticks (~30s at 200ms ticks).
 const PATCH_LOG_INTERVAL_TICKS = 150;
+// Default chunk streaming radius (in chunks) until the client reports its draw
+// distance. Server streams within this + 1 margin of the player's chunk.
+const DEFAULT_CHUNK_RADIUS = 3;
+const MAX_CHUNK_RADIUS = 10;
+// Cap chunkData pushes per client per tick so crossing many boundaries at once
+// (or the initial fill) doesn't burst.
+const MAX_CHUNKS_PER_TICK = 4;
 
 interface ClientActionsMessage {
   type: 'actions';
@@ -30,7 +37,21 @@ interface ClientViewMessage {
   radius: number;
 }
 
-type ClientMessage = ClientActionsMessage | ClientViewMessage;
+interface ClientChunkRadiusMessage {
+  type: 'setChunkRadius';
+  radius: number;
+}
+
+type ClientMessage = ClientActionsMessage | ClientViewMessage | ClientChunkRadiusMessage;
+
+// Per-connection state. Replaces the old playerId->WebSocket map so we can
+// carry interest radii and the set of chunks already streamed to this client.
+interface ClientState {
+  ws:          WebSocket;
+  viewRadius:  number;
+  chunkRadius: number;
+  sentChunks:  Set<string>;   // "cx,cy" cells already streamed (monotonic)
+}
 
 // ---- HTTP server with Express ----
 
@@ -54,13 +75,32 @@ const httpServer = createServer(app);
 
 // ---- Per-player tracking ----
 
-const clients = new Map<string, WebSocket>();
-const playerViewRadius = new Map<string, number>();
+const clients = new Map<string, ClientState>();
 
 // ---- Interest-filtered broadcast ----
 
 function chebyshev(ax: number, ay: number, bx: number, by: number): number {
   return Math.max(Math.abs(ax - bx), Math.abs(ay - by));
+}
+
+// Stream any not-yet-sent chunks within the client's chunk radius of its
+// current tile position. Returns immediately in legacy (non-streaming) mode.
+function streamChunksTo(cs: ClientState, tileX: number, tileY: number): void {
+  if (!loop.isStreaming() || cs.ws.readyState !== WebSocket.OPEN) return;
+  const S = loop.getChunkSize();
+  const pcx = Math.floor(tileX / S);
+  const pcy = Math.floor(tileY / S);
+  let sent = 0;
+  for (const { cx, cy } of loop.chunksInRange(pcx, pcy, cs.chunkRadius + 1)) {
+    if (sent >= MAX_CHUNKS_PER_TICK) break;
+    const key = `${cx},${cy}`;
+    if (cs.sentChunks.has(key)) continue;
+    const data = loop.getChunkData(cx, cy);
+    if (!data) { cs.sentChunks.add(key); continue; }
+    cs.ws.send(JSON.stringify({ type: 'chunkData', ...data }));
+    cs.sentChunks.add(key);
+    sent++;
+  }
 }
 
 // Rolling patch-size telemetry: how many bytes each tick's interest-filtered
@@ -72,7 +112,8 @@ let patchTicks = 0;
 
 function broadcast(patch: ServerStatePatch): void {
   let tickBytes = 0;
-  for (const [playerId, ws] of clients.entries()) {
+  for (const [playerId, cs] of clients.entries()) {
+    const ws = cs.ws;
     if (ws.readyState !== WebSocket.OPEN) continue;
 
     const self = patch.players[playerId];
@@ -80,7 +121,11 @@ function broadcast(patch: ServerStatePatch): void {
 
     const cx = self.tileX;
     const cy = self.tileY;
-    const r  = playerViewRadius.get(playerId) ?? DEFAULT_VIEW_RADIUS;
+    const r  = cs.viewRadius;
+
+    // Stream any newly-needed terrain chunks around this player before the
+    // state patch (so geometry is on its way as they walk into a new ring).
+    streamChunksTo(cs, cx, cy);
 
     // Filter visible entities by Chebyshev distance (square view area)
     const visiblePlayers: ServerStatePatch['players'] = {};
@@ -213,22 +258,39 @@ wss.on('connection', async (ws: WebSocket, req: IncomingMessage) => {
     console.error('[server] Failed to load player state for', username, err);
   }
 
-  clients.set(playerId, ws);
-  playerViewRadius.set(playerId, DEFAULT_VIEW_RADIUS);
+  const cs: ClientState = {
+    ws,
+    viewRadius:  DEFAULT_VIEW_RADIUS,
+    chunkRadius: DEFAULT_CHUNK_RADIUS,
+    sentChunks:  new Set<string>(),
+  };
+  clients.set(playerId, cs);
 
   const isNewPlayer = savedState === null;
   loop.addPlayer(playerId, username, savedState ?? undefined);
 
   const defs = getClientDefs();
+  const streaming = loop.isStreaming();
+  const dims = loop.getWorldDims();
+  const spawn = loop.getSpawn();
   ws.send(JSON.stringify({
     type: 'init',
-    waterTiles:    loop.getWaterTiles(),
-    overlayTiles:  loop.getOverlayTiles(),
-    walls:         loop.getWalls(),
     playerId,
-    tiles:         loop.getWorldTiles(),
-    vertexHeights: loop.getVertexHeights(),
     isNewPlayer,
+    // Streaming worlds (world.json manifest) send only dims/spawn here and push
+    // tile data as chunkData messages. Legacy single-map worlds send the whole
+    // map inline (streaming=false) exactly as before.
+    streaming,
+    worldWidth:  dims.width,
+    worldHeight: dims.height,
+    chunkSize:   loop.getChunkSize(),
+    spawnX:      spawn.x,
+    spawnY:      spawn.y,
+    waterTiles:    streaming ? [] : loop.getWaterTiles(),
+    overlayTiles:  streaming ? [] : loop.getOverlayTiles(),
+    walls:         streaming ? [] : loop.getWalls(),
+    tiles:         streaming ? [] : loop.getWorldTiles(),
+    vertexHeights: streaming ? [] : loop.getVertexHeights(),
     // Entity definitions (raw DB rows, incl. client-only sprite/model fields) so
     // a shared client renders authored content without localhost DB access.
     items:   defs.items,
@@ -238,7 +300,12 @@ wss.on('connection', async (ws: WebSocket, req: IncomingMessage) => {
     skills:  defs.skills,
   }));
 
-  console.log(`[server] ${username} (${playerId}) connected — ${isNewPlayer ? 'new' : 'returning'} player`);
+  // Push the spawn-ring chunks immediately so the player has ground on frame 1
+  // instead of after the first broadcast tick (~200ms of void).
+  if (streaming) streamChunksTo(cs, spawn.x, spawn.y);
+
+  console.log(`[server] ${username} (${playerId}) connected — ${isNewPlayer ? 'new' : 'returning'} player` +
+              (streaming ? ` (streaming ${dims.width}x${dims.height})` : ''));
 
   ws.on('message', (raw) => {
     let msg: ClientMessage;
@@ -251,14 +318,14 @@ wss.on('connection', async (ws: WebSocket, req: IncomingMessage) => {
     if (msg.type === 'actions' && Array.isArray(msg.actions)) {
       loop.enqueueActions(playerId, msg.actions);
     } else if (msg.type === 'setViewRadius') {
-      const r = Math.min(Math.max(1, Math.round(msg.radius)), MAX_VIEW_RADIUS);
-      playerViewRadius.set(playerId, r);
+      cs.viewRadius = Math.min(Math.max(1, Math.round(msg.radius)), MAX_VIEW_RADIUS);
+    } else if (msg.type === 'setChunkRadius') {
+      cs.chunkRadius = Math.min(Math.max(1, Math.round(msg.radius)), MAX_CHUNK_RADIUS);
     }
   });
 
   ws.on('close', async () => {
     clients.delete(playerId);
-    playerViewRadius.delete(playerId);
     const state = loop.removePlayer(playerId);
     if (state) {
       try {

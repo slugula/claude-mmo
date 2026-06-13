@@ -212,6 +212,13 @@ void NetworkClient::sendSetViewRadius(int radius) {
   ws_->send(buf);
 }
 
+void NetworkClient::sendSetChunkRadius(int radiusChunks) {
+  if (!ws_ || status_.load() != Connection::Connected) return;
+  char buf[64];
+  std::snprintf(buf, sizeof(buf), "{\"type\":\"setChunkRadius\",\"radius\":%d}", radiusChunks);
+  ws_->send(buf);
+}
+
 namespace {
 
 // JSON-escape a string. Covers control chars, quotes, and backslash —

@@ -35,6 +35,11 @@ public:
   // missing chunk meshes (nearest first) and evict meshes outside ring+1.
   void update(int centerTileX, int centerTileY, int ring, int budget = 2);
 
+  // Mark the render chunk covering global tile (gx,gy) as needing a (re)build —
+  // used when streamed tile data arrives for a previously-void/unbuilt chunk.
+  // The next update() rebuilds it if it's within the ring.
+  void markTileDirty(int gx, int gy);
+
   // Draw resident chunk meshes whose AABB intersects the view frustum.
   // The terrain shader must already be bound with its uniforms set.
   void draw(const glm::mat4& viewProj) const;

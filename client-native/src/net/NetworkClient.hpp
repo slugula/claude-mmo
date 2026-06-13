@@ -75,6 +75,9 @@ public:
   // Top-level interest-management message (not a GameAction): how many tiles
   // of entities the server should sync around this player.
   void sendSetViewRadius(int radius);
+  // Top-level streaming message: how many 64-tile chunks of terrain the client
+  // wants streamed around it (its draw distance). Server streams within +1.
+  void sendSetChunkRadius(int radiusChunks);
 
   // ---- State accessors (main-thread reads) --------------------------------
 

@@ -129,6 +129,19 @@ void ChunkedTerrain::update(int centerTileX, int centerTileY, int ring, int budg
   }
 }
 
+void ChunkedTerrain::markTileDirty(int gx, int gy) {
+  if (!map_ || chunks_.empty()) return;
+  const int cx = gx / kChunkTiles, cy = gy / kChunkTiles;
+  if (cx < 0 || cy < 0 || cx >= chunksX_ || cy >= chunksY_) return;
+  Chunk& c = chunks_[static_cast<std::size_t>(cy) * chunksX_ + cx];
+  // Recompute the AABB (heights just changed) and force a rebuild; clear the
+  // empty flag so a chunk that was all-void before now gets geometry.
+  computeAabb(c);
+  c.mesh  = render::Mesh{};
+  c.built = false;
+  c.empty = false;
+}
+
 void ChunkedTerrain::draw(const glm::mat4& viewProj) const {
   const auto planes = frustumPlanes(viewProj);
   for (const auto& c : chunks_) {

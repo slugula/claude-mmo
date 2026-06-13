@@ -277,6 +277,12 @@ private:
   // Entity sync (interest) radius in tiles, requested from the server via
   // setViewRadius (server clamps to its own max). Persisted in settings.cfg.
   int                                      viewRadius_        = 15;
+  // True when the server streams terrain chunks (world.json present); the flat
+  // map_ starts all-void and fills in from chunkData messages.
+  bool                                     streaming_         = false;
+  // Set when one or more chunkData messages arrived this frame; triggers a
+  // single coalesced rebuild of the monolithic render systems after draining.
+  bool                                     pendingChunkRebuild_ = false;
   // Screen-space outline settings
   float     outlineRadius_    = 3.0f;
   float     outlineDepthBias_ = 0.002f;
