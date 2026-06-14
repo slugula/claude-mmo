@@ -21,7 +21,7 @@ Write-Host "`n=== Project L — Production Build ===" -ForegroundColor Cyan
 
 # ── 1. Configure (idempotent) ────────────────────────────────────────────────
 Write-Host "`n[1/3] Configuring..." -ForegroundColor Yellow
-& $cmake --preset windows-production
+& $cmake -S (Join-Path $repoRoot "client-native") --preset windows-production
 if ($LASTEXITCODE -ne 0) { throw "CMake configure failed." }
 
 # ── 2. Build ─────────────────────────────────────────────────────────────────
