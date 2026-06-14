@@ -32,6 +32,11 @@ namespace assets {
 // Returns std::nullopt if the asset is in neither the pack nor on disk.
 std::optional<std::vector<unsigned char>> loadBytes(const std::filesystem::path& path);
 
+// True if the asset can be loaded: present in the pack (by key) OR on disk.
+// Use this instead of std::filesystem::exists() before loading models, so
+// packed builds (where the loose file is absent) still find the asset.
+bool exists(const std::filesystem::path& path);
+
 // True once an assets.pak has been located and loaded (production builds).
 bool packLoaded();
 

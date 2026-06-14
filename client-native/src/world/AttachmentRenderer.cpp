@@ -1,5 +1,6 @@
 #include "world/AttachmentRenderer.hpp"
 
+#include "assets/AssetPack.hpp"
 #include "world/GltfLoader.hpp"
 #include "world/GltfModel.hpp"
 
@@ -60,10 +61,10 @@ AttachmentRenderer::ensure(const std::string& relPath) {
 
   std::filesystem::path abs = resolver_ ? resolver_(relPath)
                                         : std::filesystem::path(relPath);
-  if (!std::filesystem::exists(abs)) abs = resolver_ ? resolver_("assets/" + relPath)
-                                                     : abs;
+  if (!assets::exists(abs)) abs = resolver_ ? resolver_("assets/" + relPath)
+                                            : abs;
 
-  if (std::filesystem::exists(abs)) {
+  if (assets::exists(abs)) {
     if (auto parsed = world::loadGlb(abs); parsed && !parsed->primitives.empty()) {
       for (const auto& prim : parsed->primitives) {
         if (prim.positions.empty() || prim.indices.empty()) continue;

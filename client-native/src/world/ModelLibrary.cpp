@@ -1,5 +1,6 @@
 #include "world/ModelLibrary.hpp"
 
+#include "assets/AssetPack.hpp"
 #include "world/GltfLoader.hpp"
 #include "input/Picker.hpp"
 
@@ -48,7 +49,7 @@ void ModelLibrary::init(std::function<std::filesystem::path(const std::string&)>
   bool loaded = false;
   if (resolver_ && !placeholderRelPath.empty()) {
     const auto path = resolver_(placeholderRelPath);
-    if (std::filesystem::exists(path)) {
+    if (assets::exists(path)) {
       if (auto m = world::loadGlb(path); m && !m->primitives.empty()) {
         phPos_.clear(); phNrm_.clear(); phIdx_.clear();
         uint32_t base = 0;
@@ -170,9 +171,9 @@ void ModelLibrary::ensure(const std::string& id, const std::string& modelPath,
   std::filesystem::path path;
   if (resolver_ && !modelPath.empty()) {
     path = resolver_(modelPath);
-    if (!std::filesystem::exists(path)) path = resolver_("assets/" + modelPath);
+    if (!assets::exists(path)) path = resolver_("assets/" + modelPath);
   }
-  const bool haveFile = !path.empty() && std::filesystem::exists(path);
+  const bool haveFile = !path.empty() && assets::exists(path);
 
   glm::vec3 bmin( 1e9f), bmax(-1e9f);
   auto accumulate = [&](const std::vector<float>& pos) {

@@ -117,6 +117,13 @@ void loadOnce() {
                pakPath.string().c_str(), count);
 }
 
+// The pack key for a path: relative to the exe dir, lowercased, '/'-separated.
+std::string packKeyFor(const std::filesystem::path& path) {
+  std::error_code ec;
+  std::filesystem::path rel = std::filesystem::relative(path, g_pack.exeDir, ec);
+  return toKey(ec ? path.generic_string() : rel.generic_string());
+}
+
 }  // namespace
 
 bool packLoaded() {
@@ -124,14 +131,19 @@ bool packLoaded() {
   return g_pack.loaded;
 }
 
+bool exists(const std::filesystem::path& path) {
+  std::call_once(g_once, loadOnce);
+  if (g_pack.loaded && g_pack.entries.count(packKeyFor(path)) > 0) return true;
+  std::error_code ec;
+  return std::filesystem::exists(path, ec);
+}
+
 std::optional<std::vector<unsigned char>> loadBytes(const std::filesystem::path& path) {
   std::call_once(g_once, loadOnce);
 
   // Derive the pack key: path relative to the executable directory.
   if (g_pack.loaded) {
-    std::error_code ec;
-    std::filesystem::path rel = std::filesystem::relative(path, g_pack.exeDir, ec);
-    const std::string key = toKey(ec ? path.generic_string() : rel.generic_string());
+    const std::string key = packKeyFor(path);
     const auto it = g_pack.entries.find(key);
     if (it != g_pack.entries.end()) {
       std::ifstream f(g_pack.file, std::ios::binary);
