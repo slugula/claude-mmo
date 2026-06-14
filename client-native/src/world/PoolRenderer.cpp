@@ -196,7 +196,8 @@ void PoolRenderer::rebuildFromMap(const shared::WorldMapFile& map) {
         const float rotY = static_cast<float>(rotQuarter & 3) * 1.57079632679f;
         instances_[id].push_back(ModelLibrary::Instance{
             static_cast<float>(tx), cy, static_cast<float>(ty), rotY,
-            n.x, n.y, n.z, c.r, c.g, c.b });
+            n.x, n.y, n.z, c.r, c.g, c.b,
+            hSW - cy, hSE - cy, hNW - cy, hNE - cy });   // corner deltas for the warp
       };
 
       add(p.id, p.rot);
@@ -216,8 +217,10 @@ void PoolRenderer::rebuildFromMap(const shared::WorldMapFile& map) {
 }
 
 void PoolRenderer::render(render::Shader& s) {
+  s.setFloat("u_poolWarp", 1.0f);   // bilinear height warp for pool meshes
   for (auto& [id, insts] : instances_)
     if (!insts.empty()) models_.drawStaticInstanced(s, id, insts);
+  s.setFloat("u_poolWarp", 0.0f);   // restore for the next obstacle/wall draws
 }
 
 void PoolRenderer::renderDepth(render::Shader& s) {

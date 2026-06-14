@@ -16,9 +16,11 @@ layout(location = 2) in vec3  a_instancePos;
 layout(location = 3) in float a_instanceRotY;
 layout(location = 5) in vec3  a_instanceUp;   // surface normal to tilt onto (default +Y)
 layout(location = 6) in vec3  a_instanceTint; // per-instance RGB tint (default white)
+layout(location = 7) in vec4  a_cornerH;      // tile corner heights SW,SE,NW,NE (pool warp)
 
-uniform mat4 u_viewProj;
-uniform mat4 u_lightViewProj;
+uniform mat4  u_viewProj;
+uniform mat4  u_lightViewProj;
+uniform float u_poolWarp;   // 0 = rigid placement (default); 1 = bilinear height warp
 
 out vec3  v_normal;
 out vec4  v_shadowPos;
@@ -50,9 +52,29 @@ mat3 alignUpTo(vec3 n) {
 }
 
 void main() {
-    mat3 R        = alignUpTo(a_instanceUp) * rotY(a_instanceRotY);
-    vec3 worldPos = R * a_position + a_instancePos;
-    v_normal      = R * a_normal;
+    vec3 worldPos;
+    if (u_poolWarp > 0.5) {
+        // Pool warp: rotate in XZ only, then bilinearly displace every vertex's
+        // height by the tile's 4 corner heights so the mesh conforms exactly to
+        // the terrain (rims match neighbours → no gaps on lifted/sloped tiles).
+        // Model spans a unit tile centred at the origin; (u,v) = local XZ + 0.5,
+        // with SW=(0,0), SE=(1,0), NW=(0,1), NE=(1,1).
+        vec3  rp = rotY(a_instanceRotY) * a_position;
+        float u  = clamp(rp.x + 0.5, 0.0, 1.0);
+        float v  = clamp(rp.z + 0.5, 0.0, 1.0);
+        float hS = mix(a_cornerH.x, a_cornerH.y, u);   // SW→SE
+        float hN = mix(a_cornerH.z, a_cornerH.w, u);   // NW→NE
+        float h  = mix(hS, hN, v);                     // corner heights are deltas from instance y
+        worldPos = vec3(rp.x + a_instancePos.x,
+                        a_instancePos.y + rp.y + h,
+                        rp.z + a_instancePos.z);
+        // Light with the average tilted-plane normal (good enough for gentle warps).
+        v_normal = alignUpTo(a_instanceUp) * rotY(a_instanceRotY) * a_normal;
+    } else {
+        mat3 R   = alignUpTo(a_instanceUp) * rotY(a_instanceRotY);
+        worldPos = R * a_position + a_instancePos;
+        v_normal = R * a_normal;
+    }
     v_color       = a_color;
     v_tint        = a_instanceTint;
     vec4 world4   = vec4(worldPos, 1.0);

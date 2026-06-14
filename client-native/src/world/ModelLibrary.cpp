@@ -152,6 +152,10 @@ void ModelLibrary::uploadKit(Kit& k, const std::vector<float>& pos,
   glEnableVertexArrayAttrib  (k.vao, 6);
   glVertexArrayAttribFormat  (k.vao, 6, 3, GL_FLOAT, GL_FALSE, offsetof(Instance, r));
   glVertexArrayAttribBinding (k.vao, 6, 2);
+  // location 7 = per-instance tile corner heights SW,SE,NW,NE (pool warp only)
+  glEnableVertexArrayAttrib  (k.vao, 7);
+  glVertexArrayAttribFormat  (k.vao, 7, 4, GL_FLOAT, GL_FALSE, offsetof(Instance, hSW));
+  glVertexArrayAttribBinding (k.vao, 7, 2);
 
   glVertexArrayElementBuffer(k.vao, k.ebo);
 }

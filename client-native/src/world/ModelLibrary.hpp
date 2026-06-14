@@ -45,6 +45,11 @@ public:
     // so existing brace-inits (trees/rocks/NPCs/items) are unchanged; the pool
     // tileset sets it to the surrounding terrain colour.
     float r = 1.0f, g = 1.0f, b = 1.0f;
+    // Tile corner heights RELATIVE to this instance's y, used only by the pool
+    // warp path (u_poolWarp): the obstacle vertex shader bilinearly displaces
+    // each vertex so the mesh conforms to the terrain heightfield. Order
+    // SW,SE,NW,NE. Zero for all other models (rigid placement).
+    float hSW = 0.0f, hSE = 0.0f, hNW = 0.0f, hNE = 0.0f;
   };
 
   ModelLibrary() = default;
