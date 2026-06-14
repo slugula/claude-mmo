@@ -490,6 +490,9 @@ bool EditorApp::init() {
   walls_.setModelResolver([](const std::string& rel) {
     return resolveFromExe(rel.c_str());
   });
+  pools_.setModelResolver([](const std::string& rel) {
+    return resolveFromExe(rel.c_str());
+  });
   entities_.initGL();
 
   initNewMap(64, 64);
@@ -855,6 +858,7 @@ void EditorApp::render3DViewport(float dt) {
     shadowInstancedShader_.use();
     shadowInstancedShader_.setMat4("u_lightViewProj", lightVP);
     obstacles_.renderDepth(shadowInstancedShader_);
+    pools_.renderDepth(shadowInstancedShader_);
     shadowMap_.endPass();
   }
 
@@ -948,6 +952,7 @@ void EditorApp::render3DViewport(float dt) {
   obstacleShader_.setFloat("u_fogDensity", fogDensity_);
   obstacleShader_.setFloat("u_fogStart",   fogStart_);
   obstacles_.render(obstacleShader_);  // all static objects (data-driven)
+  pools_.render(obstacleShader_);      // 3D water-pool tileset (carved water tiles)
   walls_.render(obstacleShader_);      // wall + pillar placeholders
 
   // NPCs — same data-driven models as the game (placeholder when no model).
@@ -2100,11 +2105,16 @@ void EditorApp::applyBrush(int cx, int cy, float dt, bool rightClick) {
   const int bx0 = cx - half - 1, by0 = cy - half - 1;
   const int bx1 = cx + half + 1, by1 = cy + half + 1;
 
-  if (dirtyTerrain) {
+  // Painting/erasing water changes which terrain tiles are carved out, so the
+  // terrain mesh + 3D pool tileset must rebuild alongside the water plane.
+  if (dirtyTerrain || dirtyWater) {
     if (worldMode_) markTerrainDirtyRegion(bx0, by0, bx1, by1);
     else            rebuildTerrainGL();
   }
-  if (dirtyWater)     waterRenderer_.rebuild(map_, waterUniforms_.waterOffset);
+  if (dirtyWater) {
+    waterRenderer_.rebuild(map_, waterUniforms_.waterOffset);
+    pools_.rebuildFromMap(map_);
+  }
   if (dirtyObstacles) rebuildObstacles();
   if (dirtyMinimap)   minimap_.rebuild(map_, npcSpawns_);
 
@@ -2438,6 +2448,7 @@ void EditorApp::markTerrainDirtyRegion(int x0, int y0, int x1, int y1) {
 void EditorApp::rebuildObstacles() {
   obstacles_.rebuildFromMap(map_);
   walls_.rebuildFromMap(map_);
+  pools_.rebuildFromMap(map_);
 }
 
 // -----------------------------------------------------------------------

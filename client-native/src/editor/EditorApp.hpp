@@ -20,6 +20,7 @@
 #include "world/GltfLoader.hpp"
 #include "world/GltfModel.hpp"
 #include "world/ObstacleSystem.hpp"
+#include "world/PoolRenderer.hpp"
 #include "world/SkinnedMesh.hpp"
 #include "world/TerrainBuilder.hpp"
 #include "world/ChunkedTerrain.hpp"
@@ -153,6 +154,7 @@ private:
   render::ShadowMap shadowMap_;
   world::ChunkedTerrain terrain_;          // per-chunk terrain meshes + draw ring (both modes)
   world::ObstacleSystem obstacles_;
+  world::PoolRenderer   pools_;            // 3D water-pool tileset (carved water tiles)
   world::WallSystem     walls_;
   world::EntityRenderer entities_;   // NPC stand-ins
   camera::GameCamera    camera_;

@@ -39,6 +39,17 @@ TerrainMeshData buildTerrainMeshRect(const shared::WorldMapFile& map,
   const int H = map.height;
   const auto& tiles = map.tiles;
 
+  // Water tiles are carved out and replaced by the 3D pool tileset (PoolRenderer),
+  // so the terrain quad under each water tile is skipped.
+  std::vector<bool> water(static_cast<std::size_t>(W) * H, false);
+  for (const auto& ov : map.overlayTiles)
+    if (ov.materialId == shared::kWaterMaterialId &&
+        ov.tileX >= 0 && ov.tileY >= 0 && ov.tileX < W && ov.tileY < H)
+      water[static_cast<std::size_t>(ov.tileY) * W + ov.tileX] = true;
+  auto isWaterTile = [&](int tx, int ty) {
+    return water[static_cast<std::size_t>(ty) * W + tx];
+  };
+
   // Clamp the rect to the map.
   x0 = std::clamp(x0, 0, W);
   y0 = std::clamp(y0, 0, H);
@@ -142,6 +153,7 @@ TerrainMeshData buildTerrainMeshRect(const shared::WorldMapFile& map,
     const int ty = H - (grBase + lr) - 1;       // global tile row of this quad
     for (int lc = 0; lc < w; ++lc) {
       if (tiles[ty][x0 + lc].isVoid) continue;
+      if (isWaterTile(x0 + lc, ty)) continue;   // carved out — pool tileset draws here
       const uint32_t i0 = static_cast<uint32_t>(lr * (w + 1) + lc);
       const uint32_t i1 = i0 + 1;
       const uint32_t i2 = i0 + (w + 1);

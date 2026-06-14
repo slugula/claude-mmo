@@ -604,6 +604,9 @@ bool App::init() {
   walls_.setModelResolver([](const std::string& rel) {
     return resolveFromExe(rel.c_str());
   });
+  pools_.setModelResolver([](const std::string& rel) {
+    return resolveFromExe(rel.c_str());
+  });
   entities_.initGL();
 
   // Model resolvers (relative model_path → absolute on disk). Set once.
@@ -754,6 +757,7 @@ void App::rebuildWorldFromMap() {
 
   obstacles_.rebuildFromMap(map_);
   walls_.rebuildFromMap(map_);
+  pools_.rebuildFromMap(map_);
   minimap_.buildBaseLayer(map_);
   if (waterRenderer_.valid())
     waterRenderer_.rebuild(map_, waterUniforms_.waterOffset);
@@ -1158,6 +1162,7 @@ void App::renderFrame() {
     shadowInstancedShader_.use();
     shadowInstancedShader_.setMat4("u_lightViewProj", lightVP);
     obstacles_.renderDepth(shadowInstancedShader_);
+    pools_.renderDepth(shadowInstancedShader_);
     entities_.renderDepth(shadowInstancedShader_);
 
     // Local player + remote players (skinned meshes)
@@ -1324,6 +1329,7 @@ void App::renderFrame() {
   obstacleShader_.setFloat("u_fogDensity", fogDensity_);
   obstacleShader_.setFloat("u_fogStart",   fogStart_);
   obstacles_.render(obstacleShader_);  // all static objects (data-driven)
+  pools_.render(obstacleShader_);      // 3D water-pool tileset (carved water tiles)
   walls_.render(obstacleShader_);      // wall + pillar placeholders
 
   // ---- Detect connection-status transitions for chat-log + state reset -----
@@ -3330,6 +3336,7 @@ void App::processNetworkMessages() {
     pendingChunkRebuild_ = false;
     obstacles_.rebuildFromMap(map_, depletedTiles_);
     walls_.rebuildFromMap(map_);
+    pools_.rebuildFromMap(map_);
     if (waterRenderer_.valid())   waterRenderer_.rebuild(map_, waterUniforms_.waterOffset);
     if (overlayRenderer_.valid()) overlayRenderer_.rebuild(map_);
     minimap_.invalidateRegion();

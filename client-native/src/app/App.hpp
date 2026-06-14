@@ -18,6 +18,7 @@
 #include "world/EntityRenderer.hpp"
 #include "world/AttachmentRenderer.hpp"
 #include "world/ObstacleSystem.hpp"
+#include "world/PoolRenderer.hpp"
 #include "world/SkinnedMesh.hpp"
 #include "world/WallSystem.hpp"
 #include "world/SpriteCache.hpp"
@@ -94,6 +95,7 @@ private:
   render::ShadowMap                        shadowMap_;
   world::ChunkedTerrain                    terrain_;        // per-chunk terrain meshes + draw ring
   world::ObstacleSystem                    obstacles_;
+  world::PoolRenderer                      pools_;          // 3D water-pool tileset
   world::WallSystem                        walls_;
   world::WaterRenderer                     waterRenderer_;
   world::WaterUniforms                     waterUniforms_;

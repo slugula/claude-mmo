@@ -81,8 +81,10 @@ void WaterMesh::build(const shared::WorldMapFile& map, float waterOffset) {
     if (u >= v) return hSW + u * (hSE - hSW) + v * (hNE - hSE);  // SW,SE,NE
     return hSW + v * (hNW - hSW) + u * (hNE - hNW);              // SW,NE,NW
   };
-  // Tiny constant lift to avoid z-fighting with the terrain it rests on.
-  constexpr float kWaterLift = 0.015f;
+  // Water now sits inside the carved 3D pool tileset (terrain under water tiles
+  // is removed), so the surface sits SLIGHTLY BELOW the terrain rim rather than
+  // flush on top — the pool walls/floor are visible around/under it.
+  constexpr float kPoolSurfaceDrop = 0.12f;
 
   const auto& shapes = overlayShapeTriangles();
 
@@ -124,7 +126,7 @@ void WaterMesh::build(const shared::WorldMapFile& map, float waterOffset) {
       const float shore = (1.f - uu) * (1.f - vv) * sSW + uu * (1.f - vv) * sSE +
                           (1.f - uu) * vv * sNW + uu * vv * sNE;
       const float wy = terrainHeightAt(uu, vv, hSW, hSE, hNW, hNE)
-                       + kWaterLift + waterOffset;
+                       - kPoolSurfaceDrop + waterOffset;
       WaterVertex vert;
       vert.pos          = { wx, wy, wz };
       vert.uv           = { wx, wz };
