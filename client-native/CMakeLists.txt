@@ -38,6 +38,7 @@ find_path(STB_INCLUDE_DIR      stb_image.h REQUIRED)
 
 add_library(game_core STATIC
   src/app/Window.cpp
+  src/assets/AssetPack.cpp
   src/audio/AudioEngine.cpp
   src/camera/GameCamera.cpp
   src/input/Picker.cpp

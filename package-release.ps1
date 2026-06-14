@@ -54,6 +54,18 @@ Get-ChildItem $releaseDir -Filter "*.dll" | ForEach-Object {
 Copy-Item (Join-Path $releaseDir "shaders") $stagingDir -Recurse
 Copy-Item (Join-Path $releaseDir "assets")  $stagingDir -Recurse
 
+# Obfuscate the model assets into assets.pak and drop the loose models folder
+# so the shipped build has no browsable .glb files. The runtime AssetPack reader
+# serves models from assets.pak (next to the exe); everything else stays loose.
+$node       = "C:\Program Files\nodejs\node.exe"
+$modelsSrc  = Join-Path $repoRoot "client-native\assets\models"
+$pakOut     = Join-Path $stagingDir "assets.pak"
+Write-Host "  packing models -> assets.pak"
+& $node (Join-Path $repoRoot "tools\pack-assets.mjs") $modelsSrc $pakOut "assets/models"
+if ($LASTEXITCODE -ne 0) { throw "Asset packing failed." }
+$stagedModels = Join-Path $stagingDir "assets\models"
+if (Test-Path $stagedModels) { Remove-Item $stagedModels -Recurse -Force }
+
 # World map — canonical hand-crafted map (not in assets/, lives in public/maps/)
 $worldMapSrc = Join-Path $repoRoot "public\maps\worldMap.json"
 if (Test-Path $worldMapSrc) {

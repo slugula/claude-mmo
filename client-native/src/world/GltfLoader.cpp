@@ -1,5 +1,7 @@
 #include "world/GltfLoader.hpp"
 
+#include "assets/AssetPack.hpp"
+
 #define CGLTF_IMPLEMENTATION
 #include <cgltf.h>
 
@@ -230,14 +232,26 @@ std::optional<GltfModel> loadGlb(const std::filesystem::path& path) {
   cgltf_data*   data = nullptr;
   const std::string pathStr = path.string();
 
-  cgltf_result r = cgltf_parse_file(&opts, pathStr.c_str(), &data);
+  // Source bytes come from the obfuscated assets.pak when present (production),
+  // otherwise straight from the loose file (dev/editor). Both .glb (embedded
+  // bin) and our .gltf (base64 data-URI buffers) parse fully from memory — no
+  // external .bin sidecars exist, so cgltf needs no file path for buffers.
+  // `bytes` must outlive cgltf_load_buffers/accessor reads (glb bin points into
+  // it), so it stays alive until cgltf_free below.
+  std::optional<std::vector<unsigned char>> bytes = assets::loadBytes(path);
+  if (!bytes) {
+    std::fprintf(stderr, "[GltfLoader] asset not found: %s\n", pathStr.c_str());
+    return std::nullopt;
+  }
+
+  cgltf_result r = cgltf_parse(&opts, bytes->data(), bytes->size(), &data);
   if (r != cgltf_result_success) {
     std::fprintf(stderr, "[GltfLoader] parse failed for %s (code %d)\n", pathStr.c_str(), r);
     return std::nullopt;
   }
   // .glb has its binary chunk embedded — load_buffers is still required to
   // resolve buffer pointers internally.
-  r = cgltf_load_buffers(&opts, data, pathStr.c_str());
+  r = cgltf_load_buffers(&opts, data, nullptr);
   if (r != cgltf_result_success) {
     std::fprintf(stderr, "[GltfLoader] load_buffers failed for %s (code %d)\n", pathStr.c_str(), r);
     cgltf_free(data);
