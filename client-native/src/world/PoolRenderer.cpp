@@ -32,7 +32,7 @@ constexpr PoolModel kModels[] = {
 // sign is -1. Bases below match the artist's authored orientations.
 constexpr int kRotSign        = -1;
 constexpr int kBaseOneSide    = 2;   // pool_OneSide:    single WALL faces S
-constexpr int kBaseThreeSides = 2;   // pool_ThreeSides: +90deg CW vs authored open=W (artist-verified)
+constexpr int kBaseThreeSides = 0;   // pool_ThreeSides: 90deg CCW from authored open=W (artist-verified)
 constexpr int kBaseChannel    = 0;   // pool_TwoSides:   walls on the N/S axis
 constexpr int kBaseCorner     = 0;   // pool_OuterCorner: L-wall on N+E (corner ref = N)
 
