@@ -18,7 +18,7 @@ constexpr PoolModel kModels[] = {
   { "pool_oneSide",    "assets/models/pool_OneSide.glb" },     // 1 terrain side
   { "pool_threeSides", "assets/models/pool_ThreeSides.glb" },  // 3 terrain sides
   { "pool_channel",    "assets/models/pool_TwoSides.glb" },    // 2 opposite terrain (N/S)
-  { "pool_corner",     "assets/models/pool_InnerCorner.glb" }, // 2 adjacent terrain (SE)
+  { "pool_corner",     "assets/models/pool_OuterCorner.glb" }, // 2 adjacent terrain (L-wall, N+E)
 };
 
 // ---- Orientation tuning ----------------------------------------------------
@@ -32,9 +32,9 @@ constexpr PoolModel kModels[] = {
 // sign is -1. Bases below match the artist's authored orientations.
 constexpr int kRotSign        = -1;
 constexpr int kBaseOneSide    = 2;   // pool_OneSide:    single WALL faces S
-constexpr int kBaseThreeSides = 3;   // pool_ThreeSides: single OPEN (water) side faces W
+constexpr int kBaseThreeSides = 2;   // pool_ThreeSides: +90deg CW vs authored open=W (artist-verified)
 constexpr int kBaseChannel    = 0;   // pool_TwoSides:   walls on the N/S axis
-constexpr int kBaseCorner     = 1;   // pool_InnerCorner: walls on S+E (corner ref = E)
+constexpr int kBaseCorner     = 0;   // pool_OuterCorner: L-wall on N+E (corner ref = N)
 
 inline int rotFor(int dir, int base) { return (kRotSign * (dir - base)) & 3; }
 
