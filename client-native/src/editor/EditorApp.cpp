@@ -490,7 +490,13 @@ bool EditorApp::init() {
   walls_.setModelResolver([](const std::string& rel) {
     return resolveFromExe(rel.c_str());
   });
-  pools_.setModelResolver([](const std::string& rel) {
+  pools_.setModelResolver([](const std::string& rel) -> std::filesystem::path {
+    // Prefer the repo SOURCE asset (client-native/assets/...) over the exe-copied
+    // one so pool model edits hot-reload without a rebuild. Exe lives at
+    // client-native/build/Release; "../../<rel>" reaches the source tree.
+    std::error_code ec;
+    auto src = std::filesystem::weakly_canonical(resolveFromExe(("../../" + rel).c_str()), ec);
+    if (!ec && std::filesystem::exists(src)) return src;
     return resolveFromExe(rel.c_str());
   });
   entities_.initGL();
@@ -557,6 +563,9 @@ int EditorApp::run() {
     const auto now = std::chrono::steady_clock::now();
     const float dt = std::chrono::duration<float>(now - lastFrameTime_).count();
     lastFrameTime_ = now;
+
+    // Hot-reload pool .glb edits (throttled inside); rebuild instances on change.
+    if (pools_.pollReloadIfChanged()) pools_.rebuildFromMap(map_);
 
     renderFrame(dt);
     window_.swapBuffers();

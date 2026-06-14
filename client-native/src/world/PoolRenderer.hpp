@@ -11,6 +11,7 @@
 #include "shared/SharedTypes.hpp"
 #include "world/ModelLibrary.hpp"
 
+#include <chrono>
 #include <filesystem>
 #include <functional>
 #include <string>
@@ -31,11 +32,21 @@ public:
   void render(render::Shader& obstacleShader);   // static instanced draw
   void renderDepth(render::Shader& depthShader);  // shadow depth pass
 
+  // Hot-reload: throttled (~2/sec) check of the pool .glb files' modification
+  // times; if any changed on disk, reload all models and return true (so the
+  // caller can rebuild instances). Used by the editor for live model edits.
+  bool pollReloadIfChanged();
+
   bool empty() const { return instances_.empty(); }
 
 private:
+  void reloadModels();   // clear + re-ensure all six from disk
+
   ModelLibrary models_;
   bool         modelsInited_ = false;
+  std::function<std::filesystem::path(const std::string&)> resolver_;
+  std::unordered_map<std::string, std::filesystem::file_time_type> mtimes_;
+  std::chrono::steady_clock::time_point lastPoll_{};
   std::unordered_map<std::string, std::vector<ModelLibrary::Instance>> instances_;
 };
 

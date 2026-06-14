@@ -65,12 +65,41 @@ Pick pickPool(bool tN, bool tE, bool tS, bool tW) {
 
 }  // namespace
 
+void PoolRenderer::reloadModels() {
+  models_.clearEntries();
+  for (const auto& m : kModels) {
+    models_.ensure(m.id, m.path, 1, 1);
+    std::error_code ec;
+    const auto t = std::filesystem::last_write_time(resolver_(m.path), ec);
+    if (!ec) mtimes_[m.id] = t;
+  }
+}
+
 void PoolRenderer::setModelResolver(
     std::function<std::filesystem::path(const std::string&)> r) {
   if (modelsInited_) return;
+  resolver_ = r;
   models_.init(r, "assets/models/_placeholder_object.gltf");
-  for (const auto& m : kModels) models_.ensure(m.id, m.path, 1, 1);
+  reloadModels();
   modelsInited_ = true;
+}
+
+bool PoolRenderer::pollReloadIfChanged() {
+  if (!modelsInited_ || !resolver_) return false;
+  const auto now = std::chrono::steady_clock::now();
+  if (now - lastPoll_ < std::chrono::milliseconds(500)) return false;
+  lastPoll_ = now;
+
+  bool changed = false;
+  for (const auto& m : kModels) {
+    std::error_code ec;
+    const auto t = std::filesystem::last_write_time(resolver_(m.path), ec);
+    if (ec) continue;
+    const auto it = mtimes_.find(m.id);
+    if (it == mtimes_.end() || it->second != t) changed = true;
+  }
+  if (changed) reloadModels();
+  return changed;
 }
 
 void PoolRenderer::rebuildFromMap(const shared::WorldMapFile& map) {
