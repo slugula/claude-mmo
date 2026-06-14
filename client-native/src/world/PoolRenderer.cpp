@@ -19,6 +19,7 @@ constexpr PoolModel kModels[] = {
   { "pool_threeSides", "assets/models/pool_ThreeSides.glb" },  // 3 terrain sides
   { "pool_channel",    "assets/models/pool_TwoSides.glb" },    // 2 opposite terrain (N/S)
   { "pool_corner",     "assets/models/pool_OuterCorner.glb" }, // 2 adjacent terrain (L-wall, N+E)
+  { "pool_inner",      "assets/models/pool_InnerCorner.glb" }, // diagonal concave-corner pillar (SE)
 };
 
 // ---- Orientation tuning ----------------------------------------------------
@@ -35,8 +36,26 @@ constexpr int kBaseOneSide    = 2;   // pool_OneSide:    single WALL faces S
 constexpr int kBaseThreeSides = 0;   // pool_ThreeSides: 90deg CCW from authored open=W (artist-verified)
 constexpr int kBaseChannel    = 0;   // pool_TwoSides:   walls on the N/S axis
 constexpr int kBaseCorner     = 0;   // pool_OuterCorner: L-wall on N+E (corner ref = N)
+// Diagonal index for inner-corner pillars: 0=NE, 1=SE, 2=SW, 3=NW (same CW
+// sense as the cardinals). pool_InnerCorner fills the SE corner at q0.
+constexpr int kBaseInnerDiag  = 1;
 
 inline int rotFor(int dir, int base) { return (kRotSign * (dir - base)) & 3; }
+
+// Parse "#rrggbb" → linear-ish RGB [0,1]; falls back to mid-grey.
+glm::vec3 hexRgb(const std::string& s) {
+  if (s.size() < 7 || s[0] != '#') return glm::vec3(0.5f);
+  auto nib = [](char c) -> int {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return 0;
+  };
+  return glm::vec3(
+      (nib(s[1]) * 16 + nib(s[2])) / 255.0f,
+      (nib(s[3]) * 16 + nib(s[4])) / 255.0f,
+      (nib(s[5]) * 16 + nib(s[6])) / 255.0f);
+}
 
 struct Pick { const char* id; int rot; };
 
@@ -124,6 +143,33 @@ void PoolRenderer::rebuildFromMap(const shared::WorldMapFile& map) {
     return vhok ? vh[static_cast<std::size_t>(vr) * (W + 1) + vc] * shared::kMaxTerrainH : 0.0f;
   };
 
+  // Average groundColor of the (up to 8) surrounding NON-water tiles, so the
+  // pool blends with the terrain it's carved into instead of reading as grey.
+  auto surroundColor = [&](int tx, int ty) -> glm::vec3 {
+    glm::vec3 sum(0.0f);
+    int n = 0;
+    for (int dy = -1; dy <= 1; ++dy)
+      for (int dx = -1; dx <= 1; ++dx) {
+        if (dx == 0 && dy == 0) continue;
+        const int nx = tx + dx, ny = ty + dy;
+        if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
+        if (water[ny][nx]) continue;
+        sum += hexRgb(map.tiles[ny][nx].groundColor);
+        ++n;
+      }
+    if (n > 0) return sum / static_cast<float>(n);
+    return hexRgb(map.tiles[ty][tx].groundColor);  // surrounded by water → own tile
+  };
+
+  // Diagonal (dx,dy) + its two flanking cardinals, for concave inner corners.
+  struct Diag { int dx, dy, fx0, fy0, fx1, fy1; };
+  const Diag diags[4] = {
+    {  1, -1,  0, -1,  1,  0 },   // NE  (flanks N, E)
+    {  1,  1,  1,  0,  0,  1 },   // SE  (flanks E, S)
+    { -1,  1,  0,  1, -1,  0 },   // SW  (flanks S, W)
+    { -1, -1, -1,  0,  0, -1 },   // NW  (flanks W, N)
+  };
+
   for (int ty = 0; ty < H; ++ty) {
     for (int tx = 0; tx < W; ++tx) {
       if (!water[ty][tx]) continue;
@@ -144,10 +190,27 @@ void PoolRenderer::rebuildFromMap(const shared::WorldMapFile& map) {
       const float dhdx = ((hSE + hNE) - (hSW + hNW)) * 0.5f;
       const float dhdz = ((hNW + hNE) - (hSW + hSE)) * 0.5f;
       const glm::vec3 n = glm::normalize(glm::vec3(-dhdx, 1.0f, -dhdz));
+      const glm::vec3 c = surroundColor(tx, ty);
 
-      const float rotY = static_cast<float>(p.rot & 3) * 1.57079632679f;
-      instances_[p.id].push_back(ModelLibrary::Instance{
-          static_cast<float>(tx), cy, static_cast<float>(ty), rotY, n.x, n.y, n.z });
+      auto add = [&](const char* id, int rotQuarter) {
+        const float rotY = static_cast<float>(rotQuarter & 3) * 1.57079632679f;
+        instances_[id].push_back(ModelLibrary::Instance{
+            static_cast<float>(tx), cy, static_cast<float>(ty), rotY,
+            n.x, n.y, n.z, c.r, c.g, c.b });
+      };
+
+      add(p.id, p.rot);
+
+      // Concave inner corners: a diagonal neighbour is terrain while BOTH of its
+      // flanking cardinals are water — drop an inner pillar to fill the nook.
+      for (int d = 0; d < 4; ++d) {
+        const Diag& dg = diags[d];
+        const bool diagTerrain = !isWater(tx + dg.dx, ty + dg.dy);
+        const bool flank0Water = isWater(tx + dg.fx0, ty + dg.fy0);
+        const bool flank1Water = isWater(tx + dg.fx1, ty + dg.fy1);
+        if (diagTerrain && flank0Water && flank1Water)
+          add("pool_inner", rotFor(d, kBaseInnerDiag));
+      }
     }
   }
 }

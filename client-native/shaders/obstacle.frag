@@ -6,6 +6,7 @@ in  vec3  v_normal;
 in  vec4  v_shadowPos;
 in  float vLinearDepth;
 in  vec4  v_color;        // per-vertex RGBA (white when model has none)
+in  vec3  v_tint;         // per-instance tint (white = no tint)
 out vec4  fragColor;
 
 uniform vec3      u_color;            // base RGB color for this obstacle type
@@ -113,8 +114,9 @@ void main() {
     vec3  N      = normalize(v_normal);
     float nDotL  = max(dot(N, -normalize(u_lightDir)), 0.0);
     float lit    = clamp(u_ambient + u_diffuse * nDotL, 0.0, 1.0);
-    // glTF convention: vertex colour modulates the material/base colour.
-    vec3  base   = u_color * v_color.rgb;
+    // glTF convention: vertex colour modulates the material/base colour; the
+    // per-instance tint (white for most models) recolours the pool tileset.
+    vec3  base   = u_color * v_color.rgb * v_tint;
     vec3  rgb    = mix(base, base * lit, u_lightingEnabled);
 
     float shadow    = sampleShadow(v_shadowPos, N);

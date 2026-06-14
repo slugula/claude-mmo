@@ -148,6 +148,10 @@ void ModelLibrary::uploadKit(Kit& k, const std::vector<float>& pos,
   glEnableVertexArrayAttrib  (k.vao, 5);
   glVertexArrayAttribFormat  (k.vao, 5, 3, GL_FLOAT, GL_FALSE, offsetof(Instance, nx));
   glVertexArrayAttribBinding (k.vao, 5, 2);
+  // location 6 = per-instance RGB tint (binding 2 = shared scratch VBO)
+  glEnableVertexArrayAttrib  (k.vao, 6);
+  glVertexArrayAttribFormat  (k.vao, 6, 3, GL_FLOAT, GL_FALSE, offsetof(Instance, r));
+  glVertexArrayAttribBinding (k.vao, 6, 2);
 
   glVertexArrayElementBuffer(k.vao, k.ebo);
 }

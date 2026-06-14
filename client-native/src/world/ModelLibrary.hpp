@@ -41,6 +41,10 @@ public:
   struct Instance {
     float x, y, z, rotY;
     float nx = 0.0f, ny = 1.0f, nz = 0.0f;
+    // Per-instance RGB tint, multiplied with the model colour. Defaults to white
+    // so existing brace-inits (trees/rocks/NPCs/items) are unchanged; the pool
+    // tileset sets it to the surrounding terrain colour.
+    float r = 1.0f, g = 1.0f, b = 1.0f;
   };
 
   ModelLibrary() = default;
