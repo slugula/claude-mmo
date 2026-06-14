@@ -94,12 +94,27 @@ export async function loadEntitiesFromDB(): Promise<void> {
     } catch {
       console.warn('[EntityLoader] skill_definitions not found — run schema.sql to enable skill icons');
     }
+    // Strip null-valued columns from every def row before relaying them to the
+    // client. The native client parses these with glaze into structs whose
+    // string/number fields are non-nullable; a JSON `null` (from a nullable DB
+    // column like action_id or required_level) fails the parse for the WHOLE
+    // init message, so shared-build clients silently get no item/object/npc
+    // defs and render an empty world. Dropping null keys lets glaze fall back
+    // to each field's default (kPermissive tolerates missing keys). The
+    // localhost EntityRouter path already avoids nulls, which is why dev builds
+    // were unaffected.
+    const stripNulls = (rows: Record<string, unknown>[]): Record<string, unknown>[] =>
+      rows.map(row => {
+        const out: Record<string, unknown> = {};
+        for (const [k, v] of Object.entries(row)) if (v !== null) out[k] = v;
+        return out;
+      });
     clientDefs = {
-      items:   itemRows.rows,
-      objects: objectRows.rows,
-      npcs:    npcRows.rows,
-      actions: actionRows.rows,
-      skills:  skillRows.rows,
+      items:   stripNulls(itemRows.rows),
+      objects: stripNulls(objectRows.rows),
+      npcs:    stripNulls(npcRows.rows),
+      actions: stripNulls(actionRows.rows),
+      skills:  stripNulls(skillRows.rows),
     };
     if (itemRows.rows.length > 0) {
       reloadItems(itemRows.rows.map(rowToItemDef));
