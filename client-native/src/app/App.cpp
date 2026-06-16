@@ -908,6 +908,10 @@ void App::renderFrame() {
     };
   }
   camera_.update(dt, window_.handle(), followTarget);
+  // Center the shadow frustum on what the camera is looking at, so the
+  // (finite) shadow map covers the visible area rather than a fixed map point.
+  // Used by both the depth pass and the player's shadow lookup so they match.
+  shadowCenter_ = followTarget;
 
   const int   fbW    = window_.framebufferWidth();
   const int   fbH    = window_.framebufferHeight();
@@ -1153,9 +1157,8 @@ void App::renderFrame() {
   // entirely when shadows are toggled off; the receiver shaders also clamp
   // to "fully lit" via u_shadowsEnabled so the sampler binding still needs
   // to point at a valid texture.
-  const glm::vec3 mapCenter = followTargetForMap(terrainTileW_, terrainTileH_);
   const glm::mat4 lightVP   = render::ShadowMap::lightViewProj(
-      sunDir, mapCenter, shadowHalfExtent_);
+      sunDir, shadowCenter_, shadowHalfExtent_);
   if (shadowsEnabled_) {
     shadowMap_.beginPass();
 
@@ -2475,13 +2478,13 @@ void App::renderFrame() {
         ImGui::Checkbox("Enable shadows", &shadowsEnabled_);
         ImGui::BeginDisabled(!shadowsEnabled_);
         ImGui::SetNextItemWidth(-110.0f); ImGui::SliderFloat("Darkness##sh",    &shadowDarkness_,   0.0f,    1.0f,  "%.2f");
-        ImGui::SetNextItemWidth(-110.0f); ImGui::SliderFloat("Bias##sh",        &shadowBias_,       0.0001f, 0.02f, "%.4f");
+        ImGui::SetNextItemWidth(-110.0f); ImGui::SliderFloat("Bias##sh",        &shadowBias_,       0.0f,    0.004f, "%.4f");
         ImGui::SetNextItemWidth(-110.0f); ImGui::SliderFloat("Softness##sh",    &shadowSoftness_,   0.0f,    12.0f, "%.1f");
         ImGui::SetNextItemWidth(-110.0f); ImGui::SliderFloat("Half-extent##sh", &shadowHalfExtent_, 10.0f,   80.0f, "%.0f");
         ImGui::EndDisabled();
         if (ImGui::Button("Reset Lighting Defaults")) {
           sunYawDeg_ = 200.0f; sunPitchDeg_ = 58.0f; ambient_ = 0.45f; diffuse_ = 0.55f;
-          shadowDarkness_ = 0.55f; shadowBias_ = 0.0025f; shadowHalfExtent_ = 40.0f;
+          shadowDarkness_ = 0.55f; shadowBias_ = 0.0008f; shadowHalfExtent_ = 40.0f;
           shadowSoftness_ = 3.0f;
         }
         break;
@@ -2893,7 +2896,7 @@ void App::renderPlayer(const glm::mat4& viewProj, float dt) {
 
   const glm::vec3 sunDir = sunDirectionFromYawPitch(sunYawDeg_, sunPitchDeg_);
   const glm::mat4 localLightVP = render::ShadowMap::lightViewProj(
-      sunDir, followTargetForMap(terrainTileW_, terrainTileH_), shadowHalfExtent_);
+      sunDir, shadowCenter_, shadowHalfExtent_);
   skinnedShader_.use();
   skinnedShader_.setMat4 ("u_viewProj",        viewProj);
   skinnedShader_.setMat4 ("u_lightViewProj",   localLightVP);

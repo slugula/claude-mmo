@@ -32,7 +32,7 @@ struct AppSettings {
   // Shadows
   bool      shadowsEnabled  = true;
   float     shadowDarkness  = 0.55f;
-  float     shadowBias      = 0.0025f;
+  float     shadowBias      = 0.0008f;
   float     shadowHalfExtent = 40.0f;
   float     shadowSoftness  = 3.0f;   // PCSS max penumbra radius (texels)
   // Palette

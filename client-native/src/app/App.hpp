@@ -325,9 +325,10 @@ private:
   // Phase 6b — shadow map.
   bool                                     shadowsEnabled_  = true;
   float                                    shadowDarkness_  = 0.55f;
-  float                                    shadowBias_      = 0.0025f;
+  float                                    shadowBias_      = 0.0008f;
   float                                    shadowHalfExtent_ = 40.0f;
   float                                    shadowSoftness_  = 3.0f;   // PCSS penumbra (texels)
+  glm::vec3                                shadowCenter_{};           // shadow frustum focus (follows camera target)
   bool                                     imguiInited_     = false;
 
   // Debug UI layer toggles — visible in the Debug panel.

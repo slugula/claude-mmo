@@ -59,8 +59,11 @@ float sampleShadowSoft(vec4 shadowPos, vec3 N) {
     if (proj.z > 1.0 || proj.z < 0.0) return 0.0;
     if (proj.x < 0.0 || proj.x > 1.0 || proj.y < 0.0 || proj.y > 1.0) return 0.0;
 
+    // The shadow pass renders back faces (front-face culled), which already
+    // suppresses most acne — so the slope term is small and u_shadowBias can
+    // stay tiny, avoiding the "peter-panning" detachment of bigger biases.
     float cosTheta = max(dot(N, -normalize(u_lightDir)), 0.0);
-    float bias     = u_shadowBias + 0.003 * (1.0 - cosTheta);
+    float bias     = u_shadowBias + 0.0008 * (1.0 - cosTheta);
     float receiver = proj.z - bias;
     vec2  texel    = 1.0 / vec2(textureSize(u_shadowMap, 0));
 
