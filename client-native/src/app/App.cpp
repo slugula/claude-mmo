@@ -1167,6 +1167,7 @@ void App::renderFrame() {
     shadowInstancedShader_.setMat4("u_lightViewProj", lightVP);
     obstacles_.renderDepth(shadowInstancedShader_);
     pools_.renderDepth(shadowInstancedShader_);
+    walls_.renderDepth(shadowInstancedShader_);
     entities_.renderDepth(shadowInstancedShader_);
 
     // Local player + remote players (skinned meshes)

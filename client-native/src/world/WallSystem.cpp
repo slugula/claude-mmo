@@ -187,6 +187,16 @@ void WallSystem::render(render::Shader& obstacleShader) {
     if (!v.empty()) meshes_.drawStaticInstanced(obstacleShader, id, v);
 }
 
+void WallSystem::renderDepth(render::Shader& depthShader) {
+  // Same draws as render(); the depth shader ignores colour and only writes
+  // depth, so walls/pillars become shadow casters.
+  drawKit(depthShader, cardinal_);
+  drawKit(depthShader, diagonal_);
+  drawKit(depthShader, pillar_);
+  for (auto& [id, v] : meshInsts_)
+    if (!v.empty()) meshes_.drawStaticInstanced(depthShader, id, v);
+}
+
 void WallSystem::renderGhostAt(render::Shader& obstacleShader,
                                const shared::WorldMapFile& map,
                                int tileX, int tileY, int orient, bool pillar,

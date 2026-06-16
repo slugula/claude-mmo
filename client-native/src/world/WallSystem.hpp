@@ -45,6 +45,10 @@ public:
   // uniforms; this sets u_color per kit).
   void render(render::Shader& obstacleShader);
 
+  // Depth-only draw for the shadow pass: same instances, depth shader. Lets
+  // walls/pillars cast shadows (and occlude other casters' shadows).
+  void renderDepth(render::Shader& depthShader);
+
   // Editor placement preview: draw one wall/pillar at a tile with the given
   // orientation (caller wraps it in translucent blend state).
   void renderGhostAt(render::Shader& obstacleShader, const shared::WorldMapFile& map,
