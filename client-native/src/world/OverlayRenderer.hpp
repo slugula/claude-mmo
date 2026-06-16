@@ -26,6 +26,7 @@ struct OverlayLighting {
   float     shadowsEnabled  = 0.f;
   float     shadowDarkness   = 0.5f;
   float     shadowBias       = 0.0015f;
+  float     shadowSoftness   = 3.0f;   // PCSS max penumbra radius (texels)
   float     fogEnabled       = 0.f;
   float     fogDensity       = 0.015f;
   float     fogStart         = 0.f;

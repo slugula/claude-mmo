@@ -34,6 +34,7 @@ struct AppSettings {
   float     shadowDarkness  = 0.55f;
   float     shadowBias      = 0.0025f;
   float     shadowHalfExtent = 40.0f;
+  float     shadowSoftness  = 3.0f;   // PCSS max penumbra radius (texels)
   // Palette
   bool      palette     = true;
   int       paletteHues = 64;
@@ -98,8 +99,8 @@ inline bool saveSettings(const AppSettings& s, const std::filesystem::path& path
   std::fprintf(f, "aoEnabled=%d\naoStrength=%f\n", B(s.aoEnabled), s.aoStrength);
   std::fprintf(f, "lightingEnabled=%d\nsunYawDeg=%f\nsunPitchDeg=%f\nambient=%f\ndiffuse=%f\n",
                B(s.lightingEnabled), s.sunYawDeg, s.sunPitchDeg, s.ambient, s.diffuse);
-  std::fprintf(f, "shadowsEnabled=%d\nshadowDarkness=%f\nshadowBias=%f\nshadowHalfExtent=%f\n",
-               B(s.shadowsEnabled), s.shadowDarkness, s.shadowBias, s.shadowHalfExtent);
+  std::fprintf(f, "shadowsEnabled=%d\nshadowDarkness=%f\nshadowBias=%f\nshadowHalfExtent=%f\nshadowSoftness=%f\n",
+               B(s.shadowsEnabled), s.shadowDarkness, s.shadowBias, s.shadowHalfExtent, s.shadowSoftness);
   std::fprintf(f, "palette=%d\npaletteHues=%d\npaletteSats=%d\npaletteLums=%d\n",
                B(s.palette), s.paletteHues, s.paletteSats, s.paletteLums);
   std::fprintf(f, "outlineRadius=%f\noutlineDepthBias=%f\n", s.outlineRadius, s.outlineDepthBias);
@@ -160,6 +161,7 @@ inline bool loadSettings(AppSettings& s, const std::filesystem::path& path) {
         fF("sunPitchDeg", s.sunPitchDeg) || fF("ambient", s.ambient) || fF("diffuse", s.diffuse) ||
         fB("shadowsEnabled", s.shadowsEnabled) || fF("shadowDarkness", s.shadowDarkness) ||
         fF("shadowBias", s.shadowBias) || fF("shadowHalfExtent", s.shadowHalfExtent) ||
+        fF("shadowSoftness", s.shadowSoftness) ||
         fB("palette", s.palette) || fI("paletteHues", s.paletteHues) ||
         fI("paletteSats", s.paletteSats) || fI("paletteLums", s.paletteLums) ||
         fF("outlineRadius", s.outlineRadius) || fF("outlineDepthBias", s.outlineDepthBias) ||

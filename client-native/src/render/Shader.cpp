@@ -21,6 +21,36 @@ std::string readFile(const std::filesystem::path& p) {
   return buf.str();
 }
 
+// Minimal GLSL #include support: any line of the form  #include "rel/path.glsl"
+// is replaced by the (recursively resolved) contents of that file, looked up
+// relative to the including file's directory. Lets all surface shaders share a
+// single lighting/shadow implementation (shaders/lib/*.glsl). Guarded against
+// runaway recursion; #version must stay in the top-level shader, not an include.
+std::string resolveIncludes(const std::filesystem::path& path, int depth) {
+  if (depth > 16) {
+    std::fprintf(stderr, "[Shader] include recursion too deep at %s\n",
+                 path.string().c_str());
+    return {};
+  }
+  const std::string src = readFile(path);
+  std::stringstream in(src), out;
+  std::string line;
+  while (std::getline(in, line)) {
+    const auto hpos = line.find("#include");
+    const auto q0   = line.find('"');
+    if (hpos != std::string::npos && q0 != std::string::npos && q0 > hpos) {
+      const auto q1 = line.find('"', q0 + 1);
+      if (q1 != std::string::npos) {
+        const std::string rel = line.substr(q0 + 1, q1 - q0 - 1);
+        out << resolveIncludes(path.parent_path() / rel, depth + 1) << '\n';
+        continue;
+      }
+    }
+    out << line << '\n';
+  }
+  return out.str();
+}
+
 GLuint compileStage(GLenum stage, const std::string& src, const char* name) {
   GLuint sh = glCreateShader(stage);
   const char* csrc = src.c_str();
@@ -67,8 +97,8 @@ void Shader::destroy() {
 bool Shader::fromFiles(const std::filesystem::path& vert, const std::filesystem::path& frag) {
   destroy();
 
-  const std::string vsrc = readFile(vert);
-  const std::string fsrc = readFile(frag);
+  const std::string vsrc = resolveIncludes(vert, 0);
+  const std::string fsrc = resolveIncludes(frag, 0);
   if (vsrc.empty() || fsrc.empty()) return false;
 
   GLuint vs = compileStage(GL_VERTEX_SHADER,   vsrc, vert.filename().string().c_str());

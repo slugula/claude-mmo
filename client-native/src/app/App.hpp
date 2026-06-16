@@ -327,6 +327,7 @@ private:
   float                                    shadowDarkness_  = 0.55f;
   float                                    shadowBias_      = 0.0025f;
   float                                    shadowHalfExtent_ = 40.0f;
+  float                                    shadowSoftness_  = 3.0f;   // PCSS penumbra (texels)
   bool                                     imguiInited_     = false;
 
   // Debug UI layer toggles — visible in the Debug panel.

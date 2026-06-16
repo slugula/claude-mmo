@@ -21,20 +21,16 @@ out vec4  fragColor;
 
 uniform vec3      u_paletteLevels;    // (hue_levels, sat_levels, lum_levels)
 uniform float     u_paletteEnabled;   // 0 = bypass quantize, 1 = quantize
-uniform vec3      u_lightDir;         // sun direction (from sun toward surface)
-uniform float     u_ambient;          // 0..1, base brightness with no direct light
-uniform float     u_diffuse;          // 0..1, contribution of N . -L
-uniform float     u_lightingEnabled;  // 0 = unlit, 1 = lit
-uniform sampler2D u_shadowMap;
-uniform float     u_shadowsEnabled;   // 0 = ignore shadowmap, 1 = sample
-uniform float     u_shadowDarkness;   // 0..1, how dark a fully-shadowed pixel gets (1 = full ambient only)
-uniform float     u_shadowBias;       // depth bias to suppress acne (e.g. 0.0015)
 uniform float     u_fogEnabled;       // 0 = off, 1 = on
 uniform vec3      u_fogColor;
 uniform float     u_fogDensity;       // e.g. 0.015
 uniform float     u_fogStart;         // world-units from camera before fog kicks in
 uniform float     u_aoEnabled;        // 0 = off, 1 = on
 uniform float     u_aoStrength;       // 0..1, default 0.5
+
+// Shared sun + soft-shadow model (u_lightDir/u_ambient/u_diffuse/u_lighting*,
+// u_shadow*, directionalLight(), shadowMultiplier()).
+#include "lib/surface_lighting.glsl"
 
 // ---- HSL <-> RGB --------------------------------------------------------
 
@@ -74,51 +70,6 @@ vec3 hsl2rgb(vec3 hsl) {
     );
 }
 
-// ---- Shadow — rotated Poisson disk PCF + slope-scale bias ---------------
-//
-// 16 Poisson disk samples rotated per-fragment to break up banding.
-// Slope-scale bias: surfaces at grazing angles to the light get larger
-// bias automatically, eliminating acne without over-biasing flat faces.
-// u_shadowBias remains the tunable base offset from the settings panel.
-//
-// Returns 1.0 = fully shadowed, 0.0 = fully lit.
-
-const vec2 kPoissonDisk[16] = vec2[](
-    vec2(-0.94201624, -0.39906216), vec2( 0.94558609, -0.76890725),
-    vec2(-0.09418410, -0.92938870), vec2( 0.34495938,  0.29387760),
-    vec2(-0.91588581,  0.45771432), vec2(-0.81544232, -0.87912464),
-    vec2(-0.38277543,  0.27676845), vec2( 0.97484398,  0.75648379),
-    vec2( 0.44323325, -0.97511554), vec2( 0.53742981, -0.47373420),
-    vec2(-0.26496911, -0.41893023), vec2( 0.79197514,  0.19090188),
-    vec2(-0.24188840,  0.99706507), vec2(-0.81409955,  0.91437590),
-    vec2( 0.19984126,  0.78641367), vec2( 0.14383161, -0.14100790)
-);
-
-float sampleShadow(vec4 shadowPos, vec3 N) {
-    vec3 proj = shadowPos.xyz / shadowPos.w;
-    proj = proj * 0.5 + 0.5;
-    if (proj.z > 1.0 || proj.z < 0.0) return 0.0;
-    if (proj.x < 0.0 || proj.x > 1.0 || proj.y < 0.0 || proj.y > 1.0) return 0.0;
-
-    // Slope-scale bias: add extra bias on surfaces the light grazes
-    float cosTheta = max(dot(N, -normalize(u_lightDir)), 0.0);
-    float bias     = u_shadowBias + 0.003 * (1.0 - cosTheta);
-    float current  = proj.z - bias;
-    vec2  texel    = 1.0 / vec2(textureSize(u_shadowMap, 0));
-
-    // Per-fragment random rotation breaks up the disk pattern into noise
-    float angle = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453) * 6.28318;
-    float ca = cos(angle), sa = sin(angle);
-    mat2  rot = mat2(ca, -sa, sa, ca);
-
-    float occluded = 0.0;
-    for (int i = 0; i < 16; i++) {
-        vec2 offset = rot * kPoissonDisk[i] * texel * 2.0;
-        occluded += (current > texture(u_shadowMap, proj.xy + offset).r) ? 1.0 : 0.0;
-    }
-    return occluded / 16.0;
-}
-
 // ---- Main ---------------------------------------------------------------
 
 void main() {
@@ -132,16 +83,11 @@ void main() {
     // Phase 6 — Lambert directional lighting. u_lightDir points from the sun
     // toward the world, so the surface-incident vector is -u_lightDir.
     vec3  N     = normalize(v_normal);
-    float nDotL = max(dot(N, -normalize(u_lightDir)), 0.0);
-    float lit   = clamp(u_ambient + u_diffuse * nDotL, 0.0, 1.0);
-    vec3  litRgb = rgb * lit;
-    rgb = mix(rgb, litRgb, u_lightingEnabled);
+    float lit   = directionalLight(N);
+    rgb = mix(rgb, rgb * lit, u_lightingEnabled);
 
-    // Phase 6b — directional shadow map. Multiply the lit color by a
-    // (1 - shadow * darkness) factor; bypassed when shadows are off.
-    float shadow = sampleShadow(v_shadowPos, N);
-    float shadowMul = 1.0 - u_shadowDarkness * shadow * u_shadowsEnabled;
-    rgb *= shadowMul;
+    // Soft (PCSS) directional shadow — shared with every other surface shader.
+    rgb *= shadowMultiplier(v_shadowPos, N);
 
     // Snap-then-restore via HSL gives banded but hue-stable colors.
     vec3 hsl       = rgb2hsl(rgb);

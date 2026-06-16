@@ -218,6 +218,7 @@ void OverlayRenderer::render(const OverlayLighting& L) {
   shader_.setFloat("u_shadowsEnabled", L.shadowsEnabled);
   shader_.setFloat("u_shadowDarkness", L.shadowDarkness);
   shader_.setFloat("u_shadowBias",     L.shadowBias);
+  shader_.setFloat("u_shadowSoftness", L.shadowSoftness);
   shader_.setFloat("u_fogEnabled",     L.fogEnabled);
   shader_.setVec3 ("u_fogColor",       L.fogColor);
   shader_.setFloat("u_fogDensity",     L.fogDensity);

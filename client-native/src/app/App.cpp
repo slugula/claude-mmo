@@ -97,7 +97,7 @@ constexpr const char* kWaterVertPath     = "shaders/water.vert";
 constexpr const char* kWaterFragPath     = "shaders/water.frag";
 constexpr const char* kWaterNormalPath   = "assets/water_normal.png";
 constexpr const char* kWorldMapPath      = "worldMap.json";
-constexpr int         kShadowMapSize     = 2048;
+constexpr int         kShadowMapSize     = 4096;   // higher res for softer PCSS filtering
 
 constexpr glm::vec3 kPlayerColor       { 0.62f, 0.45f, 0.30f};  // skin tone, modulated by Lambert
 constexpr float     kPlayerScale       = 1.0f;
@@ -676,6 +676,7 @@ bool App::init() {
       shadowDarkness_  = s.shadowDarkness;
       shadowBias_      = s.shadowBias;
       shadowHalfExtent_= s.shadowHalfExtent;
+      shadowSoftness_  = s.shadowSoftness;
       palette_     = s.palette;
       paletteHues_ = s.paletteHues;
       paletteSats_ = s.paletteSats;
@@ -1240,6 +1241,7 @@ void App::renderFrame() {
   terrainShader_.setFloat("u_shadowsEnabled",  shadowsEnabled_ ? 1.0f : 0.0f);
   terrainShader_.setFloat("u_shadowDarkness",  shadowDarkness_);
   terrainShader_.setFloat("u_shadowBias",      shadowBias_);
+  terrainShader_.setFloat("u_shadowSoftness",  shadowSoftness_);
   terrainShader_.setMat4 ("u_viewProj", viewProj);
   terrainShader_.setVec3 ("u_paletteLevels",
                           glm::vec3(static_cast<float>(paletteHues_),
@@ -1284,6 +1286,7 @@ void App::renderFrame() {
     ol.shadowsEnabled  = shadowsEnabled_  ? 1.0f : 0.0f;
     ol.shadowDarkness  = shadowDarkness_;
     ol.shadowBias      = shadowBias_;
+    ol.shadowSoftness  = shadowSoftness_;
     ol.fogEnabled      = fogEnabled_ ? 1.0f : 0.0f;
     ol.fogColor        = fogColor_;
     ol.fogDensity      = fogDensity_;
@@ -1324,6 +1327,7 @@ void App::renderFrame() {
   obstacleShader_.setFloat("u_shadowsEnabled",  shadowsEnabled_ ? 1.0f : 0.0f);
   obstacleShader_.setFloat("u_shadowDarkness",  shadowDarkness_);
   obstacleShader_.setFloat("u_shadowBias",      shadowBias_);
+  obstacleShader_.setFloat("u_shadowSoftness",  shadowSoftness_);
   obstacleShader_.setFloat("u_fogEnabled", fogEnabled_  ? 1.0f : 0.0f);
   obstacleShader_.setVec3 ("u_fogColor",   fogColor_);
   obstacleShader_.setFloat("u_fogDensity", fogDensity_);
@@ -1438,6 +1442,7 @@ void App::renderFrame() {
     skinnedShader_.setFloat("u_shadowsEnabled",  shadowsEnabled_ ? 1.0f : 0.0f);
     skinnedShader_.setFloat("u_shadowDarkness",  shadowDarkness_);
     skinnedShader_.setFloat("u_shadowBias",      shadowBias_);
+    skinnedShader_.setFloat("u_shadowSoftness",  shadowSoftness_);
     skinnedShader_.setFloat("u_fogEnabled",  fogEnabled_  ? 1.0f : 0.0f);
     skinnedShader_.setVec3 ("u_fogColor",    fogColor_);
     skinnedShader_.setFloat("u_fogDensity",  fogDensity_);
@@ -1552,6 +1557,7 @@ void App::renderFrame() {
     skinnedShader_.setFloat("u_shadowsEnabled",  shadowsEnabled_ ? 1.0f : 0.0f);
     skinnedShader_.setFloat("u_shadowDarkness",  shadowDarkness_);
     skinnedShader_.setFloat("u_shadowBias",      shadowBias_);
+    skinnedShader_.setFloat("u_shadowSoftness",  shadowSoftness_);
     skinnedShader_.setFloat("u_fogEnabled",      fogEnabled_  ? 1.0f : 0.0f);
     skinnedShader_.setVec3 ("u_fogColor",        fogColor_);
     skinnedShader_.setFloat("u_fogDensity",      fogDensity_);
@@ -2470,11 +2476,13 @@ void App::renderFrame() {
         ImGui::BeginDisabled(!shadowsEnabled_);
         ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("Darkness##sh",    &shadowDarkness_,   0.0f,    1.0f,  "%.2f");
         ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("Bias##sh",        &shadowBias_,       0.0001f, 0.02f, "%.4f");
+        ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("Softness##sh",    &shadowSoftness_,   0.0f,    12.0f, "%.1f");
         ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("Half-extent##sh", &shadowHalfExtent_, 10.0f,   80.0f, "%.0f");
         ImGui::EndDisabled();
         if (ImGui::Button("Reset Lighting Defaults")) {
           sunYawDeg_ = 200.0f; sunPitchDeg_ = 58.0f; ambient_ = 0.45f; diffuse_ = 0.55f;
           shadowDarkness_ = 0.55f; shadowBias_ = 0.0025f; shadowHalfExtent_ = 40.0f;
+          shadowSoftness_ = 3.0f;
         }
         break;
       }
@@ -2902,6 +2910,7 @@ void App::renderPlayer(const glm::mat4& viewProj, float dt) {
   skinnedShader_.setFloat("u_shadowsEnabled",  shadowsEnabled_ ? 1.0f : 0.0f);
   skinnedShader_.setFloat("u_shadowDarkness",  shadowDarkness_);
   skinnedShader_.setFloat("u_shadowBias",      shadowBias_);
+  skinnedShader_.setFloat("u_shadowSoftness",  shadowSoftness_);
   skinnedShader_.setFloat("u_fogEnabled",  fogEnabled_  ? 1.0f : 0.0f);
   skinnedShader_.setVec3 ("u_fogColor",    fogColor_);
   skinnedShader_.setFloat("u_fogDensity",  fogDensity_);
@@ -3493,6 +3502,7 @@ void App::saveSettings() {
   s.shadowDarkness   = shadowDarkness_;
   s.shadowBias       = shadowBias_;
   s.shadowHalfExtent = shadowHalfExtent_;
+  s.shadowSoftness   = shadowSoftness_;
   s.palette     = palette_;
   s.paletteHues = paletteHues_; s.paletteSats = paletteSats_; s.paletteLums = paletteLums_;
   s.outlineRadius    = outlineRadius_;    s.outlineDepthBias = outlineDepthBias_;
