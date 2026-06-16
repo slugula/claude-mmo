@@ -54,6 +54,13 @@ float directionalLight(vec3 N) {
 // shadowed, 0.0 = fully lit. Single cascade.
 
 float sampleShadowSoft(vec4 shadowPos, vec3 N) {
+    // Faces turned away from the sun receive no direct light anyway (Lambert
+    // already drops them to ambient), so sampling the shadow map there only
+    // produces self-shadow acne — e.g. the interior faces of thin walls. Skip
+    // the shadow term entirely for back-facing fragments (N·L <= 0).
+    float nDotL = dot(N, -normalize(u_lightDir));
+    if (nDotL <= 0.0) return 0.0;
+
     vec3 proj = shadowPos.xyz / shadowPos.w;
     proj = proj * 0.5 + 0.5;
     if (proj.z > 1.0 || proj.z < 0.0) return 0.0;
@@ -62,8 +69,7 @@ float sampleShadowSoft(vec4 shadowPos, vec3 N) {
     // The shadow pass renders back faces (front-face culled), which already
     // suppresses most acne — so the slope term is small and u_shadowBias can
     // stay tiny, avoiding the "peter-panning" detachment of bigger biases.
-    float cosTheta = max(dot(N, -normalize(u_lightDir)), 0.0);
-    float bias     = u_shadowBias + 0.0008 * (1.0 - cosTheta);
+    float bias = u_shadowBias + 0.0008 * (1.0 - nDotL);
     float receiver = proj.z - bias;
     vec2  texel    = 1.0 / vec2(textureSize(u_shadowMap, 0));
 
