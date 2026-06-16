@@ -35,6 +35,10 @@ bool SkyRenderer::init(std::function<std::filesystem::path(const std::string&)> 
     std::fprintf(stderr, "[SkyRenderer] shader load failed\n");
     return false;
   }
+  // Blend across cubemap face boundaries so edges don't show a hard seam
+  // (otherwise the sky reads as a visible cube). Core since GL 3.2.
+  glEnable(GL_TEXTURE_CUBE_MAP_SEAMLESS);
+
   glCreateVertexArrays(1, &vao_);
   glCreateBuffers(1, &vbo_);
   glNamedBufferStorage(vbo_, sizeof(kCube), kCube, 0);
