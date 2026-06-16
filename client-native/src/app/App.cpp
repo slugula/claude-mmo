@@ -2463,21 +2463,21 @@ void App::renderFrame() {
     switch (debugCategory_) {
       case 0: {  // Lighting
         ImGui::SeparatorText("Sun Direction");
-        ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("Yaw##l",   &sunYawDeg_,   0.0f, 360.0f, "%.0f°");
-        ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("Pitch##l", &sunPitchDeg_, 0.0f,  90.0f, "%.0f°");
+        ImGui::SetNextItemWidth(-110.0f); ImGui::SliderFloat("Yaw##l",   &sunYawDeg_,   0.0f, 360.0f, "%.0f°");
+        ImGui::SetNextItemWidth(-110.0f); ImGui::SliderFloat("Pitch##l", &sunPitchDeg_, 0.0f,  90.0f, "%.0f°");
         ImGui::SeparatorText("Intensity");
         ImGui::Checkbox("Directional lighting", &lightingEnabled_);
         ImGui::BeginDisabled(!lightingEnabled_);
-        ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("Ambient##l", &ambient_, 0.0f, 1.0f,  "%.2f");
-        ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("Diffuse##l", &diffuse_, 0.0f, 1.5f,  "%.2f");
+        ImGui::SetNextItemWidth(-110.0f); ImGui::SliderFloat("Ambient##l", &ambient_, 0.0f, 1.0f,  "%.2f");
+        ImGui::SetNextItemWidth(-110.0f); ImGui::SliderFloat("Diffuse##l", &diffuse_, 0.0f, 1.5f,  "%.2f");
         ImGui::EndDisabled();
         ImGui::SeparatorText("Shadows");
         ImGui::Checkbox("Enable shadows", &shadowsEnabled_);
         ImGui::BeginDisabled(!shadowsEnabled_);
-        ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("Darkness##sh",    &shadowDarkness_,   0.0f,    1.0f,  "%.2f");
-        ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("Bias##sh",        &shadowBias_,       0.0001f, 0.02f, "%.4f");
-        ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("Softness##sh",    &shadowSoftness_,   0.0f,    12.0f, "%.1f");
-        ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("Half-extent##sh", &shadowHalfExtent_, 10.0f,   80.0f, "%.0f");
+        ImGui::SetNextItemWidth(-110.0f); ImGui::SliderFloat("Darkness##sh",    &shadowDarkness_,   0.0f,    1.0f,  "%.2f");
+        ImGui::SetNextItemWidth(-110.0f); ImGui::SliderFloat("Bias##sh",        &shadowBias_,       0.0001f, 0.02f, "%.4f");
+        ImGui::SetNextItemWidth(-110.0f); ImGui::SliderFloat("Softness##sh",    &shadowSoftness_,   0.0f,    12.0f, "%.1f");
+        ImGui::SetNextItemWidth(-110.0f); ImGui::SliderFloat("Half-extent##sh", &shadowHalfExtent_, 10.0f,   80.0f, "%.0f");
         ImGui::EndDisabled();
         if (ImGui::Button("Reset Lighting Defaults")) {
           sunYawDeg_ = 200.0f; sunPitchDeg_ = 58.0f; ambient_ = 0.45f; diffuse_ = 0.55f;
@@ -2489,8 +2489,8 @@ void App::renderFrame() {
       case 1: {  // Fog
         ImGui::Checkbox("Enable Fog", &fogEnabled_);
         ImGui::BeginDisabled(!fogEnabled_);
-        ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("Density##fog", &fogDensity_, 0.0f, 0.1f,   "%.4f");
-        ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("Start##fog",   &fogStart_,   0.0f, 120.0f, "%.1f");
+        ImGui::SetNextItemWidth(-110.0f); ImGui::SliderFloat("Density##fog", &fogDensity_, 0.0f, 0.1f,   "%.4f");
+        ImGui::SetNextItemWidth(-110.0f); ImGui::SliderFloat("Start##fog",   &fogStart_,   0.0f, 120.0f, "%.1f");
         ImGui::ColorEdit3("Color##fog", reinterpret_cast<float*>(&fogColor_));
         if (ImGui::Button("Reset Fog Defaults")) {
           fogDensity_ = 0.015f; fogStart_ = 5.0f; fogColor_ = {0.58f, 0.67f, 0.78f};
@@ -2501,7 +2501,7 @@ void App::renderFrame() {
       case 2: {  // Ambient Occlusion
         ImGui::Checkbox("Enable AO", &aoEnabled_);
         ImGui::BeginDisabled(!aoEnabled_);
-        ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("Strength##ao", &aoStrength_, 0.0f, 1.0f, "%.2f");
+        ImGui::SetNextItemWidth(-110.0f); ImGui::SliderFloat("Strength##ao", &aoStrength_, 0.0f, 1.0f, "%.2f");
         if (ImGui::Button("Reset AO Defaults")) aoStrength_ = 0.50f;
         ImGui::EndDisabled();
         if (aoEnabled_) ImGui::TextDisabled("AO is baked — rebuild terrain to update.");
@@ -2510,9 +2510,9 @@ void App::renderFrame() {
       case 3: {  // Rendering
         ImGui::Checkbox("Palette Quantisation", &palette_);
         if (palette_) {
-          ImGui::SetNextItemWidth(-1); ImGui::SliderInt("Hues##pal", &paletteHues_, 2, 64);
-          ImGui::SetNextItemWidth(-1); ImGui::SliderInt("Sats##pal", &paletteSats_, 2, 32);
-          ImGui::SetNextItemWidth(-1); ImGui::SliderInt("Lums##pal", &paletteLums_, 2, 64);
+          ImGui::SetNextItemWidth(-110.0f); ImGui::SliderInt("Hues##pal", &paletteHues_, 2, 64);
+          ImGui::SetNextItemWidth(-110.0f); ImGui::SliderInt("Sats##pal", &paletteSats_, 2, 32);
+          ImGui::SetNextItemWidth(-110.0f); ImGui::SliderInt("Lums##pal", &paletteLums_, 2, 64);
         }
         ImGui::Checkbox("Wireframe overlay", &wireframe_);
         ImGui::SetNextItemWidth(-1);
@@ -2531,8 +2531,8 @@ void App::renderFrame() {
         break;
       }
       case 4: {  // Outline
-        ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("Radius##ol",     &outlineRadius_,    1.0f, 10.0f, "%.1f");
-        ImGui::SetNextItemWidth(-1); ImGui::SliderFloat("Depth bias##ol", &outlineDepthBias_, 0.0f, 0.01f, "%.4f");
+        ImGui::SetNextItemWidth(-110.0f); ImGui::SliderFloat("Radius##ol",     &outlineRadius_,    1.0f, 10.0f, "%.1f");
+        ImGui::SetNextItemWidth(-110.0f); ImGui::SliderFloat("Depth bias##ol", &outlineDepthBias_, 0.0f, 0.01f, "%.4f");
         ImGui::ColorEdit4("Outline color",  reinterpret_cast<float*>(&outlineColor_));
         ImGui::ColorEdit4("Hover tile color", reinterpret_cast<float*>(&hoverTileColor_));
         if (ImGui::Button("Reset Outline Defaults")) {
