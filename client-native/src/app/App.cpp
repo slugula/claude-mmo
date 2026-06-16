@@ -587,6 +587,11 @@ bool App::init() {
     std::fprintf(stderr, "[App] overlay renderer init failed — overlays will not render\n");
   }
 
+  // Background sky (procedural gradient by default; importable 6-face cubemap).
+  if (!sky_.init([](const std::string& rel){ return resolveFromExe(rel.c_str()); })) {
+    std::fprintf(stderr, "[App] sky renderer init failed — sky will not render\n");
+  }
+
   // Equipped-weapon attachment renderer (reuses the single-model preview shader).
   if (!attachments_.init(resolveFromExe("shaders/preview.vert").string(),
                          resolveFromExe("shaders/preview.frag").string(),
@@ -677,6 +682,15 @@ bool App::init() {
       shadowBias_      = s.shadowBias;
       shadowHalfExtent_= s.shadowHalfExtent;
       shadowSoftness_  = s.shadowSoftness;
+      skyEnabled_      = s.skyEnabled;
+      sky_.config().zenith   = { s.skyZenithR,  s.skyZenithG,  s.skyZenithB };
+      sky_.config().horizon  = { s.skyHorizonR, s.skyHorizonG, s.skyHorizonB };
+      sky_.config().ground   = { s.skyGroundR,  s.skyGroundG,  s.skyGroundB };
+      sky_.config().exposure = s.skyExposure;
+      if (!s.skyCubemap.empty()) {
+        sky_.loadCubemap(s.skyCubemap);
+        std::strncpy(skyCubemapBuf_, s.skyCubemap.c_str(), sizeof(skyCubemapBuf_) - 1);
+      }
       palette_     = s.palette;
       paletteHues_ = s.paletteHues;
       paletteSats_ = s.paletteSats;
@@ -1234,6 +1248,9 @@ void App::renderFrame() {
   msaa_->bind();
   glClearColor(0.45f, 0.65f, 0.85f, 1.0f);
   glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+
+  // Sky first, at the far plane (depth-write off) so the scene draws over it.
+  if (skyEnabled_) sky_.render(camera_.skyViewProjection(aspect));
 
   // Shadow texture lives on unit 1; main-pass shaders sample it via
   // u_shadowMap = 1.
@@ -2488,6 +2505,28 @@ void App::renderFrame() {
           shadowDarkness_ = 0.55f; shadowBias_ = 0.0008f; shadowHalfExtent_ = 40.0f;
           shadowSoftness_ = 3.0f;
         }
+
+        ImGui::SeparatorText("Sky");
+        ImGui::Checkbox("Enable sky", &skyEnabled_);
+        ImGui::BeginDisabled(!skyEnabled_);
+        ImGui::SetNextItemWidth(-110.0f);
+        ImGui::SliderFloat("Exposure##sky", &sky_.config().exposure, 0.1f, 2.0f, "%.2f");
+        if (sky_.hasCubemap()) {
+          ImGui::TextWrapped("Cubemap: %s", sky_.config().cubemap.c_str());
+        } else {
+          // Procedural gradient knobs (only meaningful with no cubemap loaded).
+          ImGui::ColorEdit3("Zenith##sky",  &sky_.config().zenith.x);
+          ImGui::ColorEdit3("Horizon##sky", &sky_.config().horizon.x);
+          ImGui::ColorEdit3("Ground##sky",  &sky_.config().ground.x);
+        }
+        ImGui::SetNextItemWidth(-110.0f);
+        ImGui::InputText("Folder##sky", skyCubemapBuf_, sizeof(skyCubemapBuf_));
+        ImGui::SameLine();
+        if (ImGui::Button("Load##sky") && skyCubemapBuf_[0]) sky_.loadCubemap(skyCubemapBuf_);
+        ImGui::SameLine();
+        if (ImGui::Button("Clear##sky")) { sky_.clearCubemap(); skyCubemapBuf_[0] = '\0'; }
+        ImGui::TextDisabled("assets/skybox/<folder>/{px,nx,py,ny,pz,nz}.png");
+        ImGui::EndDisabled();
         break;
       }
       case 1: {  // Fog
@@ -3507,6 +3546,12 @@ void App::saveSettings() {
   s.shadowBias       = shadowBias_;
   s.shadowHalfExtent = shadowHalfExtent_;
   s.shadowSoftness   = shadowSoftness_;
+  s.skyEnabled  = skyEnabled_;
+  s.skyExposure = sky_.config().exposure;
+  s.skyCubemap  = sky_.config().cubemap;
+  s.skyZenithR  = sky_.config().zenith.r;  s.skyZenithG  = sky_.config().zenith.g;  s.skyZenithB  = sky_.config().zenith.b;
+  s.skyHorizonR = sky_.config().horizon.r; s.skyHorizonG = sky_.config().horizon.g; s.skyHorizonB = sky_.config().horizon.b;
+  s.skyGroundR  = sky_.config().ground.r;  s.skyGroundG  = sky_.config().ground.g;  s.skyGroundB  = sky_.config().ground.b;
   s.palette     = palette_;
   s.paletteHues = paletteHues_; s.paletteSats = paletteSats_; s.paletteLums = paletteLums_;
   s.outlineRadius    = outlineRadius_;    s.outlineDepthBias = outlineDepthBias_;

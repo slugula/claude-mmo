@@ -35,6 +35,13 @@ struct AppSettings {
   float     shadowBias      = 0.0008f;
   float     shadowHalfExtent = 40.0f;
   float     shadowSoftness  = 3.0f;   // PCSS max penumbra radius (texels)
+  // Sky
+  bool        skyEnabled  = true;
+  std::string skyCubemap;             // "" = procedural gradient; else folder name
+  float       skyExposure = 1.0f;
+  float       skyZenithR = 0.16f,  skyZenithG = 0.34f,  skyZenithB = 0.62f;
+  float       skyHorizonR = 0.62f, skyHorizonG = 0.74f, skyHorizonB = 0.86f;
+  float       skyGroundR = 0.30f,  skyGroundG = 0.30f,  skyGroundB = 0.34f;
   // Palette
   bool      palette     = true;
   int       paletteHues = 64;
@@ -128,6 +135,15 @@ inline bool saveSettings(const AppSettings& s, const std::filesystem::path& path
   std::fprintf(f, "chunkDrawDistance=%d\n", s.chunkDrawDistance);
   std::fprintf(f, "viewRadius=%d\n", s.viewRadius);
   std::fprintf(f, "editorDrawDistance=%d\n", s.editorDrawDistance);
+  // Sky
+  std::fprintf(f, "skyEnabled=%d\nskyExposure=%f\nskyCubemap=%s\n",
+               B(s.skyEnabled), s.skyExposure, s.skyCubemap.c_str());
+  std::fprintf(f, "skyZenithR=%f\nskyZenithG=%f\nskyZenithB=%f\n",
+               s.skyZenithR, s.skyZenithG, s.skyZenithB);
+  std::fprintf(f, "skyHorizonR=%f\nskyHorizonG=%f\nskyHorizonB=%f\n",
+               s.skyHorizonR, s.skyHorizonG, s.skyHorizonB);
+  std::fprintf(f, "skyGroundR=%f\nskyGroundG=%f\nskyGroundB=%f\n",
+               s.skyGroundR, s.skyGroundG, s.skyGroundB);
   std::fclose(f);
   return true;
 }
@@ -185,10 +201,15 @@ inline bool loadSettings(AppSettings& s, const std::filesystem::path& path) {
         fF("bankPosX", s.bankPosX) || fF("bankPosY", s.bankPosY) ||
         fI("chunkDrawDistance", s.chunkDrawDistance) ||
         fI("viewRadius", s.viewRadius) ||
-        fI("editorDrawDistance", s.editorDrawDistance)) {
+        fI("editorDrawDistance", s.editorDrawDistance) ||
+        fB("skyEnabled", s.skyEnabled) || fF("skyExposure", s.skyExposure) ||
+        fF("skyZenithR", s.skyZenithR) || fF("skyZenithG", s.skyZenithG) || fF("skyZenithB", s.skyZenithB) ||
+        fF("skyHorizonR", s.skyHorizonR) || fF("skyHorizonG", s.skyHorizonG) || fF("skyHorizonB", s.skyHorizonB) ||
+        fF("skyGroundR", s.skyGroundR) || fF("skyGroundG", s.skyGroundG) || fF("skyGroundB", s.skyGroundB)) {
       continue;
     }
     if (std::strcmp(key, "waterCausticMap") == 0) { s.waterCausticMap = val; continue; }
+    if (std::strcmp(key, "skyCubemap") == 0) { s.skyCubemap = val; continue; }
   }
   std::fclose(f);
   return true;

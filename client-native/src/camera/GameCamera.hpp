@@ -43,6 +43,9 @@ public:
 
   // Built from current smoothed state.
   glm::mat4 viewProjection(float aspect) const;
+  // Like viewProjection but with the view translation stripped — for a skybox
+  // that stays centered on the camera (only orientation matters).
+  glm::mat4 skyViewProjection(float aspect) const;
   glm::vec3 cameraPosition() const;
   glm::vec3 lookAtTarget()   const { return currentTarget_; }
   glm::vec3 panTarget()      const { return targetPos_; }  // the unsmoothed target; pass back into update() to avoid overwrite

@@ -24,6 +24,7 @@
 #include "world/SpriteCache.hpp"
 #include "world/WaterRenderer.hpp"
 #include "world/OverlayRenderer.hpp"
+#include "world/SkyRenderer.hpp"
 #include "world/ChunkedTerrain.hpp"
 
 #include <glad/glad.h>
@@ -100,6 +101,9 @@ private:
   world::WaterRenderer                     waterRenderer_;
   world::WaterUniforms                     waterUniforms_;
   world::OverlayRenderer                   overlayRenderer_;
+  world::SkyRenderer                       sky_;
+  bool                                     skyEnabled_ = true;
+  char                                     skyCubemapBuf_[128] = {0};   // F12 import field
   ui::SpriteCache                          spriteCache_;
   world::SkinnedMesh                       playerModel_;
   world::EntityRenderer                    entities_;

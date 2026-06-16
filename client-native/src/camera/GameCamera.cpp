@@ -114,6 +114,14 @@ glm::mat4 GameCamera::viewProjection(float aspect) const {
   return proj * view;
 }
 
+glm::mat4 GameCamera::skyViewProjection(float aspect) const {
+  const glm::vec3 eye  = cameraPosition();
+  const glm::mat4 view = glm::lookAtLH(eye, currentTarget_, glm::vec3{0.0f, 1.0f, 0.0f});
+  const glm::mat4 proj = glm::perspectiveLH(0.785398f /*45°*/, aspect, 0.1f, 500.0f);
+  // Drop translation so the sky is infinitely far and only rotates with view.
+  return proj * glm::mat4(glm::mat3(view));
+}
+
 void GameCamera::snapTo(const glm::vec3& target) {
   targetPos_     = target;
   currentTarget_ = target;
