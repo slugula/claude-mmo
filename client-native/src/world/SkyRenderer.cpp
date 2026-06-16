@@ -99,6 +99,17 @@ bool SkyRenderer::loadCubemap(const std::string& name) {
     if (cubemapTex_) glDeleteTextures(1, &cubemapTex_);
     cubemapTex_  = tex;
     cfg_.cubemap = name;
+
+    // Average the +Y (up) and -Y (down) faces so sky-driven ambient (Phase 4)
+    // automatically matches the imported sky. Faces[2]=+Y, faces[3]=-Y.
+    auto avg = [](const unsigned char* px, int n) {
+      glm::vec3 sum(0.0f);
+      for (int i = 0; i < n; ++i)
+        sum += glm::vec3(px[i*3], px[i*3+1], px[i*3+2]);
+      return (n > 0) ? sum / (float(n) * 255.0f) : glm::vec3(0.5f);
+    };
+    ambientSky_    = avg(faces[2].px, faces[2].w * faces[2].h);
+    ambientGround_ = avg(faces[3].px, faces[3].w * faces[3].h);
     std::fprintf(stdout, "[SkyRenderer] loaded cubemap '%s' (%dx%d/face)\n", name.c_str(), s, s);
   }
 

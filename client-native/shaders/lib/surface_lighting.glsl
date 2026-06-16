@@ -14,9 +14,18 @@
 
 // ---- Sun ----------------------------------------------------------------
 uniform vec3  u_lightDir;          // sun direction (from sun toward surface)
-uniform float u_ambient;           // 0..1 base brightness with no direct light
+uniform float u_ambient;           // 0..1 ambient intensity (scales sky ambient)
 uniform float u_diffuse;           // 0..1 N·-L contribution
 uniform float u_lightingEnabled;   // 0 = flat base color, 1 = lit
+
+// ---- Sky (Phase 4: skybox drives lighting) ------------------------------
+// Hemispheric ambient: surfaces facing up pick up the sky colour, those facing
+// down pick up the ground colour. The sun is tinted by u_sunColor. In shadow,
+// only the sun term is removed, so shaded areas fall back to the sky-coloured
+// ambient instead of flat grey — that's the visual link to the skybox.
+uniform vec3 u_skyAmbientUp;       // ambient colour from above (sky)
+uniform vec3 u_skyAmbientDown;     // ambient colour from below (ground)
+uniform vec3 u_sunColor;           // sun tint
 
 // ---- Shadow -------------------------------------------------------------
 uniform sampler2D u_shadowMap;
@@ -108,4 +117,21 @@ float sampleShadowSoft(vec4 shadowPos, vec3 N) {
 float shadowMultiplier(vec4 shadowPos, vec3 N) {
     float s = sampleShadowSoft(shadowPos, N);
     return 1.0 - u_shadowDarkness * s * u_shadowsEnabled;
+}
+
+// Hemispheric ambient term: blend ground<->sky colour by surface up-facing.
+vec3 hemisphereAmbient(vec3 N) {
+    float t = N.y * 0.5 + 0.5;             // -1 (down) .. +1 (up) -> 0..1
+    return mix(u_skyAmbientDown, u_skyAmbientUp, t);
+}
+
+// Full sky-driven lighting for an albedo: sky-coloured hemispheric ambient plus
+// a sun-coloured directional term that shadows attenuate. Shadowed pixels keep
+// the ambient (sky) colour rather than going flat grey. Returns the lit colour.
+vec3 applySky(vec3 albedo, vec3 N, vec4 shadowPos) {
+    vec3  ambient = u_ambient * hemisphereAmbient(N);
+    float nDotL   = max(dot(N, -normalize(u_lightDir)), 0.0);
+    float shadow  = sampleShadowSoft(shadowPos, N);              // 1 = shadowed
+    float sun     = u_diffuse * nDotL * (1.0 - u_shadowDarkness * shadow * u_shadowsEnabled);
+    return albedo * (ambient + u_sunColor * sun);
 }

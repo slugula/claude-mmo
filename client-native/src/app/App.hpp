@@ -104,6 +104,10 @@ private:
   world::SkyRenderer                       sky_;
   bool                                     skyEnabled_ = true;
   char                                     skyCubemapBuf_[128] = {0};   // F12 import field
+  // Sky-driven lighting (Phase 4), refreshed each frame from sky_ config.
+  glm::vec3                                skyAmbientUp_{0.16f, 0.34f, 0.62f};
+  glm::vec3                                skyAmbientDown_{0.30f, 0.30f, 0.34f};
+  glm::vec3                                sunColor_{1.0f, 0.96f, 0.88f};
   ui::SpriteCache                          spriteCache_;
   world::SkinnedMesh                       playerModel_;
   world::EntityRenderer                    entities_;

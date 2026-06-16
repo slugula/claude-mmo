@@ -83,11 +83,8 @@ void main() {
     // Phase 6 — Lambert directional lighting. u_lightDir points from the sun
     // toward the world, so the surface-incident vector is -u_lightDir.
     vec3  N     = normalize(v_normal);
-    float lit   = directionalLight(N);
-    rgb = mix(rgb, rgb * lit, u_lightingEnabled);
-
-    // Soft (PCSS) directional shadow — shared with every other surface shader.
-    rgb *= shadowMultiplier(v_shadowPos, N);
+    // Sky-driven lighting + soft shadow, shared with every other surface shader.
+    rgb = mix(rgb, applySky(rgb, N, v_shadowPos), u_lightingEnabled);
 
     // Snap-then-restore via HSL gives banded but hue-stable colors.
     vec3 hsl       = rgb2hsl(rgb);

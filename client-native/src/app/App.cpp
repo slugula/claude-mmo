@@ -687,6 +687,7 @@ bool App::init() {
       sky_.config().horizon  = { s.skyHorizonR, s.skyHorizonG, s.skyHorizonB };
       sky_.config().ground   = { s.skyGroundR,  s.skyGroundG,  s.skyGroundB };
       sky_.config().exposure = s.skyExposure;
+      sky_.config().sunColor = { s.skySunR, s.skySunG, s.skySunB };
       if (!s.skyCubemap.empty()) {
         sky_.loadCubemap(s.skyCubemap);
         std::strncpy(skyCubemapBuf_, s.skyCubemap.c_str(), sizeof(skyCubemapBuf_) - 1);
@@ -926,6 +927,12 @@ void App::renderFrame() {
   // (finite) shadow map covers the visible area rather than a fixed map point.
   // Used by both the depth pass and the player's shadow lookup so they match.
   shadowCenter_ = followTarget;
+
+  // Sky-driven lighting inputs (Phase 4): hemispheric ambient + sun tint, taken
+  // from the current sky (cubemap-averaged when loaded, else gradient colours).
+  skyAmbientUp_   = sky_.ambientSky();
+  skyAmbientDown_ = sky_.ambientGround();
+  sunColor_       = sky_.config().sunColor;
 
   const int   fbW    = window_.framebufferWidth();
   const int   fbH    = window_.framebufferHeight();
@@ -1271,6 +1278,9 @@ void App::renderFrame() {
   terrainShader_.setFloat("u_paletteEnabled",  palette_ ? 1.0f : 0.0f);
   terrainShader_.setVec3 ("u_lightDir",        sunDir);
   terrainShader_.setFloat("u_ambient",         ambient_);
+  terrainShader_.setVec3 ("u_skyAmbientUp",    skyAmbientUp_);
+  terrainShader_.setVec3 ("u_skyAmbientDown",  skyAmbientDown_);
+  terrainShader_.setVec3 ("u_sunColor",        sunColor_);
   terrainShader_.setFloat("u_diffuse",         diffuse_);
   terrainShader_.setFloat("u_lightingEnabled", lightingEnabled_ ? 1.0f : 0.0f);
   terrainShader_.setFloat("u_fogEnabled",  fogEnabled_  ? 1.0f : 0.0f);
@@ -1302,6 +1312,9 @@ void App::renderFrame() {
                                    static_cast<float>(paletteLums_));
     ol.paletteEnabled  = palette_ ? 1.0f : 0.0f;
     ol.ambient         = ambient_;
+    ol.skyAmbientUp    = skyAmbientUp_;
+    ol.skyAmbientDown  = skyAmbientDown_;
+    ol.sunColor        = sunColor_;
     ol.diffuse         = diffuse_;
     ol.lightingEnabled = lightingEnabled_ ? 1.0f : 0.0f;
     ol.shadowsEnabled  = shadowsEnabled_  ? 1.0f : 0.0f;
@@ -1342,6 +1355,9 @@ void App::renderFrame() {
                                      static_cast<float>(paletteLums_)));
   obstacleShader_.setFloat("u_paletteEnabled",  palette_ ? 1.0f : 0.0f);
   obstacleShader_.setFloat("u_ambient",         ambient_);
+  obstacleShader_.setVec3 ("u_skyAmbientUp",    skyAmbientUp_);
+  obstacleShader_.setVec3 ("u_skyAmbientDown",  skyAmbientDown_);
+  obstacleShader_.setVec3 ("u_sunColor",        sunColor_);
   obstacleShader_.setFloat("u_diffuse",         diffuse_);
   obstacleShader_.setFloat("u_lightingEnabled", lightingEnabled_ ? 1.0f : 0.0f);
   obstacleShader_.setInt  ("u_shadowMap",        1);
@@ -1457,6 +1473,9 @@ void App::renderFrame() {
                                       static_cast<float>(paletteLums_)));
     skinnedShader_.setFloat("u_paletteEnabled",  palette_ ? 1.0f : 0.0f);
     skinnedShader_.setFloat("u_ambient",         ambient_);
+    skinnedShader_.setVec3 ("u_skyAmbientUp",    skyAmbientUp_);
+    skinnedShader_.setVec3 ("u_skyAmbientDown",  skyAmbientDown_);
+    skinnedShader_.setVec3 ("u_sunColor",        sunColor_);
     skinnedShader_.setFloat("u_diffuse",         diffuse_);
     skinnedShader_.setFloat("u_lightingEnabled", lightingEnabled_ ? 1.0f : 0.0f);
     skinnedShader_.setInt  ("u_shadowMap",       1);
@@ -1572,6 +1591,9 @@ void App::renderFrame() {
                   static_cast<float>(paletteLums_)));
     skinnedShader_.setFloat("u_paletteEnabled",  palette_ ? 1.0f : 0.0f);
     skinnedShader_.setFloat("u_ambient",         ambient_);
+    skinnedShader_.setVec3 ("u_skyAmbientUp",    skyAmbientUp_);
+    skinnedShader_.setVec3 ("u_skyAmbientDown",  skyAmbientDown_);
+    skinnedShader_.setVec3 ("u_sunColor",        sunColor_);
     skinnedShader_.setFloat("u_diffuse",         diffuse_);
     skinnedShader_.setFloat("u_lightingEnabled", lightingEnabled_ ? 1.0f : 0.0f);
     skinnedShader_.setInt  ("u_shadowMap",       1);
@@ -2511,6 +2533,9 @@ void App::renderFrame() {
         ImGui::BeginDisabled(!skyEnabled_);
         ImGui::SetNextItemWidth(-110.0f);
         ImGui::SliderFloat("Exposure##sky", &sky_.config().exposure, 0.1f, 2.0f, "%.2f");
+        ImGui::ColorEdit3("Sun color##sky", &sky_.config().sunColor.x);
+        if (sky_.hasCubemap())
+          ImGui::TextDisabled("Ambient auto-matched to cubemap");
         if (sky_.hasCubemap()) {
           ImGui::TextWrapped("Cubemap: %s", sky_.config().cubemap.c_str());
         } else {
@@ -2947,6 +2972,9 @@ void App::renderPlayer(const glm::mat4& viewProj, float dt) {
                                     static_cast<float>(paletteLums_)));
   skinnedShader_.setFloat("u_paletteEnabled",  palette_ ? 1.0f : 0.0f);
   skinnedShader_.setFloat("u_ambient",         ambient_);
+  skinnedShader_.setVec3 ("u_skyAmbientUp",    skyAmbientUp_);
+  skinnedShader_.setVec3 ("u_skyAmbientDown",  skyAmbientDown_);
+  skinnedShader_.setVec3 ("u_sunColor",        sunColor_);
   skinnedShader_.setFloat("u_diffuse",         diffuse_);
   skinnedShader_.setFloat("u_lightingEnabled", lightingEnabled_ ? 1.0f : 0.0f);
   skinnedShader_.setInt  ("u_shadowMap",        1);
@@ -3552,6 +3580,7 @@ void App::saveSettings() {
   s.skyZenithR  = sky_.config().zenith.r;  s.skyZenithG  = sky_.config().zenith.g;  s.skyZenithB  = sky_.config().zenith.b;
   s.skyHorizonR = sky_.config().horizon.r; s.skyHorizonG = sky_.config().horizon.g; s.skyHorizonB = sky_.config().horizon.b;
   s.skyGroundR  = sky_.config().ground.r;  s.skyGroundG  = sky_.config().ground.g;  s.skyGroundB  = sky_.config().ground.b;
+  s.skySunR     = sky_.config().sunColor.r; s.skySunG    = sky_.config().sunColor.g; s.skySunB    = sky_.config().sunColor.b;
   s.palette     = palette_;
   s.paletteHues = paletteHues_; s.paletteSats = paletteSats_; s.paletteLums = paletteLums_;
   s.outlineRadius    = outlineRadius_;    s.outlineDepthBias = outlineDepthBias_;

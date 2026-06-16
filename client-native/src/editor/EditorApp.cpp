@@ -284,6 +284,9 @@ void EditorApp::dbDrawGripPreview(const ItemDef& d, const glm::mat4& viewProj, f
   skinnedShader_.setVec3 ("u_paletteLevels",   glm::vec3(0.f));
   skinnedShader_.setFloat("u_paletteEnabled",  0.f);
   skinnedShader_.setFloat("u_ambient",         0.40f);
+  skinnedShader_.setVec3("u_skyAmbientUp",   glm::vec3(1.0f));
+  skinnedShader_.setVec3("u_skyAmbientDown", glm::vec3(1.0f));
+  skinnedShader_.setVec3("u_sunColor",       glm::vec3(1.0f));
   skinnedShader_.setFloat("u_diffuse",         0.75f);
   skinnedShader_.setFloat("u_lightingEnabled", 1.f);
   skinnedShader_.setInt  ("u_shadowMap",       1);
@@ -381,6 +384,9 @@ void EditorApp::dbRenderPreview(float dt) {
       skinnedShader_.setVec3("u_paletteLevels", glm::vec3(0.f));
       skinnedShader_.setFloat("u_paletteEnabled",  0.f);
       skinnedShader_.setFloat("u_ambient",         0.35f);
+      skinnedShader_.setVec3("u_skyAmbientUp",   glm::vec3(1.0f));
+      skinnedShader_.setVec3("u_skyAmbientDown", glm::vec3(1.0f));
+      skinnedShader_.setVec3("u_sunColor",       glm::vec3(1.0f));
       skinnedShader_.setFloat("u_diffuse",         0.80f);
       skinnedShader_.setFloat("u_lightingEnabled", 1.f);
       skinnedShader_.setInt  ("u_shadowMap",       1);
@@ -892,6 +898,9 @@ void EditorApp::render3DViewport(float dt) {
   terrainShader_.setFloat("u_paletteEnabled",  palette_ ? 1.0f : 0.0f);
   terrainShader_.setVec3 ("u_lightDir",        sunDir);
   terrainShader_.setFloat("u_ambient",         ambient_);
+  terrainShader_.setVec3("u_skyAmbientUp",   glm::vec3(1.0f));
+  terrainShader_.setVec3("u_skyAmbientDown", glm::vec3(1.0f));
+  terrainShader_.setVec3("u_sunColor",       glm::vec3(1.0f));
   terrainShader_.setFloat("u_diffuse",         diffuse_);
   terrainShader_.setFloat("u_lightingEnabled", lightingEnabled_ ? 1.0f : 0.0f);
   terrainShader_.setFloat("u_fogEnabled",  fogEnabled_  ? 1.0f : 0.0f);
@@ -954,6 +963,9 @@ void EditorApp::render3DViewport(float dt) {
                                                            static_cast<float>(paletteLums_)));
   obstacleShader_.setFloat("u_paletteEnabled", palette_ ? 1.0f : 0.0f);
   obstacleShader_.setFloat("u_ambient",        ambient_);
+  obstacleShader_.setVec3("u_skyAmbientUp",   glm::vec3(1.0f));
+  obstacleShader_.setVec3("u_skyAmbientDown", glm::vec3(1.0f));
+  obstacleShader_.setVec3("u_sunColor",       glm::vec3(1.0f));
   obstacleShader_.setFloat("u_diffuse",        diffuse_);
   obstacleShader_.setFloat("u_lightingEnabled",lightingEnabled_ ? 1.0f : 0.0f);
   obstacleShader_.setFloat("u_fogEnabled", fogEnabled_  ? 1.0f : 0.0f);
@@ -992,6 +1004,9 @@ void EditorApp::render3DViewport(float dt) {
                                                            static_cast<float>(paletteLums_)));
     skinnedShader_.setFloat("u_paletteEnabled",  palette_ ? 1.0f : 0.0f);
     skinnedShader_.setFloat("u_ambient",         ambient_);
+    skinnedShader_.setVec3("u_skyAmbientUp",   glm::vec3(1.0f));
+    skinnedShader_.setVec3("u_skyAmbientDown", glm::vec3(1.0f));
+    skinnedShader_.setVec3("u_sunColor",       glm::vec3(1.0f));
     skinnedShader_.setFloat("u_diffuse",         diffuse_);
     skinnedShader_.setFloat("u_lightingEnabled", lightingEnabled_ ? 1.0f : 0.0f);
     skinnedShader_.setInt  ("u_shadowMap",       1);

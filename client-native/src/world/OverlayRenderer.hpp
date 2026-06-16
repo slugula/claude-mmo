@@ -17,6 +17,9 @@ struct OverlayLighting {
   glm::mat4 viewProj      = glm::mat4(1.0f);
   glm::mat4 lightViewProj = glm::mat4(1.0f);
   glm::vec3 lightDir      = { 0.f, -1.f, 0.f };
+  glm::vec3 skyAmbientUp   = { 0.16f, 0.34f, 0.62f };
+  glm::vec3 skyAmbientDown = { 0.30f, 0.30f, 0.34f };
+  glm::vec3 sunColor       = { 1.0f, 0.96f, 0.88f };
   glm::vec3 paletteLevels = { 8.f, 8.f, 8.f };
   glm::vec3 fogColor      = {};
   float     ambient         = 0.5f;

@@ -21,6 +21,7 @@ struct SkyConfig {
   glm::vec3   horizon  = {0.62f, 0.74f, 0.86f};   // horizon band
   glm::vec3   ground   = {0.30f, 0.30f, 0.34f};   // below the horizon
   float       exposure = 1.0f;
+  glm::vec3   sunColor = {1.0f, 0.96f, 0.88f};     // directional light tint
 
   // --- Reserved for the future astrology skill (NOT rendered yet) ---
   // A separate star/constellation layer will composite over this base sky and
@@ -56,6 +57,12 @@ public:
   SkyConfig&       config()       { return cfg_; }
   bool             hasCubemap() const { return cubemapTex_ != 0; }
 
+  // Hemispheric ambient source colours for sky-driven lighting (Phase 4). With
+  // a cubemap loaded these are the averaged up/down faces so ambient matches the
+  // imported sky; otherwise they fall back to the procedural gradient colours.
+  glm::vec3 ambientSky()    const { return cubemapTex_ ? ambientSky_    : cfg_.zenith; }
+  glm::vec3 ambientGround() const { return cubemapTex_ ? ambientGround_ : cfg_.ground; }
+
   // Draw the sky. viewProjNoTrans = projection * translation-stripped view.
   void render(const glm::mat4& viewProjNoTrans);
 
@@ -66,6 +73,8 @@ private:
   GLuint vbo_        = 0;
   GLuint cubemapTex_ = 0;   // 0 = procedural gradient
   SkyConfig cfg_;
+  glm::vec3 ambientSky_    = {0.16f, 0.34f, 0.62f};   // avg of +Y face (set on load)
+  glm::vec3 ambientGround_ = {0.30f, 0.30f, 0.34f};   // avg of -Y face (set on load)
 };
 
 }  // namespace world

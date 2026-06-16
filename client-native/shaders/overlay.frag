@@ -60,10 +60,7 @@ void main() {
 
     // Flat up-facing normal for overlay lighting.
     vec3  N     = vec3(0.0, 1.0, 0.0);
-    float lit   = directionalLight(N);
-    rgb = mix(rgb, rgb * lit, u_lightingEnabled);
-
-    rgb *= shadowMultiplier(v_shadowPos, N);
+    rgb = mix(rgb, applySky(rgb, N, v_shadowPos), u_lightingEnabled);
 
     vec3 hsl       = rgb2hsl(rgb);
     vec3 snapped   = floor(hsl * u_paletteLevels) / u_paletteLevels;

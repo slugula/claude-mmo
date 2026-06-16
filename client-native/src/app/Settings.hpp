@@ -42,6 +42,7 @@ struct AppSettings {
   float       skyZenithR = 0.16f,  skyZenithG = 0.34f,  skyZenithB = 0.62f;
   float       skyHorizonR = 0.62f, skyHorizonG = 0.74f, skyHorizonB = 0.86f;
   float       skyGroundR = 0.30f,  skyGroundG = 0.30f,  skyGroundB = 0.34f;
+  float       skySunR = 1.0f,      skySunG = 0.96f,     skySunB = 0.88f;
   // Palette
   bool      palette     = true;
   int       paletteHues = 64;
@@ -144,6 +145,8 @@ inline bool saveSettings(const AppSettings& s, const std::filesystem::path& path
                s.skyHorizonR, s.skyHorizonG, s.skyHorizonB);
   std::fprintf(f, "skyGroundR=%f\nskyGroundG=%f\nskyGroundB=%f\n",
                s.skyGroundR, s.skyGroundG, s.skyGroundB);
+  std::fprintf(f, "skySunR=%f\nskySunG=%f\nskySunB=%f\n",
+               s.skySunR, s.skySunG, s.skySunB);
   std::fclose(f);
   return true;
 }
@@ -205,7 +208,8 @@ inline bool loadSettings(AppSettings& s, const std::filesystem::path& path) {
         fB("skyEnabled", s.skyEnabled) || fF("skyExposure", s.skyExposure) ||
         fF("skyZenithR", s.skyZenithR) || fF("skyZenithG", s.skyZenithG) || fF("skyZenithB", s.skyZenithB) ||
         fF("skyHorizonR", s.skyHorizonR) || fF("skyHorizonG", s.skyHorizonG) || fF("skyHorizonB", s.skyHorizonB) ||
-        fF("skyGroundR", s.skyGroundR) || fF("skyGroundG", s.skyGroundG) || fF("skyGroundB", s.skyGroundB)) {
+        fF("skyGroundR", s.skyGroundR) || fF("skyGroundG", s.skyGroundG) || fF("skyGroundB", s.skyGroundB) ||
+        fF("skySunR", s.skySunR) || fF("skySunG", s.skySunG) || fF("skySunB", s.skySunB)) {
       continue;
     }
     if (std::strcmp(key, "waterCausticMap") == 0) { s.waterCausticMap = val; continue; }

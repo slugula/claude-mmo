@@ -62,13 +62,10 @@ vec3 hsl2rgb(vec3 hsl) {
 
 void main() {
     vec3  N      = normalize(v_normal);
-    float lit    = directionalLight(N);
     // glTF convention: vertex colour modulates the material/base colour; the
     // per-instance tint (white for most models) recolours the pool tileset.
     vec3  base   = u_color * v_color.rgb * v_tint;
-    vec3  rgb    = mix(base, base * lit, u_lightingEnabled);
-
-    rgb *= shadowMultiplier(v_shadowPos, N);
+    vec3  rgb    = mix(base, applySky(base, N, v_shadowPos), u_lightingEnabled);
 
     vec3 hsl       = rgb2hsl(rgb);
     vec3 snapped   = floor(hsl * u_paletteLevels) / u_paletteLevels;

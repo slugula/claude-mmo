@@ -209,6 +209,9 @@ void OverlayRenderer::render(const OverlayLighting& L) {
   shader_.setMat4 ("u_viewProj",       L.viewProj);
   shader_.setMat4 ("u_lightViewProj",  L.lightViewProj);
   shader_.setVec3 ("u_lightDir",       L.lightDir);
+  shader_.setVec3 ("u_skyAmbientUp",   L.skyAmbientUp);
+  shader_.setVec3 ("u_skyAmbientDown", L.skyAmbientDown);
+  shader_.setVec3 ("u_sunColor",       L.sunColor);
   shader_.setVec3 ("u_paletteLevels",  L.paletteLevels);
   shader_.setFloat("u_paletteEnabled", L.paletteEnabled);
   shader_.setFloat("u_ambient",        L.ambient);
