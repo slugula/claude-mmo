@@ -206,6 +206,10 @@ export interface PlayerState {
   fishTargetX: number | null;
   fishTargetY: number | null;
   lastFishTick: number;
+  // Item id the player visually holds while gathering (axe/pickaxe/fishing rod),
+  // overriding their equipped weapon on the client. '' = none (show equipped).
+  // Server-derived each tick (see systems/GatheringTool.ts); not persisted.
+  activeToolItemId: string;
   dying: boolean;
   dyingTick: number;
   lastRegenTick: number;

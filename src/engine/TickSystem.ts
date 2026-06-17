@@ -7,6 +7,7 @@ import { processItems } from '../systems/ItemSystem';
 import { processWoodcutting } from '../systems/WoodcuttingSystem';
 import { processMining } from '../systems/MiningSystem';
 import { processFishing } from '../systems/FishingSystem';
+import { resolveActiveTool } from '../systems/GatheringTool';
 
 export function processTick(
   prev: GameState,
@@ -84,7 +85,13 @@ export function processTick(
     else nextMessages[pid] = [...msgs];
   }
 
-  const finalPlayers = fish.players;
+  // Resolve the visual gathering tool for each player (axe/pickaxe/rod while
+  // chopping/mining/fishing; '' otherwise). Runs after all gathering systems so
+  // the *Target fields are settled. Client overrides the equipped weapon with it.
+  const finalPlayers: Record<string, PlayerState> = {};
+  for (const [pid, p] of Object.entries(fish.players)) {
+    finalPlayers[pid] = { ...p, activeToolItemId: resolveActiveTool(p) };
+  }
   const finalWorld = mine.world;
 
   // Expire dropped items older than 60 seconds (300 ticks at 200ms). Permanent items never despawn.

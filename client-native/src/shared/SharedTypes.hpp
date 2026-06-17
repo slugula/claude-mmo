@@ -197,6 +197,9 @@ struct PlayerState {
   // Set while the server has a pending pick-up queued for this player.
   // Transitions from has_value() → nullopt indicate a completed pickup.
   std::optional<std::string>                   pickupItemId;
+  // Item id the player visually holds while gathering (axe/pickaxe/fishing rod);
+  // overrides the equipped weapon. Empty = none. Server-derived each tick.
+  std::string                                  activeToolItemId;
 };
 
 // Partial NPCState — enough to render at the right place + face.

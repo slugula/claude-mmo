@@ -3013,9 +3013,15 @@ void App::drawEquippedWeapon(const shared::PlayerState& p,
                              const glm::mat4& playerModelMatrix,
                              const glm::mat4& viewProj) {
   if (!attachments_.valid()) return;
-  const auto it = p.equipped.find("rightHand");
-  if (it == p.equipped.end() || it->second.itemId.empty()) return;
-  const auto dit = itemDefById_.find(it->second.itemId);
+  // While gathering, the server-resolved tool (axe/pickaxe/fishing rod)
+  // overrides the equipped weapon; otherwise show the equipped right-hand item.
+  std::string itemId = p.activeToolItemId;
+  if (itemId.empty()) {
+    const auto it = p.equipped.find("rightHand");
+    if (it == p.equipped.end() || it->second.itemId.empty()) return;
+    itemId = it->second.itemId;
+  }
+  const auto dit = itemDefById_.find(itemId);
   if (dit == itemDefById_.end()) return;
   const editor::ItemDef& def = *dit->second;
   if (def.modelEquipped.empty()) return;
