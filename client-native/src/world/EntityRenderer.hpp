@@ -106,6 +106,12 @@ public:
   bool itemHasModel(const std::string& itemId) const {
     return const_cast<ModelLibrary&>(itemModels_).has(itemId);
   }
+  // Editor hot-reload: reload NPC + item models whose source files changed.
+  bool reloadModelsIfChanged() {
+    const bool a = npcModels_.reloadIfChanged();
+    const bool b = itemModels_.reloadIfChanged();
+    return a || b;
+  }
   bool itemAabb(const std::string& itemId, glm::vec3& mn, glm::vec3& mx) const {
     return const_cast<ModelLibrary&>(itemModels_).aabb(itemId, mn, mx);
   }

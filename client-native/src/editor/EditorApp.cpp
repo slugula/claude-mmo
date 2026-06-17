@@ -80,6 +80,16 @@ std::filesystem::path resolveFromExe(const char* rel) {
   return std::filesystem::path(buf).parent_path() / rel;
 }
 
+// Prefer the repo SOURCE asset (client-native/assets/...) over the exe-copied
+// one so model edits hot-reload in the editor without a rebuild. The exe lives
+// at client-native/build/Release, so "../../<rel>" reaches the source tree.
+std::filesystem::path resolveSourceFirst(const std::string& rel) {
+  std::error_code ec;
+  auto src = std::filesystem::weakly_canonical(resolveFromExe(("../../" + rel).c_str()), ec);
+  if (!ec && std::filesystem::exists(src)) return src;
+  return resolveFromExe(rel.c_str());
+}
+
 glm::vec3 sunDirectionFromYawPitch(float yawDeg, float pitchDeg) {
   const float yaw   = glm::radians(yawDeg);
   const float pitch = glm::radians(pitchDeg);
@@ -490,21 +500,11 @@ bool EditorApp::init() {
 
   obstacles_.initGL();
   walls_.initGL();
-  obstacles_.setModelResolver([](const std::string& rel) {
-    return resolveFromExe(rel.c_str());
-  });
-  walls_.setModelResolver([](const std::string& rel) {
-    return resolveFromExe(rel.c_str());
-  });
-  pools_.setModelResolver([](const std::string& rel) -> std::filesystem::path {
-    // Prefer the repo SOURCE asset (client-native/assets/...) over the exe-copied
-    // one so pool model edits hot-reload without a rebuild. Exe lives at
-    // client-native/build/Release; "../../<rel>" reaches the source tree.
-    std::error_code ec;
-    auto src = std::filesystem::weakly_canonical(resolveFromExe(("../../" + rel).c_str()), ec);
-    if (!ec && std::filesystem::exists(src)) return src;
-    return resolveFromExe(rel.c_str());
-  });
+  // Source-first resolvers so model edits hot-reload in the editor (see the
+  // run loop's reloadModelsIfChanged() polls) without a rebuild.
+  obstacles_.setModelResolver(resolveSourceFirst);
+  walls_.setModelResolver(resolveSourceFirst);
+  pools_.setModelResolver(resolveSourceFirst);
   entities_.initGL();
 
   initNewMap(64, 64);
@@ -570,8 +570,15 @@ int EditorApp::run() {
     const float dt = std::chrono::duration<float>(now - lastFrameTime_).count();
     lastFrameTime_ = now;
 
-    // Hot-reload pool .glb edits (throttled inside); rebuild instances on change.
+    // Hot-reload model edits (throttled inside each system). Geometry swaps in
+    // place under the same id, so on change we just rebuild instances to refresh
+    // footprints/AABBs. Covers pools, objects, walls, and NPC/item models.
     if (pools_.pollReloadIfChanged()) pools_.rebuildFromMap(map_);
+    bool modelsReloaded = false;
+    modelsReloaded |= obstacles_.reloadModelsIfChanged();
+    modelsReloaded |= walls_.reloadModelsIfChanged();
+    modelsReloaded |= entities_.reloadModelsIfChanged();
+    if (modelsReloaded) rebuildObstacles();
 
     renderFrame(dt);
     window_.swapBuffers();
@@ -3048,9 +3055,7 @@ void EditorApp::dbLoadAll() {
     walls_.rebuildFromMap(map_);
 
     // Load NPC models (or placeholder) so editor NPCs render like the game.
-    entities_.setNpcModelResolver([](const std::string& rel) {
-      return resolveFromExe(rel.c_str());
-    });
+    entities_.setNpcModelResolver(resolveSourceFirst);
     for (const auto& npc : dbNPCs_)
       entities_.ensureNpcModel(npc.id, npc.modelPath, npc.sizeX, npc.sizeY);
 

@@ -59,6 +59,9 @@ public:
     return cardinal_.insts.empty() && diagonal_.insts.empty() && pillar_.insts.empty();
   }
 
+  // Editor hot-reload: reload DB-driven wall/pillar variant meshes on change.
+  bool reloadModelsIfChanged() { return meshes_.reloadIfChanged(); }
+
 private:
   struct Instance { float x, y, z, rotY; };
   struct Kit {

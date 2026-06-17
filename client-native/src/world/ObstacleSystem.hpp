@@ -88,6 +88,9 @@ public:
 
   bool hasCustomModels() const { return !customInstances_.empty(); }
 
+  // Editor hot-reload: reload object models whose source file changed on disk.
+  bool reloadModelsIfChanged() { return models_.reloadIfChanged(); }
+
   // Render one tile's object into the outline mask. Resolves the depleted
   // variant when the tile is depleted, and routes animated models through the
   // skinned mask shader. Returns false (no outline) for empty/non-pickable tiles.

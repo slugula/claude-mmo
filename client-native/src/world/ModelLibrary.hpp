@@ -6,6 +6,7 @@
 #include <glad/glad.h>
 #include <glm/glm.hpp>
 
+#include <chrono>
 #include <filesystem>
 #include <functional>
 #include <memory>
@@ -69,6 +70,12 @@ public:
               int sizeX = 1, int sizeY = 1);
   void clearEntries();   // drop per-id entries (keeps placeholder + scratch VBO)
 
+  // Editor hot-reload: poll every loaded model's source file mtime (throttled)
+  // and rebuild any whose file changed on disk, in place under the same id.
+  // Returns true if anything was reloaded. Requires the resolver to point at
+  // the source assets (not a packed/copied build output).
+  bool reloadIfChanged();
+
   bool has(const std::string& id) const { return entries_.count(id) > 0; }
   bool isAnimated(const std::string& id) const;
 
@@ -119,7 +126,15 @@ private:
     // Merged static geometry (model space) retained for narrow-phase ray picking.
     std::vector<float>            cpuPos;   // x,y,z per vertex
     std::vector<unsigned int>     cpuIdx;   // triangle indices into cpuPos
+    // Source file + footprint for editor hot-reload (empty path = placeholder).
+    std::filesystem::path             srcPath;
+    std::filesystem::file_time_type   mtime{};
+    int                               sizeX = 1, sizeY = 1;
   };
+
+  // Build all GL/CPU geometry for an entry from a model file (or the placeholder
+  // when `path` is empty / load fails). Shared by ensure() and reloadIfChanged().
+  void buildGeometry(Entry& e, const std::filesystem::path& path, int sizeX, int sizeY);
 
   // Upload one kit (positions/normals/indices) wired to scratchVbo_ at the
   // per-instance binding. Defined in the .cpp.
@@ -136,6 +151,7 @@ private:
   // instances are uploaded immediately before its draw.
   GLuint scratchVbo_ = 0;
   static constexpr std::size_t kInstanceCap = 4096;
+  std::chrono::steady_clock::time_point lastReloadPoll_{};   // hot-reload throttle
 
   // Placeholder CPU mesh (loaded in init; falls back to a unit cube).
   std::vector<float>    phPos_;

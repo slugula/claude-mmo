@@ -166,6 +166,8 @@ void ModelLibrary::ensure(const std::string& id, const std::string& modelPath,
   if (entries_.count(id)) return;   // already loaded (call clearEntries() to reload)
 
   Entry e;
+  e.sizeX = sizeX;
+  e.sizeY = sizeY;
 
   // Resolve the model file (try as-is, then with assets/ prefix).
   std::filesystem::path path;
@@ -174,6 +176,19 @@ void ModelLibrary::ensure(const std::string& id, const std::string& modelPath,
     if (!assets::exists(path)) path = resolver_("assets/" + modelPath);
   }
   const bool haveFile = !path.empty() && assets::exists(path);
+  if (haveFile) {
+    e.srcPath = path;
+    std::error_code ec;
+    e.mtime = std::filesystem::last_write_time(path, ec);
+  }
+
+  buildGeometry(e, haveFile ? path : std::filesystem::path{}, sizeX, sizeY);
+  entries_.emplace(id, std::move(e));
+}
+
+void ModelLibrary::buildGeometry(Entry& e, const std::filesystem::path& path,
+                                 int sizeX, int sizeY) {
+  const bool haveFile = !path.empty();
 
   glm::vec3 bmin( 1e9f), bmax(-1e9f);
   auto accumulate = [&](const std::vector<float>& pos) {
@@ -239,8 +254,33 @@ void ModelLibrary::ensure(const std::string& id, const std::string& modelPath,
   bmax.y = std::max(bmax.y, bmin.y + 1.0f);
   e.aabbMin = bmin;
   e.aabbMax = bmax;
+}
 
-  entries_.emplace(id, std::move(e));
+bool ModelLibrary::reloadIfChanged() {
+  const auto now = std::chrono::steady_clock::now();
+  if (now - lastReloadPoll_ < std::chrono::milliseconds(400)) return false;
+  lastReloadPoll_ = now;
+
+  bool any = false;
+  for (auto& [id, e] : entries_) {
+    if (e.srcPath.empty()) continue;
+    std::error_code ec;
+    const auto t = std::filesystem::last_write_time(e.srcPath, ec);
+    if (ec || t == e.mtime) continue;
+    e.mtime = t;
+
+    // Tear down current GL/CPU geometry, then rebuild from the (changed) file.
+    for (Kit& k : e.staticKits) destroyKit(k);
+    e.staticKits.clear();
+    e.skinned.reset();
+    e.animated = false;
+    e.cpuPos.clear();
+    e.cpuIdx.clear();
+    buildGeometry(e, e.srcPath, e.sizeX, e.sizeY);
+    any = true;
+    std::fprintf(stdout, "[ModelLibrary] hot-reloaded %s\n", e.srcPath.string().c_str());
+  }
+  return any;
 }
 
 bool ModelLibrary::isAnimated(const std::string& id) const {
