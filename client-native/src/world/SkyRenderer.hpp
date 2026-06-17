@@ -22,6 +22,7 @@ struct SkyConfig {
   glm::vec3   ground   = {0.30f, 0.30f, 0.34f};   // below the horizon
   float       exposure = 1.0f;
   glm::vec3   sunColor = {1.0f, 0.96f, 0.88f};     // directional light tint
+  float       ambientInfluence = 0.5f;            // 0 = neutral ambient, 1 = full sky tint
 
   // --- Reserved for the future astrology skill (NOT rendered yet) ---
   // A separate star/constellation layer will composite over this base sky and

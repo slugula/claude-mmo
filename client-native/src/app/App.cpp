@@ -687,6 +687,7 @@ bool App::init() {
       sky_.config().horizon  = { s.skyHorizonR, s.skyHorizonG, s.skyHorizonB };
       sky_.config().ground   = { s.skyGroundR,  s.skyGroundG,  s.skyGroundB };
       sky_.config().exposure = s.skyExposure;
+      sky_.config().ambientInfluence = s.skyInfluence;
       sky_.config().sunColor = { s.skySunR, s.skySunG, s.skySunB };
       if (!s.skyCubemap.empty()) {
         sky_.loadCubemap(s.skyCubemap);
@@ -933,9 +934,10 @@ void App::renderFrame() {
   // Treat the sky as a TINT at full brightness — normalise to unit luminance and
   // blend halfway to white — so the Ambient slider still controls overall level
   // and a dark/blue sky doesn't make the whole scene gloomy, just cool-tinted.
-  auto skyTint = [](glm::vec3 c) {
+  const float skyInfluence = sky_.config().ambientInfluence;
+  auto skyTint = [skyInfluence](glm::vec3 c) {
     float l = std::max(0.0001f, 0.2126f * c.r + 0.7152f * c.g + 0.0722f * c.b);
-    return glm::mix(glm::vec3(1.0f), c / l, 0.5f);
+    return glm::mix(glm::vec3(1.0f), c / l, skyInfluence);
   };
   skyAmbientUp_   = skyTint(sky_.ambientSky());
   skyAmbientDown_ = skyTint(sky_.ambientGround());
@@ -2541,6 +2543,10 @@ void App::renderFrame() {
         ImGui::SetNextItemWidth(-110.0f);
         ImGui::SliderFloat("Exposure##sky", &sky_.config().exposure, 0.1f, 2.0f, "%.2f");
         ImGui::ColorEdit3("Sun color##sky", &sky_.config().sunColor.x);
+        ImGui::SetNextItemWidth(-110.0f);
+        ImGui::SliderFloat("Light influence##sky", &sky_.config().ambientInfluence, 0.0f, 1.0f, "%.2f");
+        if (ImGui::IsItemHovered())
+          ImGui::SetTooltip("How much the sky tints scene ambient (0 = neutral, 1 = full sky colour)");
         if (sky_.hasCubemap())
           ImGui::TextDisabled("Ambient auto-matched to cubemap");
         if (sky_.hasCubemap()) {
@@ -3583,6 +3589,7 @@ void App::saveSettings() {
   s.shadowSoftness   = shadowSoftness_;
   s.skyEnabled  = skyEnabled_;
   s.skyExposure = sky_.config().exposure;
+  s.skyInfluence = sky_.config().ambientInfluence;
   s.skyCubemap  = sky_.config().cubemap;
   s.skyZenithR  = sky_.config().zenith.r;  s.skyZenithG  = sky_.config().zenith.g;  s.skyZenithB  = sky_.config().zenith.b;
   s.skyHorizonR = sky_.config().horizon.r; s.skyHorizonG = sky_.config().horizon.g; s.skyHorizonB = sky_.config().horizon.b;

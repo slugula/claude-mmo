@@ -39,6 +39,7 @@ struct AppSettings {
   bool        skyEnabled  = true;
   std::string skyCubemap;             // "" = procedural gradient; else folder name
   float       skyExposure = 1.0f;
+  float       skyInfluence = 0.5f;    // how much the sky tints scene ambient
   float       skyZenithR = 0.16f,  skyZenithG = 0.34f,  skyZenithB = 0.62f;
   float       skyHorizonR = 0.62f, skyHorizonG = 0.74f, skyHorizonB = 0.86f;
   float       skyGroundR = 0.30f,  skyGroundG = 0.30f,  skyGroundB = 0.34f;
@@ -137,8 +138,8 @@ inline bool saveSettings(const AppSettings& s, const std::filesystem::path& path
   std::fprintf(f, "viewRadius=%d\n", s.viewRadius);
   std::fprintf(f, "editorDrawDistance=%d\n", s.editorDrawDistance);
   // Sky
-  std::fprintf(f, "skyEnabled=%d\nskyExposure=%f\nskyCubemap=%s\n",
-               B(s.skyEnabled), s.skyExposure, s.skyCubemap.c_str());
+  std::fprintf(f, "skyEnabled=%d\nskyExposure=%f\nskyInfluence=%f\nskyCubemap=%s\n",
+               B(s.skyEnabled), s.skyExposure, s.skyInfluence, s.skyCubemap.c_str());
   std::fprintf(f, "skyZenithR=%f\nskyZenithG=%f\nskyZenithB=%f\n",
                s.skyZenithR, s.skyZenithG, s.skyZenithB);
   std::fprintf(f, "skyHorizonR=%f\nskyHorizonG=%f\nskyHorizonB=%f\n",
@@ -206,6 +207,7 @@ inline bool loadSettings(AppSettings& s, const std::filesystem::path& path) {
         fI("viewRadius", s.viewRadius) ||
         fI("editorDrawDistance", s.editorDrawDistance) ||
         fB("skyEnabled", s.skyEnabled) || fF("skyExposure", s.skyExposure) ||
+        fF("skyInfluence", s.skyInfluence) ||
         fF("skyZenithR", s.skyZenithR) || fF("skyZenithG", s.skyZenithG) || fF("skyZenithB", s.skyZenithB) ||
         fF("skyHorizonR", s.skyHorizonR) || fF("skyHorizonG", s.skyHorizonG) || fF("skyHorizonB", s.skyHorizonB) ||
         fF("skyGroundR", s.skyGroundR) || fF("skyGroundG", s.skyGroundG) || fF("skyGroundB", s.skyGroundB) ||
