@@ -930,8 +930,15 @@ void App::renderFrame() {
 
   // Sky-driven lighting inputs (Phase 4): hemispheric ambient + sun tint, taken
   // from the current sky (cubemap-averaged when loaded, else gradient colours).
-  skyAmbientUp_   = sky_.ambientSky();
-  skyAmbientDown_ = sky_.ambientGround();
+  // Treat the sky as a TINT at full brightness — normalise to unit luminance and
+  // blend halfway to white — so the Ambient slider still controls overall level
+  // and a dark/blue sky doesn't make the whole scene gloomy, just cool-tinted.
+  auto skyTint = [](glm::vec3 c) {
+    float l = std::max(0.0001f, 0.2126f * c.r + 0.7152f * c.g + 0.0722f * c.b);
+    return glm::mix(glm::vec3(1.0f), c / l, 0.5f);
+  };
+  skyAmbientUp_   = skyTint(sky_.ambientSky());
+  skyAmbientDown_ = skyTint(sky_.ambientGround());
   sunColor_       = sky_.config().sunColor;
 
   const int   fbW    = window_.framebufferWidth();
