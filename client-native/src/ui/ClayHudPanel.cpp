@@ -14,6 +14,7 @@
 #include "ui/ClayHudPanel.hpp"
 #include "ui/ClayContextMenu.hpp"
 #include "ui/ClayTooltip.hpp"
+#include "ui/UiAudio.hpp"
 #include "ui/NameRegistry.hpp"
 #include "net/NetworkClient.hpp"
 
@@ -908,7 +909,7 @@ void clayHudHandleInput(const shared::PlayerState* player,
                     // Drop onto target slot
                     for (int i = 0; i < kInvCols * kInvRows; ++i) {
                         if (Clay_PointerOver(CLAY_IDI("InvSlot", i)) && i != s_dragSlot) {
-                            if (netc) netc->sendMoveSlot(s_dragSlot, i);
+                            if (netc) { netc->sendMoveSlot(s_dragSlot, i); ui::sfx("item_move"); }
                             break;
                         }
                     }

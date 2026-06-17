@@ -6,6 +6,7 @@
 #include "editor/EntityDefs.hpp"
 #include "render/GlDebug.hpp"
 #include "ui/NameRegistry.hpp"
+#include "ui/UiAudio.hpp"
 #include "ui/ClayRenderer.hpp"
 #include "ui/MinimapRenderer.hpp"
 #include "ui/ClayContextMenu.hpp"
@@ -666,6 +667,30 @@ bool App::init() {
   if (!audio_.init()) {
     std::fprintf(stderr, "[App] audio init failed — proceeding without sound\n");
   }
+
+  // File-based SFX. Multiple variants per name are randomized at play time.
+  {
+    auto reg = [&](const char* name, std::initializer_list<const char*> files) {
+      std::vector<std::string> paths;
+      for (const char* f : files)
+        paths.push_back(resolveFromExe((std::string("assets/sfx/") + f).c_str()).string());
+      audio_.loadSfx(name, paths);
+    };
+    reg("warrior_attack", {"Sword Attack 1.ogg", "Sword Attack 2.ogg", "Sword Attack 3.ogg"});
+    reg("damage_taken",   {"Sword Impact Hit 1.ogg", "Sword Impact Hit 2.ogg", "Sword Impact Hit 3.ogg"});
+    reg("chop",           {"chop 1.ogg", "chop 2.ogg", "chop 3.ogg", "chop 4.ogg"});
+    reg("mine",           {"mine 1.ogg", "mine 2.ogg", "mine 3.ogg", "mine 4.ogg", "mine 5.ogg"});
+    reg("bank_open",      {"Chest Open 1.ogg"});
+    reg("bank_close",     {"Chest Close 2.ogg"});
+    reg("item_move",      {"handleSmallLeather2.ogg"});
+    reg("item_drop",      {"cloth3.ogg"});
+    reg("fish_start",     {"bloop.wav"});
+    reg("fish_catch",     {"splash.wav"});
+    reg("tree_fall",      {"chop-tree-fall.ogg"});
+    reg("ore_break",      {"rock_break.ogg"});
+  }
+  // Let UI modules trigger SFX (e.g. inventory drag in ClayHudPanel).
+  ui::setSfxHook([this](const char* n) { audio_.playSfx(n); });
 
   // Load persisted settings if present.
   {
@@ -2116,6 +2141,7 @@ void App::renderFrame() {
         int slot = cm.inventoryCtxSlot;
         if (e.verb == "Drop") {
           network_.sendDropItem(slot);
+          audio_.playSfx("item_drop");
         } else if (e.verb == "Examine") {
           if (!cm.contextItemId.empty()) {
             const std::string msg = "It's a " + ui::itemName(cm.contextItemId) + ".";
@@ -2312,6 +2338,7 @@ void App::renderFrame() {
   if (showClayUi_ && ui::bankWantsClose()) {
     bankOpen_ = false;
     network_.sendCloseBank();
+    audio_.playSfx("bank_close");
   }
 
   // Persist the bank window position after the user finishes dragging it.
@@ -2727,6 +2754,7 @@ void App::drawWorldContextMenu() {
     if (ImGui::Selectable("Bank  Chest")) {
       network_.sendOpenBank();
       bankOpen_ = true;
+      audio_.playSfx("bank_open");
     }
     if (ImGui::Selectable("Examine  Chest"))
       chatLog_.appendSystem("A secure bank chest.");
@@ -3195,6 +3223,18 @@ void App::processNetworkMessages() {
           depletedTiles_ = std::move(nd);
           obstacles_.rebuildFromMap(map_, depletedTiles_);
         }
+
+        // Tree-fall SFX when a tree newly depletes (turns to a stump). Seed on
+        // the first state so existing stumps don't all "fall" on login.
+        std::unordered_set<std::string> treeNow;
+        treeNow.reserve(st.depletedTrees.size());
+        for (const auto& [k, v] : st.depletedTrees) { (void)v; treeNow.insert(k); }
+        if (depletedTreesSeeded_) {
+          for (const auto& k : treeNow)
+            if (seenDepletedTrees_.count(k) == 0) { audio_.playSfx("tree_fall"); break; }
+        }
+        depletedTreesSeeded_ = true;
+        seenDepletedTrees_ = std::move(treeNow);
       }
       // Snapshot rotation for NPC interpolation: previous becomes current,
       // current becomes the just-received state.
@@ -3332,6 +3372,7 @@ void App::processNetworkMessages() {
           if (adjacent && currLocalPlayer_->path.empty()) {
             network_.sendOpenBank(pendingBankTileX_, pendingBankTileY_);  // face the chest
             bankOpen_ = true;
+            audio_.playSfx("bank_open");
             pendingBankTileX_ = pendingBankTileY_ = -1;
           }
         }
@@ -3350,30 +3391,47 @@ void App::processNetworkMessages() {
           seenAttackTick_ = cp.lastAttackTick;
           oneShotClip_    = "Sword_Attack";
           oneShotEndsAt_  = lastTickTime_ + std::chrono::milliseconds(oneShotDurMs("Sword_Attack"));
-          audio_.playStrike();
+          // Sword swing SFX only for warrior (melee) weapons.
+          const auto eqit = cp.equipped.find("rightHand");
+          if (eqit != cp.equipped.end()) {
+            const auto dit = itemDefById_.find(eqit->second.itemId);
+            if (dit != itemDefById_.end() && dit->second->combatStyle == "melee")
+              audio_.playSfx("warrior_attack");
+          }
         }
-        // Woodcutting — also plays Sword_Attack (axe swing).
+        // Woodcutting — axe swing animation + chop SFX.
         if (cp.lastChopTick > seenChopTick_) {
           seenChopTick_  = cp.lastChopTick;
           oneShotClip_   = "Sword_Attack";
           oneShotEndsAt_ = lastTickTime_ + std::chrono::milliseconds(oneShotDurMs("Sword_Attack"));
+          audio_.playSfx("chop");
         }
-        // Mine / Fish — stubbed to the same swing clip as chop for now.
+        // Mining — swing animation + pickaxe strike and the ore breaking free.
         if (cp.lastMineTick > seenMineTick_) {
           seenMineTick_  = cp.lastMineTick;
           oneShotClip_   = "Sword_Attack";
           oneShotEndsAt_ = lastTickTime_ + std::chrono::milliseconds(oneShotDurMs("Sword_Attack"));
+          audio_.playSfx("mine");
+          audio_.playSfx("ore_break");
         }
+        // Fishing — a catch. The cast/"first interaction" bloop is handled below.
         if (cp.lastFishTick > seenFishTick_) {
           seenFishTick_  = cp.lastFishTick;
           oneShotClip_   = "Sword_Attack";
           oneShotEndsAt_ = lastTickTime_ + std::chrono::milliseconds(oneShotDurMs("Sword_Attack"));
+          audio_.playSfx("fish_catch");
+        }
+        // Fishing start: fishTargetX goes from empty -> set when you begin.
+        {
+          const bool fishingNow = cp.fishTargetX.has_value();
+          if (fishingNow && !prevLocalFishing_) audio_.playSfx("fish_start");
+          prevLocalFishing_ = fishingNow;
         }
         // Hit / flinch — Hit_Chest overrides attack if both fire same tick.
         if (cp.lastHitTick > seenHitTick_) {
           seenHitTick_ = cp.lastHitTick;
           if (cp.lastHitDamage > 0) {
-            audio_.playHit();
+            audio_.playSfx("damage_taken");
             oneShotClip_   = "Hit_Chest";
             oneShotEndsAt_ = lastTickTime_ + std::chrono::milliseconds(oneShotDurMs("Hit_Chest"));
           }
@@ -3393,13 +3451,13 @@ void App::processNetworkMessages() {
           for (const auto& [slot, item] : cp.equipped) {
             auto sit = seenEquipped_.find(slot);
             if (sit == seenEquipped_.end() || sit->second != item.itemId) {
-              audio_.playEquip();
+              audio_.playSfx("item_move");
               break;  // one sound per tick is plenty
             }
           }
           for (const auto& [slot, _] : seenEquipped_) {
             if (cp.equipped.find(slot) == cp.equipped.end()) {
-              audio_.playUnequip();
+              audio_.playSfx("item_move");
               break;
             }
           }

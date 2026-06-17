@@ -4,8 +4,18 @@
 // std::min works in the callback below.
 #define NOMINMAX
 #define WIN32_LEAN_AND_MEAN
+
+// Enable OGG Vorbis decoding in miniaudio via stb_vorbis. The documented dance:
+// include stb_vorbis header-only BEFORE miniaudio, then its implementation
+// AFTER miniaudio's implementation. Gives ma_decoder ogg + mp3 + wav support.
+#define STB_VORBIS_HEADER_ONLY
+#include <stb_vorbis.c>
+
 #define MINIAUDIO_IMPLEMENTATION
 #include <miniaudio.h>
+
+#undef STB_VORBIS_HEADER_ONLY
+#include <stb_vorbis.c>
 
 #include <algorithm>
 #include <cmath>
@@ -15,9 +25,26 @@
 
 namespace audio {
 
+namespace {
+constexpr float kMusicFadeSec = 1.5f;   // fade in/out duration
+constexpr float kMusicVolume  = 0.55f;  // music sits under SFX
+}  // namespace
+
 struct AudioEngine::Impl {
   ma_device device{};
   bool      deviceInited = false;
+
+  // Streaming music: two slots for crossfade (one fading in, one fading out).
+  struct Music {
+    ma_decoder dec{};
+    bool       valid  = false;
+    float      gain   = 0.0f;   // current 0..1
+    float      target = 0.0f;   // 0 = fading out, 1 = fading in
+  };
+  Music        slotA;
+  Music        slotB;
+  Music*       active     = nullptr;   // points at slotA/slotB, or null
+  std::string  activePath;
 };
 
 AudioEngine::AudioEngine()  = default;
@@ -89,8 +116,10 @@ bool AudioEngine::init() {
 
 void AudioEngine::shutdown() {
   if (impl_ && impl_->deviceInited) {
-    ma_device_uninit(&impl_->device);
+    ma_device_uninit(&impl_->device);   // stops the callback first
     impl_->deviceInited = false;
+    if (impl_->slotA.valid) ma_decoder_uninit(&impl_->slotA.dec);
+    if (impl_->slotB.valid) ma_decoder_uninit(&impl_->slotB.dec);
   }
   impl_.reset();
   ready_ = false;
@@ -108,6 +137,87 @@ void AudioEngine::playEquip()   { if (ready_) enqueue(bufEquip_);   }
 void AudioEngine::playUnequip() { if (ready_) enqueue(bufUnequip_); }
 void AudioEngine::playLevelUp() { if (ready_) enqueue(bufLevelUp_); }
 
+// ---- File-based SFX --------------------------------------------------------
+
+// Decode a whole audio file (ogg/mp3/wav) to mono float at `rate`. ma_decoder
+// resamples + downmixes for us.
+static bool decodeFileMono(const char* path, ma_uint32 rate, std::vector<float>& out) {
+  ma_decoder_config cfg = ma_decoder_config_init(ma_format_f32, 1, rate);
+  ma_decoder dec;
+  if (ma_decoder_init_file(path, &cfg, &dec) != MA_SUCCESS) return false;
+  out.clear();
+  float chunk[4096];
+  for (;;) {
+    ma_uint64 read = 0;
+    const ma_result r = ma_decoder_read_pcm_frames(&dec, chunk, 4096, &read);
+    if (read > 0) out.insert(out.end(), chunk, chunk + read);
+    if (r != MA_SUCCESS || read == 0) break;
+  }
+  ma_decoder_uninit(&dec);
+  return !out.empty();
+}
+
+bool AudioEngine::loadSfx(const std::string& name, const std::vector<std::string>& files) {
+  std::vector<std::vector<float>> bufs;
+  for (const auto& f : files) {
+    std::vector<float> b;
+    if (decodeFileMono(f.c_str(), sampleRate_, b)) bufs.push_back(std::move(b));
+    else std::fprintf(stderr, "[Audio] SFX decode failed: %s\n", f.c_str());
+  }
+  if (bufs.empty()) return false;
+  sfx_[name] = std::move(bufs);
+  return true;
+}
+
+void AudioEngine::playSfx(const std::string& name) {
+  if (!ready_) return;
+  auto it = sfx_.find(name);
+  if (it == sfx_.end() || it->second.empty()) return;
+  const auto& variants = it->second;
+  std::size_t idx = 0;
+  if (variants.size() > 1)
+    idx = std::uniform_int_distribution<std::size_t>(0, variants.size() - 1)(rng_);
+  enqueue(variants[idx]);   // buffers are stable after load → pointer stays valid
+}
+
+// ---- Streaming music -------------------------------------------------------
+
+void AudioEngine::playMusic(const std::string& path) {
+  if (!ready_ || path.empty() || !impl_) return;
+  std::lock_guard<std::mutex> lock(musicMtx_);
+  if (impl_->active && impl_->activePath == path && impl_->active->valid) {
+    impl_->active->target = 1.0f;   // already playing — make sure it's audible
+    return;
+  }
+  if (impl_->active && impl_->active->valid) impl_->active->target = 0.0f;  // fade out current
+
+  // Pick the non-active slot to host the new track (evicting any prior outgoing).
+  Impl::Music* slot = (impl_->active == &impl_->slotA) ? &impl_->slotB : &impl_->slotA;
+  if (slot->valid) { ma_decoder_uninit(&slot->dec); slot->valid = false; }
+
+  ma_decoder_config cfg = ma_decoder_config_init(ma_format_f32, 1, sampleRate_);
+  if (ma_decoder_init_file(path.c_str(), &cfg, &slot->dec) != MA_SUCCESS) {
+    std::fprintf(stderr, "[Audio] music load failed: %s\n", path.c_str());
+    impl_->active = nullptr;
+    impl_->activePath.clear();
+    return;
+  }
+  ma_data_source_set_looping(&slot->dec, MA_TRUE);
+  slot->valid  = true;
+  slot->gain   = 0.0f;
+  slot->target = 1.0f;
+  impl_->active     = slot;
+  impl_->activePath = path;
+}
+
+void AudioEngine::stopMusic() {
+  if (!impl_) return;
+  std::lock_guard<std::mutex> lock(musicMtx_);
+  if (impl_->active) impl_->active->target = 0.0f;   // fade out; slot reclaimed on next play
+  impl_->active = nullptr;
+  impl_->activePath.clear();
+}
+
 void AudioEngine::enqueue(const std::vector<float>& src) {
   std::lock_guard<std::mutex> lock(voicesMtx_);
   // Cap concurrent voices so combat-spam can't snowball.
@@ -117,17 +227,40 @@ void AudioEngine::enqueue(const std::vector<float>& src) {
 
 void AudioEngine::mixInto(float* output, unsigned int frameCount) {
   std::fill(output, output + frameCount, 0.0f);
-  std::lock_guard<std::mutex> lock(voicesMtx_);
   const float gain = masterVolume_.load();
-  for (auto it = voices_.begin(); it != voices_.end();) {
-    auto& v = *it;
-    const auto& buf = *v.buf;
-    const std::size_t avail = buf.size() - v.pos;
-    const std::size_t n = std::min(static_cast<std::size_t>(frameCount), avail);
-    for (std::size_t i = 0; i < n; ++i) output[i] += buf[v.pos + i] * gain;
-    v.pos += n;
-    if (v.pos >= buf.size()) it = voices_.erase(it);
-    else                     ++it;
+
+  // ---- One-shot voices (synth + SFX) -------------------------------------
+  {
+    std::lock_guard<std::mutex> lock(voicesMtx_);
+    for (auto it = voices_.begin(); it != voices_.end();) {
+      auto& v = *it;
+      const auto& buf = *v.buf;
+      const std::size_t avail = buf.size() - v.pos;
+      const std::size_t n = std::min(static_cast<std::size_t>(frameCount), avail);
+      for (std::size_t i = 0; i < n; ++i) output[i] += buf[v.pos + i] * gain;
+      v.pos += n;
+      if (v.pos >= buf.size()) it = voices_.erase(it);
+      else                     ++it;
+    }
+  }
+
+  // ---- Streaming music (looping, crossfaded) -----------------------------
+  if (impl_) {
+    std::lock_guard<std::mutex> mlock(musicMtx_);
+    const float step = (sampleRate_ > 0) ? 1.0f / (kMusicFadeSec * sampleRate_) : 1.0f;
+    static thread_local std::vector<float> scratch;
+    if (scratch.size() < frameCount) scratch.resize(frameCount);
+    for (Impl::Music* m : { &impl_->slotA, &impl_->slotB }) {
+      if (!m->valid) continue;
+      if (m->gain <= 0.0001f && m->target <= 0.0f) continue;  // silent, fade done
+      ma_uint64 read = 0;
+      ma_decoder_read_pcm_frames(&m->dec, scratch.data(), frameCount, &read);
+      for (ma_uint64 i = 0; i < read; ++i) {
+        if      (m->gain < m->target) m->gain = std::min(m->target, m->gain + step);
+        else if (m->gain > m->target) m->gain = std::max(m->target, m->gain - step);
+        output[i] += scratch[i] * m->gain * gain * kMusicVolume;
+      }
+    }
   }
 }
 

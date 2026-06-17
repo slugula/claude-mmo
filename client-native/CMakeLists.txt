@@ -97,6 +97,7 @@ add_executable(client-native
   src/editor/EntityClient.cpp
   src/net/NetworkClient.cpp
   src/ui/Panels.cpp
+  src/ui/UiAudio.cpp
   src/ui/WorldOverlays.cpp
   src/ui/ClayRenderer.cpp
   src/ui/ClayHudPanel.cpp

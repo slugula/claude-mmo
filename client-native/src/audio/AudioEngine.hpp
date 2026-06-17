@@ -4,6 +4,9 @@
 #include <cstddef>
 #include <memory>
 #include <mutex>
+#include <random>
+#include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace audio {
@@ -34,6 +37,21 @@ public:
   void playEquip();
   void playUnequip();
   void playLevelUp();
+
+  // ---- File-based SFX ----------------------------------------------------
+  // Register a named SFX with one or more variant files (absolute paths). When
+  // a name has multiple variants, playSfx() picks one at random. Decoded to the
+  // device format (mono, device rate) once at load. Safe to call before the
+  // device is ready; decoding is independent of playback.
+  bool loadSfx(const std::string& name, const std::vector<std::string>& files);
+  void playSfx(const std::string& name);
+
+  // ---- Streaming music ---------------------------------------------------
+  // Play a looping music track (absolute .ogg/.mp3/.wav path), crossfading from
+  // whatever is currently playing. Passing the path that's already active is a
+  // no-op (keeps it playing). stopMusic() fades the current track out.
+  void playMusic(const std::string& path);
+  void stopMusic();
 
   // Global gain multiplier applied in the audio callback.
   void  setMasterVolume(float v);
@@ -74,6 +92,15 @@ private:
 
   std::mutex          voicesMtx_;
   std::vector<Voice>  voices_;
+
+  // File-based SFX: name -> decoded variant buffers (mono, device rate). Loaded
+  // once; stable thereafter so Voice pointers into them stay valid.
+  std::unordered_map<std::string, std::vector<std::vector<float>>> sfx_;
+  std::mt19937 rng_{ std::random_device{}() };   // variant pick (main thread)
+
+  // Streaming music state (ma_decoder lives in Impl). musicMtx_ guards the music
+  // tracks shared with the audio callback.
+  std::mutex musicMtx_;
 
   std::atomic<float>  masterVolume_{0.5f};
   bool                ready_      = false;

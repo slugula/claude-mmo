@@ -179,6 +179,9 @@ private:
   // each rise of lastLevelUpTick (visual VFX is handled in WorldOverlays).
   int  seenLevelUpTickLocal_ = -999999;
   bool levelUpSeeded_        = false;
+  bool prevLocalFishing_     = false;   // edge-detect fishing start for the cast SFX
+  std::unordered_set<std::string> seenDepletedTrees_;   // for tree-fall SFX
+  bool depletedTreesSeeded_  = false;
   std::unordered_map<std::string, RemoteAnim>          remoteAnims_;
   std::vector<shared::NPCState>            npcs_;
   std::vector<shared::DroppedItemState>    droppedItems_;
