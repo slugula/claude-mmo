@@ -2393,11 +2393,11 @@ void App::renderFrame() {
         entityEntries.push_back(std::move(e));
       }
 
-      // Remote players: chat bubbles only (no HP bar shown for other players)
+      // Remote players: chat bubbles + level-up fireworks. Always include them
+      // (keyed by id) so WorldOverlays can anchor a firework to a remote player
+      // even when they aren't chatting; drawBubble skips an empty/zero-alpha msg.
       for (const auto& [id, rp] : currRemotePlayers_) {
         if (rp.dying) continue;
-        const float ca = chatAlphaFor(rp.chatMessage, rp.chatMessageTick);
-        if (ca <= 0.0f) continue;
         float fx = static_cast<float>(rp.tileX);
         float fz = static_cast<float>(rp.tileY);
         auto pit = prevRemotePlayers_.find(id);
@@ -2409,11 +2409,12 @@ void App::renderFrame() {
                                     static_cast<int>(std::round(fx)),
                                     static_cast<int>(std::round(fz)));
         ui::WorldOverlays::OverlayEntry e;
+        e.id          = id;
         e.wx          = fx;
         e.wy          = fy;
         e.wz          = fz;
         e.chatMessage = rp.chatMessage;
-        e.chatAlpha   = ca;
+        e.chatAlpha   = chatAlphaFor(rp.chatMessage, rp.chatMessageTick);
         entityEntries.push_back(std::move(e));
       }
 
