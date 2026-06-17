@@ -5,6 +5,7 @@
 #include <glm/glm.hpp>
 
 #include <chrono>
+#include <climits>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -64,6 +65,15 @@ private:
   std::unordered_map<std::string, int> seenHitTick_;
   std::vector<Splat>                   splats_;
   bool initialized_ = false;
+
+  // ---- Level-up VFX ------------------------------------------------------
+  // A one-shot "firework" burst above the local player's head, spawned when
+  // PlayerState.lastLevelUpTick rises. Anchored to the local player so it
+  // follows the head; resolved to the head world position in draw(). Kept
+  // deliberately simple — see kFireworkDurSec / drawFirework to upgrade later.
+  int                                              seenLevelUpTick_ = INT_MIN;
+  std::vector<std::chrono::steady_clock::time_point> localFireworks_;
+  static constexpr float kFireworkDurSec = 1.0f;
 
   // Local player health bar fade: stays visible for kHealthBarFadeSec seconds
   // after HP returns to full.

@@ -200,6 +200,9 @@ struct PlayerState {
   // Item id the player visually holds while gathering (axe/pickaxe/fishing rod);
   // overrides the equipped weapon. Empty = none. Server-derived each tick.
   std::string                                  activeToolItemId;
+  // Bumped whenever any skill levels up — client plays a one-shot VFX when this
+  // rises above the value it last saw for this player.
+  int                                          lastLevelUpTick = -999;
 };
 
 // Partial NPCState — enough to render at the right place + face.

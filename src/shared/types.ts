@@ -210,6 +210,9 @@ export interface PlayerState {
   // overriding their equipped weapon on the client. '' = none (show equipped).
   // Server-derived each tick (see systems/GatheringTool.ts); not persisted.
   activeToolItemId: string;
+  // Tick stamp bumped whenever ANY skill levels up — drives the client's
+  // level-up VFX (a one-shot above the head). Rises monotonically; not persisted.
+  lastLevelUpTick: number;
   dying: boolean;
   dyingTick: number;
   lastRegenTick: number;

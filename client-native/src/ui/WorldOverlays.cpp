@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 
 namespace ui {
@@ -34,11 +35,18 @@ void WorldOverlays::update(int /*currentTick*/,
     initialized_ = true;
     if (localPlayer && localPlayer->lastHitTick > 0)
       seenHitTick_["__local__"] = localPlayer->lastHitTick;
+    if (localPlayer) seenLevelUpTick_ = localPlayer->lastLevelUpTick;  // don't fire on login
     for (const auto& n : npcs) {
       if (n.lastHitTick > 0)
         seenHitTick_[n.id] = n.lastHitTick;
     }
     return;
+  }
+
+  // Level-up VFX: when the local player's lastLevelUpTick rises, queue a burst.
+  if (localPlayer && localPlayer->lastLevelUpTick > seenLevelUpTick_) {
+    seenLevelUpTick_ = localPlayer->lastLevelUpTick;
+    localFireworks_.push_back(now);
   }
 
   using Dur = std::chrono::steady_clock::duration;
@@ -234,6 +242,56 @@ void WorldOverlays::draw(const glm::mat4& viewProj, int fbWidth, int fbHeight,
                 IM_COL32(255, 255, 255, static_cast<int>(alpha * 255)), buf);
     ++it;
   }
+
+  // ---- Level-up fireworks — one-shot burst above the local player's head ----
+  //
+  // Deliberately a simple radial spark burst (head-sized, ~1s, expand+fade+
+  // droop). Swap the body of drawFirework for something fancier later without
+  // touching the trigger plumbing.
+  auto drawFirework = [&](ImVec2 c, float age, float headPx) {
+    const float t    = std::clamp(age / kFireworkDurSec, 0.0f, 1.0f);
+    const float fade = 1.0f - t;
+    const float r    = headPx * (1.0f - fade * fade);   // ease-out expansion
+    const ImU32 palette[4] = {
+        IM_COL32(255, 214,  70, 255), IM_COL32(255,  90,  90, 255),
+        IM_COL32( 95, 200, 255, 255), IM_COL32(130, 255, 130, 255) };
+    if (t < 0.25f) {                                    // initial bright flash
+      const int a = static_cast<int>(220 * (1.0f - t / 0.25f));
+      dl->AddCircleFilled(c, headPx * 0.45f * (1.0f - t / 0.25f) + 1.0f,
+                          IM_COL32(255, 255, 220, a), 16);
+    }
+    const int N = 14;
+    for (int i = 0; i < N; ++i) {
+      const float ang = static_cast<float>(i) / N * 6.2831853f + t * 0.6f;
+      const float vr  = r * (0.65f + 0.35f * static_cast<float>((i * 13) % 10) / 9.0f);
+      const float gy  = t * t * headPx * 0.7f;          // gravity droop
+      const ImVec2 p (c.x + std::cos(ang) * vr,        c.y + std::sin(ang) * vr + gy);
+      const ImVec2 p0(c.x + std::cos(ang) * vr * 0.55f, c.y + std::sin(ang) * vr * 0.55f + gy * 0.55f);
+      const ImU32 col  = palette[i & 3] & 0x00FFFFFFu;
+      dl->AddLine(p0, p, col | (static_cast<ImU32>(160 * fade) << 24), 1.5f);
+      dl->AddCircleFilled(p, std::max(1.5f, headPx * 0.10f * fade + 1.0f),
+                          col | (static_cast<ImU32>(255 * fade) << 24), 8);
+    }
+  };
+
+  if (localPlayer && !localFireworks_.empty()) {
+    const glm::vec3 head(localPlayer->wx, localPlayer->wy + 2.0f, localPlayer->wz);
+    glm::vec2 px;
+    if (worldToScreen(viewProj, head, fbWidth, fbHeight, &px)) {
+      const float headPx = billboardBarW(viewProj, head.x, head.y, head.z,
+                                         0.22f, fbWidth, fbHeight) * 0.5f;
+      for (const auto& t0 : localFireworks_) {
+        const float age = std::chrono::duration<float>(now - t0).count();
+        if (age <= kFireworkDurSec) drawFirework(ImVec2(px.x, px.y), age, headPx);
+      }
+    }
+  }
+  localFireworks_.erase(
+      std::remove_if(localFireworks_.begin(), localFireworks_.end(),
+          [&](const auto& t0) {
+            return std::chrono::duration<float>(now - t0).count() > kFireworkDurSec;
+          }),
+      localFireworks_.end());
 }
 
 }  // namespace ui

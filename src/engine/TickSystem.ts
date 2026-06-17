@@ -90,7 +90,19 @@ export function processTick(
   // the *Target fields are settled. Client overrides the equipped weapon with it.
   const finalPlayers: Record<string, PlayerState> = {};
   for (const [pid, p] of Object.entries(fish.players)) {
-    finalPlayers[pid] = { ...p, activeToolItemId: resolveActiveTool(p) };
+    // Level-up VFX trigger: bump lastLevelUpTick if any skill's level rose this
+    // tick vs the previous state. Central so every XP source (combat, gathering,
+    // future skills) lights it up with no extra wiring.
+    const prevP = prev.players[pid];
+    const leveled = prevP
+      ? (Object.keys(p.skills) as (keyof typeof p.skills)[]).some(
+          k => p.skills[k].level > (prevP.skills[k]?.level ?? 0))
+      : false;
+    finalPlayers[pid] = {
+      ...p,
+      activeToolItemId: resolveActiveTool(p),
+      lastLevelUpTick: leveled ? tick : p.lastLevelUpTick,
+    };
   }
   const finalWorld = mine.world;
 
