@@ -179,7 +179,10 @@ private:
   // each rise of lastLevelUpTick (visual VFX is handled in WorldOverlays).
   int  seenLevelUpTickLocal_ = -999999;
   bool levelUpSeeded_        = false;
-  bool prevLocalFishing_     = false;   // edge-detect fishing start for the cast SFX
+  bool prevLocalFishing_     = false;   // fishTargetX presence last state
+  bool fishStartPending_     = false;   // armed on spot-target, fires bloop on first roll
+  double seenMiningXp_       = 0.0;     // for ore-break "success" SFX
+  double seenFishingXp_      = 0.0;     // for splash "catch" SFX
   std::unordered_set<std::string> seenDepletedTrees_;   // for tree-fall SFX
   bool depletedTreesSeeded_  = false;
   // Per-chunk background music (from init): "cx,cy" -> song file.

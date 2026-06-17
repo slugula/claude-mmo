@@ -3410,13 +3410,15 @@ void App::processNetworkMessages() {
           seenAttackTick_ = cp.lastAttackTick;
           oneShotClip_    = "Sword_Attack";
           oneShotEndsAt_  = lastTickTime_ + std::chrono::milliseconds(oneShotDurMs("Sword_Attack"));
-          // Sword swing SFX only for warrior (melee) weapons.
+          // Sword swing SFX for every warrior (melee/unarmed) attack — only a
+          // gunner weapon suppresses it (it'll get its own SFX later).
+          bool gunner = false;
           const auto eqit = cp.equipped.find("rightHand");
           if (eqit != cp.equipped.end()) {
             const auto dit = itemDefById_.find(eqit->second.itemId);
-            if (dit != itemDefById_.end() && dit->second->combatStyle == "melee")
-              audio_.playSfx("warrior_attack");
+            if (dit != itemDefById_.end() && dit->second->combatStyle == "gunner") gunner = true;
           }
+          if (!gunner) audio_.playSfx("warrior_attack");
         }
         // Woodcutting — axe swing animation + chop SFX.
         if (cp.lastChopTick > seenChopTick_) {
@@ -3425,26 +3427,43 @@ void App::processNetworkMessages() {
           oneShotEndsAt_ = lastTickTime_ + std::chrono::milliseconds(oneShotDurMs("Sword_Attack"));
           audio_.playSfx("chop");
         }
-        // Mining — swing animation + pickaxe strike and the ore breaking free.
+        // Mining — pickaxe strike on every attempt (lastMineTick = each roll).
+        // The ore-break "success" sound is driven by the mining XP gain below.
         if (cp.lastMineTick > seenMineTick_) {
           seenMineTick_  = cp.lastMineTick;
           oneShotClip_   = "Sword_Attack";
           oneShotEndsAt_ = lastTickTime_ + std::chrono::milliseconds(oneShotDurMs("Sword_Attack"));
           audio_.playSfx("mine");
-          audio_.playSfx("ore_break");
         }
-        // Fishing — a catch. The cast/"first interaction" bloop is handled below.
+        // Fishing — each roll advances lastFishTick. The catch "splash" is driven
+        // by the fishing XP gain below; the cast "bloop" by the start arming.
         if (cp.lastFishTick > seenFishTick_) {
           seenFishTick_  = cp.lastFishTick;
           oneShotClip_   = "Sword_Attack";
           oneShotEndsAt_ = lastTickTime_ + std::chrono::milliseconds(oneShotDurMs("Sword_Attack"));
-          audio_.playSfx("fish_catch");
+          // First roll of a fishing session = the loop actually started → cast.
+          if (fishStartPending_) { audio_.playSfx("fish_start"); fishStartPending_ = false; }
         }
-        // Fishing start: fishTargetX goes from empty -> set when you begin.
+        // Arm the fishing cast when a spot is targeted (player clicked / walking
+        // to it); the bloop fires on the first roll above. Disarm if they stop.
         {
           const bool fishingNow = cp.fishTargetX.has_value();
-          if (fishingNow && !prevLocalFishing_) audio_.playSfx("fish_start");
+          if (fishingNow && !prevLocalFishing_) fishStartPending_ = true;
+          if (!fishingNow) fishStartPending_ = false;
           prevLocalFishing_ = fishingNow;
+        }
+        // Gathering "success" SFX from XP gains: mining ore-break, fishing splash.
+        {
+          auto xpOf = [&](const char* s) {
+            auto it = cp.skills.find(s); return it != cp.skills.end() ? it->second.xp : 0.0;
+          };
+          const double mxp = xpOf("mining"), fxp = xpOf("fishing");
+          if (!firstState) {
+            if (mxp > seenMiningXp_ + 1e-6) audio_.playSfx("ore_break");
+            if (fxp > seenFishingXp_ + 1e-6) audio_.playSfx("fish_catch");
+          }
+          seenMiningXp_  = mxp;
+          seenFishingXp_ = fxp;
         }
         // Hit / flinch — Hit_Chest overrides attack if both fire same tick.
         if (cp.lastHitTick > seenHitTick_) {
@@ -3458,9 +3477,12 @@ void App::processNetworkMessages() {
         // Pickup completed: pickupItemId just cleared → play PickUp_Table
         // only if nothing else is already happening this tick.
         const bool pickupActive = cp.pickupItemId.has_value();
-        if (prevPickupActive_ && !pickupActive && oneShotClip_.empty()) {
-          oneShotClip_   = "PickUp_Table";
-          oneShotEndsAt_ = lastTickTime_ + std::chrono::milliseconds(oneShotDurMs("PickUp_Table"));
+        if (prevPickupActive_ && !pickupActive) {
+          audio_.playSfx("item_drop");   // same cloth rustle as dropping
+          if (oneShotClip_.empty()) {
+            oneShotClip_   = "PickUp_Table";
+            oneShotEndsAt_ = lastTickTime_ + std::chrono::milliseconds(oneShotDurMs("PickUp_Table"));
+          }
         }
         prevPickupActive_ = pickupActive;
         // Equip / unequip detection: diff the new equipped map against the

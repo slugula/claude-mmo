@@ -253,8 +253,18 @@ void AudioEngine::mixInto(float* output, unsigned int frameCount) {
     for (Impl::Music* m : { &impl_->slotA, &impl_->slotB }) {
       if (!m->valid) continue;
       if (m->gain <= 0.0001f && m->target <= 0.0f) continue;  // silent, fade done
-      ma_uint64 read = 0;
-      ma_decoder_read_pcm_frames(&m->dec, scratch.data(), frameCount, &read);
+      // Fill the whole block, looping by seeking back to the start on EOF (don't
+      // rely solely on the data-source loop flag, which some backends ignore).
+      ma_uint64 total = 0;
+      for (int guard = 0; total < frameCount && guard < 4; ++guard) {
+        ma_uint64 read = 0;
+        ma_decoder_read_pcm_frames(&m->dec, scratch.data() + total, frameCount - total, &read);
+        total += read;
+        if (total < frameCount) {            // hit end of stream → rewind
+          if (ma_decoder_seek_to_pcm_frame(&m->dec, 0) != MA_SUCCESS) break;
+        }
+      }
+      const ma_uint64 read = total;
       for (ma_uint64 i = 0; i < read; ++i) {
         if      (m->gain < m->target) m->gain = std::min(m->target, m->gain + step);
         else if (m->gain > m->target) m->gain = std::max(m->target, m->gain - step);
