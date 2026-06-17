@@ -2338,8 +2338,9 @@ void App::renderFrame() {
       auto chatAlphaFor = [&](const std::string& msg, int msgTick) -> float {
         if (msg.empty() || msgTick <= 0) return 0.0f;
         const int age = currentTick_ - msgTick;
-        if (age < 0 || age > 50) return 0.0f;
-        return (age > 40) ? 1.0f - static_cast<float>(age - 40) / 10.0f : 1.0f;
+        // ~5s at 200ms ticks: full until tick 20, fade out over ticks 20–25.
+        if (age < 0 || age > 25) return 0.0f;
+        return (age > 20) ? 1.0f - static_cast<float>(age - 20) / 5.0f : 1.0f;
       };
 
       // --- Local player entry ---
