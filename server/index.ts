@@ -284,6 +284,7 @@ wss.on('connection', async (ws: WebSocket, req: IncomingMessage) => {
     worldWidth:  dims.width,
     worldHeight: dims.height,
     chunkSize:   loop.getChunkSize(),
+    chunkMusic:  loop.getChunkMusic(),   // { "cx,cy": "song.ogg" } per-chunk music
     spawnX:      spawn.x,
     spawnY:      spawn.y,
     waterTiles:    streaming ? [] : loop.getWaterTiles(),

@@ -137,6 +137,7 @@ export interface WorldChunkRef {
   cy: number;
   mapFile: string;   // relative to the manifest's directory
   name?: string;
+  music?: string;    // looping background music file (relative to assets/music/)
 }
 
 export interface WorldManifest {

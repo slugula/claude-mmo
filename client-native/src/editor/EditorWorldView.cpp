@@ -44,6 +44,18 @@ std::filesystem::path canonicalMapsDir() {
   return dir;
 }
 
+// Music assets dir (client-native/assets/music) for the chunk-music picker:
+// Release/ → build/ → client-native/. Falls back to the exe-local copy.
+std::filesystem::path musicAssetsDir() {
+  wchar_t exePath[MAX_PATH] = {};
+  GetModuleFileNameW(nullptr, exePath, MAX_PATH);
+  const std::filesystem::path exeDir = std::filesystem::path(exePath).parent_path();
+  std::error_code ec;
+  auto src = std::filesystem::canonical(exeDir / L"../../assets/music", ec);
+  if (!ec) return src;
+  return exeDir / L"assets/music";
+}
+
 }  // namespace
 
 std::filesystem::path EditorApp::worldDir() const {
@@ -442,10 +454,31 @@ void EditorApp::drawWorldView() {
 
   // ---- Context menu: filled cell ----
   if (ImGui::BeginPopup("##cellmenu")) {
-    const auto* cell = worldCellAt(popCx, popCy);
+    auto* cell = worldCellAt(popCx, popCy);
     ImGui::TextDisabled("(%d,%d) %s", popCx, popCy, cell ? cell->mapFile.c_str() : "?");
+    if (cell && !cell->music.empty()) ImGui::TextDisabled("music: %s", cell->music.c_str());
     ImGui::Separator();
     if (ImGui::MenuItem("Open for editing")) worldOpenChunk(popCx, popCy);
+    // Assign a looping background song to this chunk (from assets/music/).
+    if (cell && ImGui::BeginMenu("Music")) {
+      if (ImGui::MenuItem("(none)", nullptr, cell->music.empty())) {
+        cell->music.clear(); worldDirty_ = true;
+      }
+      std::error_code mec;
+      const auto mdir = musicAssetsDir();
+      if (std::filesystem::exists(mdir, mec)) {
+        for (const auto& de : std::filesystem::directory_iterator(mdir, mec)) {
+          if (!de.is_regular_file()) continue;
+          const std::string ext = de.path().extension().string();
+          if (ext != ".ogg" && ext != ".mp3" && ext != ".wav") continue;
+          const std::string fn = de.path().filename().string();
+          if (ImGui::MenuItem(fn.c_str(), nullptr, cell->music == fn)) {
+            cell->music = fn; worldDirty_ = true;
+          }
+        }
+      }
+      ImGui::EndMenu();
+    }
     if (ImGui::MenuItem("Set world spawn here")) {
       const int S2 = worldManifest_.chunkSize;
       worldManifest_.spawn.x = popCx * S2 + S2 / 2;

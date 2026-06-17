@@ -182,6 +182,10 @@ private:
   bool prevLocalFishing_     = false;   // edge-detect fishing start for the cast SFX
   std::unordered_set<std::string> seenDepletedTrees_;   // for tree-fall SFX
   bool depletedTreesSeeded_  = false;
+  // Per-chunk background music (from init): "cx,cy" -> song file.
+  std::unordered_map<std::string, std::string> chunkMusic_;
+  int         musicChunkSize_ = 0;
+  std::string currentMusicFile_;   // song currently playing (avoids re-triggering)
   std::unordered_map<std::string, RemoteAnim>          remoteAnims_;
   std::vector<shared::NPCState>            npcs_;
   std::vector<shared::DroppedItemState>    droppedItems_;

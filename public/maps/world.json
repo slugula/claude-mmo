@@ -10,13 +10,15 @@
          "cx": 0,
          "cy": 0,
          "mapFile": "worldMap.json",
-         "name": "worldMap"
+         "name": "worldMap",
+         "music": "woods.ogg"
       },
       {
          "cx": 1,
          "cy": 0,
          "mapFile": "chunk_1_1.json",
-         "name": "chunk_1_1"
+         "name": "chunk_1_1",
+         "music": "desert.mp3"
       }
    ]
 }

@@ -968,6 +968,21 @@ void App::renderFrame() {
   skyAmbientDown_ = skyTint(sky_.ambientGround());
   sunColor_       = sky_.config().sunColor;
 
+  // Per-chunk music: switch (with crossfade) when the player crosses into a
+  // chunk that has a different assigned song. Empty/none → fade out.
+  if (currLocalPlayer_ && musicChunkSize_ > 0) {
+    const int ccx = currLocalPlayer_->tileX / musicChunkSize_;
+    const int ccy = currLocalPlayer_->tileY / musicChunkSize_;
+    const std::string key = std::to_string(ccx) + "," + std::to_string(ccy);
+    const auto it = chunkMusic_.find(key);
+    const std::string song = (it != chunkMusic_.end()) ? it->second : std::string();
+    if (song != currentMusicFile_) {
+      currentMusicFile_ = song;
+      if (song.empty()) audio_.stopMusic();
+      else audio_.playMusic(resolveFromExe(("assets/music/" + song).c_str()).string());
+    }
+  }
+
   const int   fbW    = window_.framebufferWidth();
   const int   fbH    = window_.framebufferHeight();
   const float aspect = (fbH > 0) ? static_cast<float>(fbW) / static_cast<float>(fbH) : 1.0f;
@@ -3106,6 +3121,10 @@ void App::processNetworkMessages() {
                    init.isNewPlayer ? "(new)" : "(returning)");
       isNewPlayer_ = init.isNewPlayer;
       if (isNewPlayer_) joinNameBuf_[0] = '\0';
+      // Per-chunk music: remember the map + chunk size, force a re-evaluation.
+      chunkMusic_      = init.chunkMusic;
+      musicChunkSize_  = init.chunkSize;
+      currentMusicFile_.clear();
       depletedTiles_.clear();
       if (init.streaming) {
         // Streaming world: allocate an all-void flat map of the world's dims;

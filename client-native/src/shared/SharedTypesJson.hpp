@@ -75,7 +75,8 @@ struct glz::meta<shared::WorldChunkRef> {
     "cx",      &T::cx,
     "cy",      &T::cy,
     "mapFile", &T::mapFile,
-    "name",    &T::name);
+    "name",    &T::name,
+    "music",   &T::music);
 };
 
 template <>

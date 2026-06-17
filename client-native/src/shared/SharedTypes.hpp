@@ -122,6 +122,7 @@ struct WorldChunkRef {
   int         cy = 0;
   std::string mapFile;       // relative to the manifest's directory
   std::string name;
+  std::string music;         // looping background music file (under assets/music/)
 };
 
 struct WorldSpawnPoint {
@@ -248,6 +249,7 @@ struct InitMessage {
   int                                worldWidth  = 0;
   int                                worldHeight = 0;
   int                                chunkSize   = 0;
+  std::unordered_map<std::string, std::string> chunkMusic;  // "cx,cy" -> music file
   int                                spawnX      = 0;
   int                                spawnY      = 0;
   std::vector<std::vector<TileData>> tiles;           // server's authoritative map (legacy only)

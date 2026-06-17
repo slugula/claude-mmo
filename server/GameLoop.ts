@@ -90,6 +90,7 @@ export class GameLoop {
   // legacy whole-map init (no streaming).
   private chunkSize = 0;
   private assignedChunks = new Set<string>();   // "cx,cy" cells with map data
+  private chunkMusic: Record<string, string> = {};   // "cx,cy" -> music file
 
   constructor(broadcast: BroadcastFn) {
     this.broadcast = broadcast;
@@ -120,7 +121,10 @@ export class GameLoop {
       this.worldSpawn = assembled.spawn;
       this.chestTiles = assembled.chests;
       this.chunkSize = manifest.chunkSize;
-      for (const c of manifest.chunks) this.assignedChunks.add(`${c.cx},${c.cy}`);
+      for (const c of manifest.chunks) {
+        this.assignedChunks.add(`${c.cx},${c.cy}`);
+        if (c.music) this.chunkMusic[`${c.cx},${c.cy}`] = c.music;
+      }
     } else {
       mapData = loadWorldMap();
     }
@@ -312,6 +316,8 @@ export class GameLoop {
   // Streaming is active only when a world.json manifest was loaded.
   isStreaming(): boolean { return this.chunkSize > 0; }
   getChunkSize(): number { return this.chunkSize; }
+  // Per-chunk music: { "cx,cy": "song.ogg" } from the world manifest.
+  getChunkMusic(): Record<string, string> { return this.chunkMusic; }
   getWorldDims(): { width: number; height: number } {
     return { width: this.state.world.width, height: this.state.world.height };
   }
