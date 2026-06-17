@@ -33,6 +33,7 @@ public:
   void playStrike();
   void playEquip();
   void playUnequip();
+  void playLevelUp();
 
   // Global gain multiplier applied in the audio callback.
   void  setMasterVolume(float v);
@@ -69,6 +70,7 @@ private:
   std::vector<float> bufStrike_;
   std::vector<float> bufEquip_;
   std::vector<float> bufUnequip_;
+  std::vector<float> bufLevelUp_;
 
   std::mutex          voicesMtx_;
   std::vector<Voice>  voices_;

@@ -77,6 +77,12 @@ bool AudioEngine::init() {
   // playUnequip: single sine(650->450, decay 0.08)
   bakeSine (bufUnequip_, 0.0f, 650.0f, 450.0f, 0.08f, 0.18f, 0.16f);
 
+  // playLevelUp: rising major arpeggio (C5-E5-G5-C6), bright + celebratory.
+  bakeSine (bufLevelUp_, 0.00f,  523.25f,  523.25f, 0.12f, 0.20f, 0.10f);
+  bakeSine (bufLevelUp_, 0.09f,  659.25f,  659.25f, 0.12f, 0.20f, 0.10f);
+  bakeSine (bufLevelUp_, 0.18f,  783.99f,  783.99f, 0.12f, 0.20f, 0.10f);
+  bakeSine (bufLevelUp_, 0.27f, 1046.50f, 1046.50f, 0.24f, 0.24f, 0.16f);
+
   ready_ = true;
   return true;
 }
@@ -100,6 +106,7 @@ void AudioEngine::playHit()     { if (ready_) enqueue(bufHit_);     }
 void AudioEngine::playStrike()  { if (ready_) enqueue(bufStrike_);  }
 void AudioEngine::playEquip()   { if (ready_) enqueue(bufEquip_);   }
 void AudioEngine::playUnequip() { if (ready_) enqueue(bufUnequip_); }
+void AudioEngine::playLevelUp() { if (ready_) enqueue(bufLevelUp_); }
 
 void AudioEngine::enqueue(const std::vector<float>& src) {
   std::lock_guard<std::mutex> lock(voicesMtx_);

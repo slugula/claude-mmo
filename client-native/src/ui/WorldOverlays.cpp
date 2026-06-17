@@ -25,8 +25,25 @@ bool worldToScreen(const glm::mat4& viewProj, const glm::vec3& world,
 // ---------------------------------------------------------------------------
 void WorldOverlays::update(int /*currentTick*/,
                            const std::optional<shared::PlayerState>& localPlayer,
-                           const std::vector<shared::NPCState>&      npcs) {
+                           const std::vector<shared::NPCState>&      npcs,
+                           const std::unordered_map<std::string, shared::PlayerState>& remotePlayers) {
   const auto now = std::chrono::steady_clock::now();
+
+  // Queue kFireworkRepeats staggered level-up bursts anchored to `id`.
+  auto spawnLevelUp = [&](const std::string& id) {
+    for (int i = 0; i < kFireworkRepeats; ++i) {
+      const auto dt = std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+          std::chrono::duration<float>(i * kFireworkStaggerSec));
+      fireworks_.push_back({ id, now + dt });
+    }
+  };
+  // Detect a rise in lastLevelUpTick for one entity; seed silently the first
+  // time we see it so we don't fire for level-ups that predate this session.
+  auto detectLevelUp = [&](const std::string& id, int tickVal) {
+    auto it = seenLevelUpTick_.find(id);
+    if (it == seenLevelUpTick_.end()) { seenLevelUpTick_[id] = tickVal; return; }
+    if (tickVal > it->second) { it->second = tickVal; spawnLevelUp(id); }
+  };
 
   // On the very first state message, seed seenHitTick_ with every entity's
   // current lastHitTick so we don't fire splats for damage that already
@@ -35,7 +52,8 @@ void WorldOverlays::update(int /*currentTick*/,
     initialized_ = true;
     if (localPlayer && localPlayer->lastHitTick > 0)
       seenHitTick_["__local__"] = localPlayer->lastHitTick;
-    if (localPlayer) seenLevelUpTick_ = localPlayer->lastLevelUpTick;  // don't fire on login
+    if (localPlayer) seenLevelUpTick_["__local__"] = localPlayer->lastLevelUpTick;
+    for (const auto& [id, rp] : remotePlayers) seenLevelUpTick_[id] = rp.lastLevelUpTick;
     for (const auto& n : npcs) {
       if (n.lastHitTick > 0)
         seenHitTick_[n.id] = n.lastHitTick;
@@ -43,11 +61,9 @@ void WorldOverlays::update(int /*currentTick*/,
     return;
   }
 
-  // Level-up VFX: when the local player's lastLevelUpTick rises, queue a burst.
-  if (localPlayer && localPlayer->lastLevelUpTick > seenLevelUpTick_) {
-    seenLevelUpTick_ = localPlayer->lastLevelUpTick;
-    localFireworks_.push_back(now);
-  }
+  // Level-up VFX: local player + every visible remote player (multiplayer sync).
+  if (localPlayer) detectLevelUp("__local__", localPlayer->lastLevelUpTick);
+  for (const auto& [id, rp] : remotePlayers) detectLevelUp(id, rp.lastLevelUpTick);
 
   using Dur = std::chrono::steady_clock::duration;
   auto addSec = [](std::chrono::steady_clock::time_point t, float s) {
@@ -274,24 +290,36 @@ void WorldOverlays::draw(const glm::mat4& viewProj, int fbWidth, int fbHeight,
     }
   };
 
-  if (localPlayer && !localFireworks_.empty()) {
-    const glm::vec3 head(localPlayer->wx, localPlayer->wy + 2.0f, localPlayer->wz);
-    glm::vec2 px;
-    if (worldToScreen(viewProj, head, fbWidth, fbHeight, &px)) {
-      const float headPx = billboardBarW(viewProj, head.x, head.y, head.z,
-                                         0.22f, fbWidth, fbHeight) * 0.5f;
-      for (const auto& t0 : localFireworks_) {
-        const float age = std::chrono::duration<float>(now - t0).count();
-        if (age <= kFireworkDurSec) drawFirework(ImVec2(px.x, px.y), age, headPx);
-      }
+  // Resolve a firework's head world position from its entity id (local player
+  // or a visible remote player); returns false if that entity isn't on screen.
+  auto headOf = [&](const std::string& id, glm::vec3* out) -> bool {
+    const OverlayEntry* e = nullptr;
+    if (id == "__local__") e = localPlayer;
+    else {
+      for (const auto& cand : entities) if (cand.id == id) { e = &cand; break; }
     }
+    if (!e) return false;
+    *out = glm::vec3(e->wx, e->wy + 2.0f, e->wz);
+    return true;
+  };
+
+  for (const auto& fw : fireworks_) {
+    const float age = std::chrono::duration<float>(now - fw.startAt).count();
+    if (age < 0.0f || age > kFireworkDurSec) continue;   // not started / expired
+    glm::vec3 head;
+    glm::vec2 px;
+    if (!headOf(fw.id, &head)) continue;
+    if (!worldToScreen(viewProj, head, fbWidth, fbHeight, &px)) continue;
+    const float headPx = billboardBarW(viewProj, head.x, head.y, head.z,
+                                       0.22f, fbWidth, fbHeight) * 0.5f;
+    drawFirework(ImVec2(px.x, px.y), age, headPx);
   }
-  localFireworks_.erase(
-      std::remove_if(localFireworks_.begin(), localFireworks_.end(),
-          [&](const auto& t0) {
-            return std::chrono::duration<float>(now - t0).count() > kFireworkDurSec;
+  fireworks_.erase(
+      std::remove_if(fireworks_.begin(), fireworks_.end(),
+          [&](const Firework& fw) {
+            return std::chrono::duration<float>(now - fw.startAt).count() > kFireworkDurSec;
           }),
-      localFireworks_.end());
+      fireworks_.end());
 }
 
 }  // namespace ui

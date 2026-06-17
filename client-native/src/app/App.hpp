@@ -175,6 +175,10 @@ private:
   };
   std::unordered_map<std::string, shared::PlayerState> prevRemotePlayers_;
   std::unordered_map<std::string, shared::PlayerState> currRemotePlayers_;
+  // Local-player level-up jingle: seed silently on first state, then play on
+  // each rise of lastLevelUpTick (visual VFX is handled in WorldOverlays).
+  int  seenLevelUpTickLocal_ = -999999;
+  bool levelUpSeeded_        = false;
   std::unordered_map<std::string, RemoteAnim>          remoteAnims_;
   std::vector<shared::NPCState>            npcs_;
   std::vector<shared::DroppedItemState>    droppedItems_;

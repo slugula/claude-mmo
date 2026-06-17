@@ -41,7 +41,8 @@ public:
   // pass.  Should be called once per frame after receiving fresh state.
   void update(int currentTick,
               const std::optional<shared::PlayerState>& localPlayer,
-              const std::vector<shared::NPCState>&      npcs);
+              const std::vector<shared::NPCState>&      npcs,
+              const std::unordered_map<std::string, shared::PlayerState>& remotePlayers);
 
   // Draw all overlays on the ImGui foreground draw list.
   //
@@ -67,13 +68,20 @@ private:
   bool initialized_ = false;
 
   // ---- Level-up VFX ------------------------------------------------------
-  // A one-shot "firework" burst above the local player's head, spawned when
-  // PlayerState.lastLevelUpTick rises. Anchored to the local player so it
-  // follows the head; resolved to the head world position in draw(). Kept
-  // deliberately simple — see kFireworkDurSec / drawFirework to upgrade later.
-  int                                              seenLevelUpTick_ = INT_MIN;
-  std::vector<std::chrono::steady_clock::time_point> localFireworks_;
-  static constexpr float kFireworkDurSec = 1.0f;
+  // "Firework" bursts above a player's head, spawned when PlayerState
+  // .lastLevelUpTick rises — for the LOCAL player and any visible REMOTE player
+  // (multiplayer-synced). Each level-up queues kFireworkRepeats staggered
+  // bursts. Anchored by entity id and resolved to the head in draw() so it
+  // follows movement. Kept deliberately simple — see drawFirework to upgrade.
+  struct Firework {
+    std::string                           id;        // "__local__" or remote player id
+    std::chrono::steady_clock::time_point startAt;   // may be in the future (stagger)
+  };
+  std::unordered_map<std::string, int> seenLevelUpTick_;   // per entity id
+  std::vector<Firework>                fireworks_;
+  static constexpr float kFireworkDurSec     = 1.0f;
+  static constexpr int   kFireworkRepeats    = 3;
+  static constexpr float kFireworkStaggerSec = 0.35f;
 
   // Local player health bar fade: stays visible for kHealthBarFadeSec seconds
   // after HP returns to full.

@@ -3293,7 +3293,16 @@ void App::processNetworkMessages() {
           }
         }
       }
-      overlays_.update(currentTick_, currLocalPlayer_, npcs_);
+      overlays_.update(currentTick_, currLocalPlayer_, npcs_, currRemotePlayers_);
+
+      // Local level-up jingle (visual fireworks are handled by overlays_ for
+      // both local + remote players; the sound is local-only so a crowd of
+      // levelling players can't spam audio). Seed silently on first sight.
+      if (currLocalPlayer_) {
+        const int lu = currLocalPlayer_->lastLevelUpTick;
+        if (!levelUpSeeded_) { levelUpSeeded_ = true; seenLevelUpTickLocal_ = lu; }
+        else if (lu > seenLevelUpTickLocal_) { seenLevelUpTickLocal_ = lu; audio_.playLevelUp(); }
+      }
 
       auto it = st.players.find(network_.playerId());
       if (it != st.players.end()) {
