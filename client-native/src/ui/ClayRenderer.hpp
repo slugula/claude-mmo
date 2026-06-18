@@ -8,8 +8,19 @@
 #include "world/SpriteCache.hpp"
 
 namespace net { class NetworkClient; }
+struct ImFont;
 
 namespace ui {
+
+// Active UI font for all Clay text (and the ImGui default). Pass an ImFont*
+// already loaded into the atlas; nullptr restores ImGui's first/default font.
+// Switching is instant — no atlas rebuild. Used by the debug-panel font preview.
+void  claySetUiFont(ImFont* font);
+
+// Extra multiplier on Clay text size (1.0 = author sizes). Lets the font
+// preview tune overall HUD text size without touching layout boxes.
+void  claySetUiFontScale(float scale);
+float clayUiFontScale();
 
 // UI scale: the whole Clay layout is authored in logical pixels and scaled by
 // this factor when drawn, so the HUD keeps a consistent physical size on HiDPI

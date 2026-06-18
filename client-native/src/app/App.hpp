@@ -33,7 +33,11 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <string>
 #include <unordered_set>
+#include <vector>
+
+struct ImFont;
 
 namespace app {
 
@@ -183,6 +187,16 @@ private:
   // uiScaleOverride_ is the persisted user value (0 = auto from the monitor).
   float uiScale_         = 1.0f;
   float uiScaleOverride_ = 0.0f;
+
+  // ---- UI font preview (debug panel) -------------------------------------
+  // Candidate fonts (bundled + user-dropped + a few system fonts) are all
+  // loaded into the ImGui atlas at startup; switching is just a pointer swap.
+  struct UiFontOption { std::string label; std::string path; float size; ImFont* font = nullptr; };
+  std::vector<UiFontOption> fontOptions_;
+  int    activeFontIndex_ = 0;
+  float  uiFontScale_     = 1.0f;       // extra HUD text-size multiplier
+  void   collectFontOptions_();         // populate fontOptions_ (paths only)
+  void   applyActiveFont_();            // push the selected font to ImGui + Clay
   // Performance levers (persisted). Shadow map size applies live; MSAA at start.
   int   shadowMapSize_   = 4096;
   int   msaaSamples_     = 4;

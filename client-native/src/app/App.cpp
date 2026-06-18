@@ -757,6 +757,14 @@ bool App::init() {
         int fw, fh; glfwGetFramebufferSize(window_.handle(), &fw, &fh);
         ui::clayResize(fw, fh);
       }
+      // UI font: match the persisted label against the loaded options.
+      uiFontScale_ = std::clamp(s.uiFontScale, 0.75f, 1.5f);
+      ui::claySetUiFontScale(uiFontScale_);
+      if (!s.uiFont.empty()) {
+        for (int i = 0; i < static_cast<int>(fontOptions_.size()); ++i)
+          if (fontOptions_[i].label == s.uiFont) { activeFontIndex_ = i; break; }
+        applyActiveFont_();
+      }
       // Performance levers were created with defaults above; re-apply persisted
       // values now (shadow map re-inits; MSAA framebuffer is recreated).
       if (s.shadowMapSize > 0 && s.shadowMapSize != shadowMapSize_) {
@@ -2701,6 +2709,32 @@ void App::renderFrame() {
         if (ImGui::IsItemHovered())
           ImGui::SetTooltip("Size of the HUD/text. Defaults to your monitor's\nscaling; saved as an override.");
 
+        // ---- UI font preview -------------------------------------------------
+        // Live-switch the whole UI font; persists with "Save as default".
+        if (!fontOptions_.empty()) {
+          const char* curLabel = fontOptions_[std::clamp(activeFontIndex_, 0,
+                                   static_cast<int>(fontOptions_.size()) - 1)].label.c_str();
+          ImGui::SetNextItemWidth(-110.0f);
+          if (ImGui::BeginCombo("UI font##font", curLabel)) {
+            for (int i = 0; i < static_cast<int>(fontOptions_.size()); ++i) {
+              const bool sel = (i == activeFontIndex_);
+              if (ImGui::Selectable(fontOptions_[i].label.c_str(), sel)) {
+                activeFontIndex_ = i;
+                applyActiveFont_();
+              }
+              if (sel) ImGui::SetItemDefaultFocus();
+            }
+            ImGui::EndCombo();
+          }
+          if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Font for the entire UI (HUD, chat, tooltips).\nDrop .ttf/.otf files in assets/ to add more.");
+        }
+        ImGui::SetNextItemWidth(-110.0f);
+        if (ImGui::SliderFloat("Font size##fontscale", &uiFontScale_, 0.75f, 1.5f, "%.2fx"))
+          ui::claySetUiFontScale(uiFontScale_);
+        if (ImGui::IsItemHovered())
+          ImGui::SetTooltip("Fine-tunes HUD text size relative to the layout.");
+
         // Shadow map resolution — the biggest GPU lever. Lower = much faster on
         // weak GPUs (re-inits the shadow map live).
         static const int kShadowSizes[] = { 1024, 2048, 4096 };
@@ -2900,6 +2934,61 @@ void App::initOutlineMaskFbo(int w, int h) {
   glNamedFramebufferTexture(outlineMaskFbo_, GL_COLOR_ATTACHMENT0, outlineMaskTex_, 0);
 }
 
+// Build the list of fonts the previewer can switch between. Only paths that
+// actually exist are added; the bundled pixel font is always first (index 0).
+void App::collectFontOptions_() {
+  fontOptions_.clear();
+  std::error_code ec;
+  auto add = [&](const std::string& label, const std::filesystem::path& p, float size) {
+    if (std::filesystem::exists(p, ec))
+      fontOptions_.push_back({ label, p.string(), size, nullptr });
+  };
+
+  // Bundled pixel font (ships with the game; the historical default).
+  add("ProggyClean (pixel)", resolveFromExe("assets/ProggyClean.ttf"), 13.0f);
+
+  // Any extra fonts the user drops into assets/ are auto-listed.
+  const auto assetsDir = resolveFromExe("assets");
+  if (std::filesystem::exists(assetsDir, ec)) {
+    for (const auto& de : std::filesystem::directory_iterator(assetsDir, ec)) {
+      if (ec) break;
+      if (!de.is_regular_file()) continue;
+      const auto ext = de.path().extension().string();
+      if (ext != ".ttf" && ext != ".otf") continue;
+      const auto fn = de.path().filename().string();
+      if (fn == "ProggyClean.ttf") continue;   // already added
+      add(de.path().stem().string(), de.path(), 18.0f);
+    }
+  }
+
+  // A handful of common Windows system fonts so there's something to audition
+  // out of the box without bundling anything.
+  const char* winDir = std::getenv("WINDIR");
+  const std::filesystem::path fonts =
+      std::filesystem::path(winDir ? winDir : "C:\\Windows") / "Fonts";
+  add("Segoe UI",      fonts / "segoeui.ttf", 18.0f);
+  add("Verdana",       fonts / "verdana.ttf", 17.0f);
+  add("Tahoma",        fonts / "tahoma.ttf",  17.0f);
+  add("Trebuchet MS",  fonts / "trebuc.ttf",  17.0f);
+  add("Georgia",       fonts / "georgia.ttf", 17.0f);
+  add("Consolas",      fonts / "consola.ttf", 16.0f);
+  add("Courier New",   fonts / "cour.ttf",    16.0f);
+  add("Comic Sans MS", fonts / "comic.ttf",   18.0f);
+}
+
+// Point ImGui's default font + Clay's UI font at the active selection. Cheap —
+// every candidate is already baked into the atlas, so this is a pointer swap.
+void App::applyActiveFont_() {
+  ImGuiIO& io = ImGui::GetIO();
+  if (activeFontIndex_ < 0 || activeFontIndex_ >= static_cast<int>(fontOptions_.size()))
+    activeFontIndex_ = 0;
+  ImFont* f = nullptr;
+  if (!fontOptions_.empty()) f = fontOptions_[activeFontIndex_].font;
+  if (!f && io.Fonts->Fonts.Size) f = io.Fonts->Fonts[0];
+  io.FontDefault = f;            // ImGui debug panel + world overlays
+  ui::claySetUiFont(f);          // all Clay HUD text
+}
+
 void App::initImGui() {
   IMGUI_CHECKVERSION();
   ImGui::CreateContext();
@@ -2907,14 +2996,15 @@ void App::initImGui() {
   io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
   io.ConfigDebugHighlightIdConflicts = false;
 
-  // OSRS pixel font — ProggyClean at 13px gives a retro game feel.
-  // Falls back gracefully to ImGui's built-in bitmap font if the file isn't found.
-  const auto fontPath = resolveFromExe("assets/ProggyClean.ttf");
-  if (std::filesystem::exists(fontPath)) {
-    io.Fonts->AddFontFromFileTTF(fontPath.string().c_str(), 13.0f);
-  } else {
+  // Load every candidate font into the atlas up front (bundled pixel font +
+  // any user-dropped fonts in assets/ + a few common system fonts). The debug
+  // panel's font preview switches between them with a pointer swap — no rebuild.
+  collectFontOptions_();
+  for (auto& opt : fontOptions_)
+    opt.font = io.Fonts->AddFontFromFileTTF(opt.path.c_str(), opt.size);
+  if (fontOptions_.empty() || !io.Fonts->Fonts.Size)
     io.Fonts->AddFontDefault();
-  }
+  applyActiveFont_();   // default selection = first option (bundled ProggyClean)
   // HiDPI: scale the debug-panel text with the UI scale (Clay scales separately
   // via its renderer, independent of this).
   io.FontGlobalScale = uiScale_;
@@ -3770,6 +3860,9 @@ void App::saveSettings() {
   s.uiScale      = uiScaleOverride_;   // 0 = auto from monitor
   s.shadowMapSize = shadowMapSize_;
   s.msaaSamples   = msaaSamples_;
+  s.uiFont       = (activeFontIndex_ >= 0 && activeFontIndex_ < static_cast<int>(fontOptions_.size()))
+                   ? fontOptions_[activeFontIndex_].label : std::string();
+  s.uiFontScale  = uiFontScale_;
   s.fogEnabled   = fogEnabled_;   s.fogDensity = fogDensity_;
   s.fogStart     = fogStart_;     s.fogR = fogColor_.r; s.fogG = fogColor_.g; s.fogB = fogColor_.b;
   s.aoEnabled    = aoEnabled_;    s.aoStrength = aoStrength_;

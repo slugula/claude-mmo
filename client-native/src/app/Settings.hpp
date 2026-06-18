@@ -42,6 +42,9 @@ struct AppSettings {
   float       skyInfluence = 0.5f;    // how much the sky tints scene ambient
   // UI / HiDPI
   float     uiScale = 0.0f;           // 0 = auto from monitor content scale
+  // UI font (client only). Label matches a fontOptions_ entry; "" = default.
+  std::string uiFont;
+  float       uiFontScale = 1.0f;     // HUD text-size multiplier
   // Performance
   int       shadowMapSize = 4096;     // 512..4096
   int       msaaSamples   = 4;        // 1..4
@@ -144,6 +147,7 @@ inline bool saveSettings(const AppSettings& s, const std::filesystem::path& path
   std::fprintf(f, "editorDrawDistance=%d\n", s.editorDrawDistance);
   std::fprintf(f, "uiScale=%f\nshadowMapSize=%d\nmsaaSamples=%d\n",
                s.uiScale, s.shadowMapSize, s.msaaSamples);
+  std::fprintf(f, "uiFont=%s\nuiFontScale=%f\n", s.uiFont.c_str(), s.uiFontScale);
   // Sky
   std::fprintf(f, "skyEnabled=%d\nskyExposure=%f\nskyInfluence=%f\nskyCubemap=%s\n",
                B(s.skyEnabled), s.skyExposure, s.skyInfluence, s.skyCubemap.c_str());
@@ -213,7 +217,7 @@ inline bool loadSettings(AppSettings& s, const std::filesystem::path& path) {
         fI("chunkDrawDistance", s.chunkDrawDistance) ||
         fI("viewRadius", s.viewRadius) ||
         fI("editorDrawDistance", s.editorDrawDistance) ||
-        fF("uiScale", s.uiScale) ||
+        fF("uiScale", s.uiScale) || fF("uiFontScale", s.uiFontScale) ||
         fI("shadowMapSize", s.shadowMapSize) || fI("msaaSamples", s.msaaSamples) ||
         fB("skyEnabled", s.skyEnabled) || fF("skyExposure", s.skyExposure) ||
         fF("skyInfluence", s.skyInfluence) ||
@@ -223,6 +227,7 @@ inline bool loadSettings(AppSettings& s, const std::filesystem::path& path) {
         fF("skySunR", s.skySunR) || fF("skySunG", s.skySunG) || fF("skySunB", s.skySunB)) {
       continue;
     }
+    if (std::strcmp(key, "uiFont") == 0) { s.uiFont = val; continue; }
     if (std::strcmp(key, "waterCausticMap") == 0) { s.waterCausticMap = val; continue; }
     if (std::strcmp(key, "skyCubemap") == 0) { s.skyCubemap = val; continue; }
   }

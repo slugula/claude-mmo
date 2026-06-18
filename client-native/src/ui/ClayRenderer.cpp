@@ -44,12 +44,23 @@ bool clayMinimapHovered()  { return s_minimapHovered; }
 
 void claySetDebugMode(bool enabled) { Clay_SetDebugModeEnabled(enabled); }
 
-// Resolve a Clay fontId to a loaded ImGui font (0 = UI, 1 = large pixel font).
-// Falls back to the current font if the id is out of range.
+// Active UI font (set by the debug-panel font preview). nullptr => use the
+// atlas default. Applies to Clay's primary text id (0).
+static ImFont* s_uiFont      = nullptr;
+static float   s_uiFontScale = 1.0f;
+
+void  claySetUiFont(ImFont* font) { s_uiFont = font; }
+void  claySetUiFontScale(float s) { s_uiFontScale = (s > 0.1f) ? s : 1.0f; }
+float clayUiFontScale()           { return s_uiFontScale; }
+
+// Resolve a Clay fontId to a loaded ImGui font. Id 0 is the primary UI font and
+// honours the previewer's selection; other ids index the atlas directly.
+// Falls back to the current font if nothing matches.
 static ImFont* fontForId(uint16_t id) {
     ImGuiIO& io = ImGui::GetIO();
+    if (id == 0 && s_uiFont) return s_uiFont;
     if (id < io.Fonts->Fonts.Size && io.Fonts->Fonts[id]) return io.Fonts->Fonts[id];
-    return ImGui::GetFont();
+    return s_uiFont ? s_uiFont : ImGui::GetFont();
 }
 
 // ── Text measurement callback (called by Clay during layout) ──────────────────
@@ -59,8 +70,8 @@ static Clay_Dimensions measureText(Clay_StringSlice text,
 {
     ImFont* font = fontForId(cfg ? cfg->fontId : 0);
     if (!font) return { 0.f, 0.f };
-    float size = (cfg && cfg->fontSize > 0) ? static_cast<float>(cfg->fontSize)
-                                             : ImGui::GetFontSize();
+    float size = ((cfg && cfg->fontSize > 0) ? static_cast<float>(cfg->fontSize)
+                                             : ImGui::GetFontSize()) * s_uiFontScale;
     ImVec2 dim = font->CalcTextSizeA(size, FLT_MAX, -1.f,
                                      text.chars,
                                      text.chars + text.length);
@@ -158,7 +169,7 @@ static void clayRenderInternal(Clay_RenderCommandArray commands)
             const auto& t = cmd->renderData.text;
             ImFont* font  = fontForId(t.fontId);
             float size    = ((t.fontSize > 0) ? static_cast<float>(t.fontSize)
-                                              : ImGui::GetFontSize()) * S;
+                                              : ImGui::GetFontSize()) * S * s_uiFontScale;
             dl->AddText(font, size, p0, toImU32(t.textColor),
                         t.stringContents.chars,
                         t.stringContents.chars + t.stringContents.length);
