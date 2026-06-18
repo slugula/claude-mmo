@@ -1011,12 +1011,8 @@ void App::renderFrame() {
     const std::string song = (it != chunkMusic_.end()) ? it->second : std::string();
     if (song != currentMusicFile_) {
       currentMusicFile_ = song;
-      if (song.empty()) { std::fprintf(stdout, "[Music] cell (%d,%d): stop\n", ccx, ccy); audio_.stopMusic(); }
-      else {
-        const std::string p = resolveFromExe(("assets/music/" + song).c_str()).string();
-        std::fprintf(stdout, "[Music] cell (%d,%d): play %s\n", ccx, ccy, p.c_str());
-        audio_.playMusic(p);
-      }
+      if (song.empty()) audio_.stopMusic();
+      else audio_.playMusic(resolveFromExe(("assets/music/" + song).c_str()).string());
     }
   }
 
@@ -3195,10 +3191,6 @@ void App::processNetworkMessages() {
       chunkMusic_      = init.chunkMusic;
       musicChunkSize_  = init.chunkSize;
       currentMusicFile_.clear();
-      std::fprintf(stdout, "[Music] init chunkSize=%d, %zu chunk-song assignment(s)\n",
-                   musicChunkSize_, chunkMusic_.size());
-      for (const auto& [k, v] : chunkMusic_)
-        std::fprintf(stdout, "[Music]   cell %s -> %s\n", k.c_str(), v.c_str());
       depletedTiles_.clear();
       if (init.streaming) {
         // Streaming world: allocate an all-void flat map of the world's dims;

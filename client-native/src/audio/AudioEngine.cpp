@@ -208,7 +208,6 @@ void AudioEngine::playMusic(const std::string& path) {
   slot->target = 1.0f;
   impl_->active     = slot;
   impl_->activePath = path;
-  std::fprintf(stdout, "[Audio] music loaded OK: %s\n", path.c_str());
 }
 
 void AudioEngine::stopMusic() {
