@@ -40,6 +40,11 @@ struct AppSettings {
   std::string skyCubemap;             // "" = procedural gradient; else folder name
   float       skyExposure = 1.0f;
   float       skyInfluence = 0.5f;    // how much the sky tints scene ambient
+  // UI / HiDPI
+  float     uiScale = 0.0f;           // 0 = auto from monitor content scale
+  // Performance
+  int       shadowMapSize = 4096;     // 512..4096
+  int       msaaSamples   = 4;        // 1..4
   float       skyZenithR = 0.16f,  skyZenithG = 0.34f,  skyZenithB = 0.62f;
   float       skyHorizonR = 0.62f, skyHorizonG = 0.74f, skyHorizonB = 0.86f;
   float       skyGroundR = 0.30f,  skyGroundG = 0.30f,  skyGroundB = 0.34f;
@@ -137,6 +142,8 @@ inline bool saveSettings(const AppSettings& s, const std::filesystem::path& path
   std::fprintf(f, "chunkDrawDistance=%d\n", s.chunkDrawDistance);
   std::fprintf(f, "viewRadius=%d\n", s.viewRadius);
   std::fprintf(f, "editorDrawDistance=%d\n", s.editorDrawDistance);
+  std::fprintf(f, "uiScale=%f\nshadowMapSize=%d\nmsaaSamples=%d\n",
+               s.uiScale, s.shadowMapSize, s.msaaSamples);
   // Sky
   std::fprintf(f, "skyEnabled=%d\nskyExposure=%f\nskyInfluence=%f\nskyCubemap=%s\n",
                B(s.skyEnabled), s.skyExposure, s.skyInfluence, s.skyCubemap.c_str());
@@ -206,6 +213,8 @@ inline bool loadSettings(AppSettings& s, const std::filesystem::path& path) {
         fI("chunkDrawDistance", s.chunkDrawDistance) ||
         fI("viewRadius", s.viewRadius) ||
         fI("editorDrawDistance", s.editorDrawDistance) ||
+        fF("uiScale", s.uiScale) ||
+        fI("shadowMapSize", s.shadowMapSize) || fI("msaaSamples", s.msaaSamples) ||
         fB("skyEnabled", s.skyEnabled) || fF("skyExposure", s.skyExposure) ||
         fF("skyInfluence", s.skyInfluence) ||
         fF("skyZenithR", s.skyZenithR) || fF("skyZenithG", s.skyZenithG) || fF("skyZenithB", s.skyZenithB) ||

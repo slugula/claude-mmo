@@ -306,7 +306,7 @@ bool App::init() {
   render::installGlDebugCallback();
 
   msaa_ = std::make_unique<render::MsaaFramebuffer>(
-      window_.framebufferWidth(), window_.framebufferHeight(), kMsaaSamples);
+      window_.framebufferWidth(), window_.framebufferHeight(), msaaSamples_);
 
   window_.onFramebufferResize = [this](int w, int h) { onResize(w, h); };
   // ImGui's GLFW backend chains these — its handlers run first, then ours.
@@ -330,11 +330,12 @@ bool App::init() {
         && !ui::ctxMenu().open) {
       double cx, cy;
       glfwGetCursorPos(window_.handle(), &cx, &cy);
-      const float rad     = static_cast<float>(ui::MinimapRenderer::kSize) * 0.5f;
-      // Minimap center: top-right, kMmMargin=24px margin (must match ClayHudPanel).
+      const float rad     = static_cast<float>(ui::MinimapRenderer::kSize) * 0.5f * uiScale_;
+      // Minimap center: top-right, 24px margin (logical) × UI scale to match the
+      // scaled Clay HUD.
       const float fw2     = static_cast<float>(window_.framebufferWidth());
-      const float centerX = fw2 - 24.f - rad;
-      const float centerY = 24.f + rad;
+      const float centerX = fw2 - 24.f * uiScale_ - rad;
+      const float centerY = 24.f * uiScale_ + rad;
       const float normX   = (static_cast<float>(cx) - centerX) / rad;
       const float normY   = (static_cast<float>(cy) - centerY) / rad;
       if (normX * normX + normY * normY <= 1.0f) {
@@ -372,9 +373,9 @@ bool App::init() {
       glfwGetCursorPos(window_.handle(), &mmrx, &mmry);
       int mmfw = 0;
       glfwGetFramebufferSize(window_.handle(), &mmfw, nullptr);
-      const float kMmRad = static_cast<float>(ui::MinimapRenderer::kSize) * 0.5f;
-      const float mmCX   = static_cast<float>(mmfw) - 24.f - kMmRad;
-      const float mmCY   = 24.f + kMmRad;
+      const float kMmRad = static_cast<float>(ui::MinimapRenderer::kSize) * 0.5f * uiScale_;
+      const float mmCX   = static_cast<float>(mmfw) - 24.f * uiScale_ - kMmRad;
+      const float mmCY   = 24.f * uiScale_ + kMmRad;
       const float mmDX   = static_cast<float>(mmrx) - mmCX;
       const float mmDY   = static_cast<float>(mmry) - mmCY;
       if (showClayUi_ && (mmDX * mmDX + mmDY * mmDY <= kMmRad * kMmRad)) return;
@@ -569,7 +570,7 @@ bool App::init() {
     std::fprintf(stderr, "[App] shadow skinned shader load failed\n");
     return false;
   }
-  if (!shadowMap_.init(kShadowMapSize)) {
+  if (!shadowMap_.init(shadowMapSize_)) {
     std::fprintf(stderr, "[App] shadow map init failed\n");
     return false;
   }
@@ -658,6 +659,16 @@ bool App::init() {
   glEnable(GL_MULTISAMPLE);
   glDisable(GL_CULL_FACE);
 
+  // Derive the UI scale from the monitor content scale (e.g. 1.5 at 150% OS
+  // scaling) so the HUD is a consistent physical size on HiDPI displays. A
+  // persisted user override (uiScaleOverride_ > 0) wins if set.
+  {
+    float xs = 1.0f, ys = 1.0f;
+    glfwGetWindowContentScale(window_.handle(), &xs, &ys);
+    uiScale_ = (uiScaleOverride_ > 0.0f) ? uiScaleOverride_ : std::max(1.0f, xs);
+    ui::claySetUiScale(uiScale_);
+  }
+
   initImGui();
 
   { int fw, fh; glfwGetFramebufferSize(window_.handle(), &fw, &fh); ui::clayInit(fw, fh); }
@@ -736,6 +747,27 @@ bool App::init() {
         ui::bankPanelSetPosition(s.bankPosX, s.bankPosY);
       chunkDrawDistance_ = std::clamp(s.chunkDrawDistance, 1, 8);
       viewRadius_        = std::clamp(s.viewRadius, 5, 48);
+      // UI scale override (0 = auto from monitor). Re-apply now that settings
+      // are loaded (clayInit already ran with the auto value).
+      uiScaleOverride_ = s.uiScale;
+      if (uiScaleOverride_ > 0.0f) {
+        uiScale_ = uiScaleOverride_;
+        ui::claySetUiScale(uiScale_);
+        ImGui::GetIO().FontGlobalScale = uiScale_;
+        int fw, fh; glfwGetFramebufferSize(window_.handle(), &fw, &fh);
+        ui::clayResize(fw, fh);
+      }
+      // Performance levers were created with defaults above; re-apply persisted
+      // values now (shadow map re-inits; MSAA framebuffer is recreated).
+      if (s.shadowMapSize > 0 && s.shadowMapSize != shadowMapSize_) {
+        shadowMapSize_ = std::clamp(s.shadowMapSize, 512, 4096);
+        shadowMap_.init(shadowMapSize_);
+      }
+      if (s.msaaSamples > 0 && s.msaaSamples != msaaSamples_) {
+        msaaSamples_ = std::clamp(s.msaaSamples, 1, 4);
+        msaa_ = std::make_unique<render::MsaaFramebuffer>(
+            window_.framebufferWidth(), window_.framebufferHeight(), msaaSamples_);
+      }
     }
   }
 
@@ -1004,9 +1036,9 @@ void App::renderFrame() {
   // BEFORE clayFrame() runs, so we must suppress picking here (not after) to
   // prevent outlines from bleeding through the minimap this frame.
   {
-    const float kMmRad = static_cast<float>(ui::MinimapRenderer::kSize) * 0.5f;
-    const float mmCX   = static_cast<float>(fbW) - 24.f - kMmRad;
-    const float mmCY   = 24.f + kMmRad;
+    const float kMmRad = static_cast<float>(ui::MinimapRenderer::kSize) * 0.5f * uiScale_;
+    const float mmCX   = static_cast<float>(fbW) - 24.f * uiScale_ - kMmRad;
+    const float mmCY   = 24.f * uiScale_ + kMmRad;
     const float mmDX   = static_cast<float>(cursorX) - mmCX;
     const float mmDY   = static_cast<float>(cursorY) - mmCY;
     cursorOverMinimap_  = showClayUi_ && (mmDX * mmDX + mmDY * mmDY <= kMmRad * kMmRad);
@@ -2658,6 +2690,36 @@ void App::renderFrame() {
           network_.sendSetViewRadius(viewRadius_);
         if (ImGui::IsItemHovered())
           ImGui::SetTooltip("How far the server syncs players/NPCs/items around you\n(server clamps to its max; patch size grows ~quadratically)");
+
+        ImGui::SeparatorText("Display & Performance");
+        // UI scale (HiDPI). Live-applies and persists as an override.
+        float uiPct = uiScale_;
+        ImGui::SetNextItemWidth(-110.0f);
+        if (ImGui::SliderFloat("UI scale##ui", &uiPct, 0.75f, 3.0f, "%.2fx")) {
+          uiScale_ = uiPct; uiScaleOverride_ = uiPct;
+          ui::claySetUiScale(uiScale_);
+          ImGui::GetIO().FontGlobalScale = uiScale_;
+          int fw, fh; glfwGetFramebufferSize(window_.handle(), &fw, &fh);
+          ui::clayResize(fw, fh);
+        }
+        if (ImGui::IsItemHovered())
+          ImGui::SetTooltip("Size of the HUD/text. Defaults to your monitor's\nscaling; saved as an override.");
+
+        // Shadow map resolution — the biggest GPU lever. Lower = much faster on
+        // weak GPUs (re-inits the shadow map live).
+        static const int kShadowSizes[] = { 1024, 2048, 4096 };
+        int curIdx = (shadowMapSize_ <= 1024) ? 0 : (shadowMapSize_ <= 2048 ? 1 : 2);
+        const char* shadowLabels[] = { "1024 (fast)", "2048", "4096 (sharp)" };
+        ImGui::SetNextItemWidth(-110.0f);
+        if (ImGui::Combo("Shadow detail##shres", &curIdx, shadowLabels, 3)) {
+          shadowMapSize_ = kShadowSizes[curIdx];
+          shadowMap_.init(shadowMapSize_);
+        }
+        if (ImGui::IsItemHovered())
+          ImGui::SetTooltip("Lower this first if the game is choppy.\nAlso try lowering Draw distance + MSAA (restart).");
+        ImGui::TextDisabled("MSAA %dx (restart to change) — lower for more FPS", msaaSamples_);
+        ImGui::SetNextItemWidth(-110.0f);
+        ImGui::SliderInt("MSAA##msaa", &msaaSamples_, 1, 4);
         break;
       }
       case 4: {  // Outline
@@ -2857,6 +2919,9 @@ void App::initImGui() {
   } else {
     io.Fonts->AddFontDefault();
   }
+  // HiDPI: scale the debug-panel text with the UI scale (Clay scales separately
+  // via its renderer, independent of this).
+  io.FontGlobalScale = uiScale_;
 
   // OSRS-inspired dark brown / gold theme. OSRS has zero rounding — square
   // corners everywhere — which is key to avoiding the "debug tool" look.
@@ -3710,6 +3775,9 @@ bool App::drawLoginUi() {
 
 void App::saveSettings() {
   AppSettings s;
+  s.uiScale      = uiScaleOverride_;   // 0 = auto from monitor
+  s.shadowMapSize = shadowMapSize_;
+  s.msaaSamples   = msaaSamples_;
   s.fogEnabled   = fogEnabled_;   s.fogDensity = fogDensity_;
   s.fogStart     = fogStart_;     s.fogR = fogColor_.r; s.fogG = fogColor_.g; s.fogB = fogColor_.b;
   s.aoEnabled    = aoEnabled_;    s.aoStrength = aoStrength_;

@@ -70,6 +70,14 @@ static Clay_Dimensions measureText(Clay_StringSlice text,
 // ── Error handler (swallow — don't crash on layout mistakes) ──────────────────
 static void onClayError(Clay_ErrorData err) { (void)err; }
 
+// ── UI scale ──────────────────────────────────────────────────────────────────
+// Clay lays out in LOGICAL pixels (framebuffer / scale); the renderer multiplies
+// every coordinate by the scale on the way out, so the HUD stays a consistent
+// physical size regardless of display DPI.
+static float s_uiScale = 1.0f;
+void  claySetUiScale(float scale) { s_uiScale = (scale > 0.25f) ? scale : 1.0f; }
+float clayUiScale() { return s_uiScale; }
+
 // ── Init ──────────────────────────────────────────────────────────────────────
 void clayInit(int w, int h)
 {
@@ -79,14 +87,14 @@ void clayInit(int w, int h)
     Clay_Arena arena = Clay_CreateArenaWithCapacityAndMemory(
         s_arenaSize, s_clayMem);
     Clay_Initialize(arena,
-                    { static_cast<float>(w), static_cast<float>(h) },
+                    { w / s_uiScale, h / s_uiScale },
                     { onClayError });
     Clay_SetMeasureTextFunction(measureText, nullptr);
 }
 
 void clayResize(int w, int h)
 {
-    Clay_SetLayoutDimensions({ static_cast<float>(w), static_cast<float>(h) });
+    Clay_SetLayoutDimensions({ w / s_uiScale, h / s_uiScale });
 }
 
 // ── Colour helper ─────────────────────────────────────────────────────────────
@@ -106,17 +114,17 @@ static void clayRenderInternal(Clay_RenderCommandArray commands)
     for (int32_t i = 0; i < (int32_t)commands.length; ++i) {
         Clay_RenderCommand* cmd = Clay_RenderCommandArray_Get(&commands, i);
         const Clay_BoundingBox& b = cmd->boundingBox;
-        // Snap edges to the pixel grid so sprites/text never land on a
-        // half-pixel (which sub-pixel samples and looks blurry). Flooring both
-        // corners keeps fixed sizes exact and adjacent elements seam-free.
-        ImVec2 p0 { std::floor(b.x),            std::floor(b.y)            };
-        ImVec2 p1 { std::floor(b.x + b.width),  std::floor(b.y + b.height) };
+        // Scale logical Clay coordinates up to physical pixels by the UI scale,
+        // then snap edges to the pixel grid (avoids blurry half-pixel sprites).
+        const float S = s_uiScale;
+        ImVec2 p0 { std::floor(b.x * S),              std::floor(b.y * S)              };
+        ImVec2 p1 { std::floor((b.x + b.width) * S),  std::floor((b.y + b.height) * S) };
 
         switch (cmd->commandType) {
 
         case CLAY_RENDER_COMMAND_TYPE_RECTANGLE: {
             const auto& r = cmd->renderData.rectangle;
-            float radius  = r.cornerRadius.topLeft;
+            float radius  = r.cornerRadius.topLeft * S;
             dl->AddRectFilled(p0, p1, toImU32(r.backgroundColor), radius);
             break;
         }
@@ -128,24 +136,20 @@ static void clayRenderInternal(Clay_RenderCommandArray commands)
                                             bd.width.left, bd.width.right});
             if (maxW == 0) break;
             ImU32 col = toImU32(bd.color);
-            float r   = bd.cornerRadius.topLeft;
-            float t   = static_cast<float>(maxW);
+            float r   = bd.cornerRadius.topLeft * S;
+            float t   = static_cast<float>(maxW) * S;
             if (r > 0.f) {
                 // Rounded border: draw as a single outlined rect.
                 dl->AddRect(p0, p1, col, r, 0, t);
             } else {
                 if (bd.width.top)
-                    dl->AddLine({p0.x, p0.y}, {p1.x, p0.y},
-                                col, static_cast<float>(bd.width.top));
+                    dl->AddLine({p0.x, p0.y}, {p1.x, p0.y}, col, bd.width.top * S);
                 if (bd.width.bottom)
-                    dl->AddLine({p0.x, p1.y}, {p1.x, p1.y},
-                                col, static_cast<float>(bd.width.bottom));
+                    dl->AddLine({p0.x, p1.y}, {p1.x, p1.y}, col, bd.width.bottom * S);
                 if (bd.width.left)
-                    dl->AddLine({p0.x, p0.y}, {p0.x, p1.y},
-                                col, static_cast<float>(bd.width.left));
+                    dl->AddLine({p0.x, p0.y}, {p0.x, p1.y}, col, bd.width.left * S);
                 if (bd.width.right)
-                    dl->AddLine({p1.x, p0.y}, {p1.x, p1.y},
-                                col, static_cast<float>(bd.width.right));
+                    dl->AddLine({p1.x, p0.y}, {p1.x, p1.y}, col, bd.width.right * S);
             }
             break;
         }
@@ -153,8 +157,8 @@ static void clayRenderInternal(Clay_RenderCommandArray commands)
         case CLAY_RENDER_COMMAND_TYPE_TEXT: {
             const auto& t = cmd->renderData.text;
             ImFont* font  = fontForId(t.fontId);
-            float size    = (t.fontSize > 0) ? static_cast<float>(t.fontSize)
-                                             : ImGui::GetFontSize();
+            float size    = ((t.fontSize > 0) ? static_cast<float>(t.fontSize)
+                                              : ImGui::GetFontSize()) * S;
             dl->AddText(font, size, p0, toImU32(t.textColor),
                         t.stringContents.chars,
                         t.stringContents.chars + t.stringContents.length);
@@ -202,6 +206,10 @@ void clayFrame(const shared::PlayerState* player,
                bool bankOpen,
                unsigned int minimapTex)
 {
+    // Clay works in logical pixels: convert the physical-pixel mouse + screen
+    // dimensions down by the UI scale.
+    const float invS = 1.0f / s_uiScale;
+    mx *= invS; my *= invS; screenW *= invS; screenH *= invS;
     Clay_SetPointerState({ mx, my }, mouseDown);
     // wheelDelta from ImGui io.MouseWheel (positive = scroll up).
     // Clay multiplies scrollDelta by 10 internally; pass *3 for ~2 lines/notch.

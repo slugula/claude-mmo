@@ -11,6 +11,13 @@ namespace net { class NetworkClient; }
 
 namespace ui {
 
+// UI scale: the whole Clay layout is authored in logical pixels and scaled by
+// this factor when drawn, so the HUD keeps a consistent physical size on HiDPI
+// displays. Set from the monitor content scale (and a user override) BEFORE
+// clayInit and on change. clayUiScale() is used by App for minimap hit-testing.
+void claySetUiScale(float scale);
+float clayUiScale();
+
 // Call once after ImGui has been initialised (GL context + fonts loaded).
 void clayInit(int w, int h);
 

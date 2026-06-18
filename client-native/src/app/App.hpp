@@ -179,6 +179,13 @@ private:
   // each rise of lastLevelUpTick (visual VFX is handled in WorldOverlays).
   int  seenLevelUpTickLocal_ = -999999;
   bool levelUpSeeded_        = false;
+  // HiDPI UI scale: uiScale_ is the active factor (content scale or override);
+  // uiScaleOverride_ is the persisted user value (0 = auto from the monitor).
+  float uiScale_         = 1.0f;
+  float uiScaleOverride_ = 0.0f;
+  // Performance levers (persisted). Shadow map size applies live; MSAA at start.
+  int   shadowMapSize_   = 4096;
+  int   msaaSamples_     = 4;
   bool prevLocalFishing_     = false;   // fishTargetX presence last state
   bool fishStartPending_     = false;   // armed on spot-target, fires bloop on first roll
   double seenMiningXp_       = 0.0;     // for ore-break "success" SFX
