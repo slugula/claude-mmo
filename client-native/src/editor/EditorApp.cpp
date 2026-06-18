@@ -551,10 +551,20 @@ bool EditorApp::init() {
   // Load recent files list.
   loadRecentFiles();
 
+  // Attempt to pre-populate the entity DB from the server so the Objects
+  // toolbar list (PlaceObstacle) shows all registered object types without
+  // requiring the user to open Database → Edit Database first.
+  // Failure is silently swallowed — the editor still works with the built-in
+  // hardcoded fallback list when no server is available.
+  try { dbLoadAll(); } catch (...) {}
+
   // Auto-load the game's singular world. The editor always edits the one
   // canonical public/maps/world.json — no New/Open World needed. Assemble it
   // up front so every chunk is loaded and ready, and open in the World view so
-  // the user can pick a chunk to edit (or create one).
+  // the user can pick a chunk to edit (or create one). This MUST run after
+  // dbLoadAll() so object/NPC definitions + models are registered before
+  // rebuildObstacles()/entities_ populate from the assembled map — otherwise
+  // trees/NPCs/etc. silently render as nothing.
   worldEnsureManifestLoaded();   // loads public/maps/world.json (sets worldManifestPath_)
   if (!worldManifestPath_.empty())
     enterWorldMode(worldManifestPath_);
@@ -562,13 +572,6 @@ bool EditorApp::init() {
 
   // Set initial window title.
   updateWindowTitle();
-
-  // Attempt to pre-populate the entity DB from the server so the Objects
-  // toolbar list (PlaceObstacle) shows all registered object types without
-  // requiring the user to open Database → Edit Database first.
-  // Failure is silently swallowed — the editor still works with the built-in
-  // hardcoded fallback list when no server is available.
-  try { dbLoadAll(); } catch (...) {}
 
   lastFrameTime_ = std::chrono::steady_clock::now();
   return true;
