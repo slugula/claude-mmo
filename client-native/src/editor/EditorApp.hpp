@@ -8,6 +8,7 @@
 #include "editor/EntityClient.hpp"
 #include "editor/EntityDefs.hpp"
 #include "editor/MinimapRenderer.hpp"
+#include "ui/MinimapRenderer.hpp"
 #include "editor/UndoStack.hpp"
 #include "editor/WorldAssembly.hpp"   // CellKey, assembleWorld, sliceChunk
 #include "input/Picker.hpp"
@@ -77,7 +78,7 @@ private:
   void drawProperties();         // right-hand docked panel (palette, object/NPC type, file info)
   void drawPreferencesWindow();  // floating Preferences window (Edit → Preferences)
   void drawGridView();
-  void drawMinimapWindow();
+  void updateClientMinimap();   // per-frame composite of the client-style disc
   void drawMenuBar();
   void drawModeRail(float railW);  // vertical Map/World/Database switcher
   void setMode(EditorMode m);      // switch workspace (handles lazy DB load)
@@ -271,8 +272,10 @@ private:
   bool         undoPending_ = false;  // push at mouse-up
   bool         hadStroke_   = false;  // was brushing this frame?
 
-  // Minimap
-  MinimapRenderer minimap_;
+  // Minimap — the in-game client disc (circular, camera-tracking) overlaid on
+  // the 3D viewport, in place of the old flat editor minimap window.
+  ui::MinimapRenderer clientMinimap_;
+  float               minimapTileRadius_ = 24.f;   // tiles from centre to disc edge
 
   // ---- World View (multi-chunk overworld manifest; EditorWorldView.cpp) ----
   // A world grid where each cell holds one 64×64 chunk map. Assign existing
@@ -307,6 +310,8 @@ private:
   void enterWorldMode(const std::string& manifestPath);   // assemble + switch to world mode
   void worldFocusCell(int cx, int cy);                    // recenter on a cell (no reload)
   void worldSaveDirtyChunks();                            // slice dirty cells -> files
+  bool worldSaveCell(int cx, int cy);                     // slice one cell -> its file
+  void worldSaveAll();                                    // all dirty cells + manifest
   void markCellDirtyAtTile(int gx, int gy);               // tile/vertex edit -> owning cell(s)
   void markTerrainDirtyRegion(int x0, int y0, int x1, int y1);  // ChunkedTerrain dirty for a rect
   int  activeCenterTileX() const;                         // tile-space centre for the draw ring

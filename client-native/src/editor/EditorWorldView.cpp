@@ -214,7 +214,7 @@ void EditorApp::enterWorldMode(const std::string& manifestPath) {
 
   rebuildObstacles();
   waterRenderer_.rebuild(map_, waterUniforms_.waterOffset);
-  minimap_.init(map_.width, map_.height); minimap_.rebuild(map_, npcSpawns_);
+  clientMinimap_.buildBaseLayer(map_);
   undo_.clear(); pushUndo();
   worldFocusCell(activeCell_.first, activeCell_.second);
   updateWindowTitle();
@@ -228,28 +228,36 @@ void EditorApp::worldFocusCell(int cx, int cy) {
   camera_.snapTo({ wx, 0.0f, wz });
 }
 
-void EditorApp::worldSaveDirtyChunks() {
-  if (!worldMode_) return;
-  const auto dir = worldDir();
+// Slice one cell out of the assembled world back to its chunk file and clear
+// its dirty flag. Returns true on a successful write.
+bool EditorApp::worldSaveCell(int cx, int cy) {
+  if (!worldMode_) return false;
+  const auto* ref = worldCellAt(cx, cy);
+  if (!ref) return false;
+  shared::WorldMapFile sl =
+      editor::sliceChunk(map_, cx, cy, chunkSize_, worldManifest_.spawn);
+  if (!shared::saveWorldMap(worldDir() / ref->mapFile, sl)) return false;
+  worldThumbs_.erase(ref->mapFile);     // world-view thumbnail re-rasters
+  dirtyCells_.erase({ cx, cy });
+  if (dirtyCells_.empty()) dirty_ = false;
+  updateWindowTitle();
+  return true;
+}
+
+// Save every dirty chunk plus the manifest (File ▸ Save World / Ctrl+S).
+void EditorApp::worldSaveAll() {
+  if (!worldMode_) { worldSaveManifest(); return; }
   int saved = 0;
-  for (const auto& cell : dirtyCells_) {
-    const auto* ref = worldCellAt(cell.first, cell.second);
-    if (!ref) continue;
-    shared::WorldMapFile sl =
-        editor::sliceChunk(map_, cell.first, cell.second, chunkSize_, worldManifest_.spawn);
-    if (shared::saveWorldMap(dir / ref->mapFile, sl)) {
-      ++saved;
-      worldThumbs_.erase(ref->mapFile);   // world-view thumbnail re-rasters
-    }
-  }
-  dirtyCells_.clear();
-  dirty_ = false;
-  if (worldDirty_ && !worldManifestPath_.empty() &&
+  for (const auto& cell : std::vector<CellKey>(dirtyCells_.begin(), dirtyCells_.end()))
+    if (worldSaveCell(cell.first, cell.second)) ++saved;
+  if (!worldManifestPath_.empty() &&
       shared::saveWorldManifest(worldManifestPath_, worldManifest_))
     worldDirty_ = false;
   updateWindowTitle();
   std::fprintf(stdout, "[worldSave] saved %d dirty chunk(s)\n", saved);
 }
+
+void EditorApp::worldSaveDirtyChunks() { worldSaveAll(); }
 
 void EditorApp::markCellDirtyAtTile(int gx, int gy) {
   if (!worldMode_ || chunkSize_ <= 0) return;
@@ -270,28 +278,6 @@ void EditorApp::drawWorldView() {
       ImGuiWindowFlags_NoMove     | ImGuiWindowFlags_NoCollapse |
       ImGuiWindowFlags_NoDocking  | ImGuiWindowFlags_NoBringToFrontOnFocus;
   if (!ImGui::Begin("##worldview", nullptr, paneFlags)) { ImGui::End(); return; }
-
-  ImGui::TextUnformatted(worldManifestPath_.empty()
-      ? "World Editor — unsaved world"
-      : ("World Editor — " + std::filesystem::path(worldManifestPath_).filename().string() +
-         (worldDirty_ ? " *" : "")).c_str());
-  ImGui::SameLine(0.0f, 24.0f);
-
-  // ---- Toolbar row ----
-  if (ImGui::Button("New World"))  worldNewManifest();
-  ImGui::SameLine();
-  if (ImGui::Button("Open World...")) worldOpenManifest();
-  ImGui::SameLine();
-  if (ImGui::Button("Save World")) worldSaveManifest();
-  ImGui::SameLine();
-  if (ImGui::Button("Edit World")) {   // assemble + enter full-detail world editing
-    if (!worldManifestPath_.empty()) { enterWorldMode(worldManifestPath_); setMode(EditorMode::Map); }
-  }
-  ImGui::SameLine();
-  ImGui::TextDisabled("chunk %dpx  spawn (%d,%d)  %d chunk(s)",
-                      worldManifest_.chunkSize,
-                      worldManifest_.spawn.x, worldManifest_.spawn.y,
-                      static_cast<int>(worldManifest_.chunks.size()));
 
   // ---- Grid canvas ----
   const ImVec2 canvasPos  = ImGui::GetCursorScreenPos();
@@ -382,6 +368,16 @@ void EditorApp::drawWorldView() {
           dl->AddText(ImVec2(a.x + 4, a.y + 3), IM_COL32(0, 0, 0, 200), label.c_str());
           dl->AddText(ImVec2(a.x + 3, a.y + 2), IM_COL32(255, 255, 255, 230), label.c_str());
         }
+        // Unsaved-changes flag: red badge + tint on cells with pending edits.
+        if (dirtyCells_.count({ cx, cy })) {
+          dl->AddRect(a, b, IM_COL32(235, 90, 70, 255), 0.0f, 0, 2.5f);
+          const char* flag = "Unsaved Changes";
+          const ImVec2 ts = ImGui::CalcTextSize(flag);
+          const ImVec2 bp(a.x + (z - ts.x) * 0.5f, a.y + (z - 2.0f) - ts.y - 4.0f);
+          dl->AddRectFilled(ImVec2(bp.x - 3, bp.y - 2), ImVec2(bp.x + ts.x + 3, bp.y + ts.y + 2),
+                            IM_COL32(180, 40, 30, 220), 3.0f);
+          dl->AddText(bp, IM_COL32(255, 255, 255, 255), flag);
+        }
       } else {
         dl->AddRectFilled(a, b, IM_COL32(38, 41, 46, 255));
         dl->AddRect(a, b, IM_COL32(70, 74, 80, 255));
@@ -455,10 +451,14 @@ void EditorApp::drawWorldView() {
   // ---- Context menu: filled cell ----
   if (ImGui::BeginPopup("##cellmenu")) {
     auto* cell = worldCellAt(popCx, popCy);
-    ImGui::TextDisabled("(%d,%d) %s", popCx, popCy, cell ? cell->mapFile.c_str() : "?");
+    ImGui::TextDisabled("(%d,%d) %s", popCx, popCy, cell ? cell->mapFile.c_str() : "(empty)");
     if (cell && !cell->music.empty()) ImGui::TextDisabled("music: %s", cell->music.c_str());
     ImGui::Separator();
     if (ImGui::MenuItem("Open for editing")) worldOpenChunk(popCx, popCy);
+    // Per-chunk save: commits just this cell's edits and clears its flag.
+    const bool cellDirty = dirtyCells_.count({ popCx, popCy }) > 0;
+    if (ImGui::MenuItem("Save", nullptr, false, cellDirty))
+      worldSaveCell(popCx, popCy);
     // Assign a looping background song to this chunk (from assets/music/).
     if (cell && ImGui::BeginMenu("Music")) {
       if (ImGui::MenuItem("(none)", nullptr, cell->music.empty())) {

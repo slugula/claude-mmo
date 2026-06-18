@@ -63,6 +63,7 @@ add_library(game_core STATIC
   src/world/OverlayRenderer.cpp
   src/world/AttachmentRenderer.cpp
   src/world/SpriteCache.cpp
+  src/ui/MinimapRenderer.cpp
 )
 
 target_include_directories(game_core PUBLIC
@@ -108,7 +109,6 @@ add_executable(client-native
   src/ui/ClayChatLog.cpp
   src/ui/ClayLoginModal.cpp
   src/ui/ClayBankPanel.cpp
-  src/ui/MinimapRenderer.cpp
 )
 
 

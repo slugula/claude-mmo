@@ -106,7 +106,6 @@ constexpr const char* kViewport3dName      = "3D Viewport##3dvp";
 constexpr const char* kGridName            = "2D Grid##grid";
 constexpr const char* kToolbarName         = "Tools##toolbar";
 constexpr const char* kPropsName           = "Properties##props";
-constexpr const char* kMinimapName         = "Minimap##mm";
 
 } // namespace
 
@@ -520,6 +519,11 @@ bool EditorApp::init() {
   initBlockedOverlay();
   initImGui();
 
+  // Client-style circular minimap (overlaid on the 3D viewport). init() needs a
+  // live GL context + the minimap_composite shader on disk (copied post-build).
+  clientMinimap_.init();
+  clientMinimap_.buildBaseLayer(map_);
+
   // Load persisted settings if present.
   {
     AppSettings s;
@@ -546,6 +550,15 @@ bool EditorApp::init() {
 
   // Load recent files list.
   loadRecentFiles();
+
+  // Auto-load the game's singular world. The editor always edits the one
+  // canonical public/maps/world.json — no New/Open World needed. Assemble it
+  // up front so every chunk is loaded and ready, and open in the World view so
+  // the user can pick a chunk to edit (or create one).
+  worldEnsureManifestLoaded();   // loads public/maps/world.json (sets worldManifestPath_)
+  if (!worldManifestPath_.empty())
+    enterWorldMode(worldManifestPath_);
+  setMode(EditorMode::World);
 
   // Set initial window title.
   updateWindowTitle();
@@ -603,7 +616,7 @@ void EditorApp::renderFrame(float dt) {
       dirty_ = true; updateWindowTitle();
       rebuildTerrainGL(); rebuildObstacles();
       waterRenderer_.rebuild(map_, waterUniforms_.waterOffset);
-      minimap_.rebuild(map_, npcSpawns_);
+      clientMinimap_.invalidateRegion();
     }
     sZ = zNow;
 
@@ -614,7 +627,7 @@ void EditorApp::renderFrame(float dt) {
       dirty_ = true; updateWindowTitle();
       rebuildTerrainGL(); rebuildObstacles();
       waterRenderer_.rebuild(map_, waterUniforms_.waterOffset);
-      minimap_.rebuild(map_, npcSpawns_);
+      clientMinimap_.invalidateRegion();
     }
     sY = yNow;
 
@@ -718,7 +731,7 @@ void EditorApp::renderFrame(float dt) {
   }
 
   // ---- 3D viewport FBO render (Map workspace only) -----------------------
-  if (mode_ == EditorMode::Map) render3DViewport(dt);
+  if (mode_ == EditorMode::Map) { render3DViewport(dt); updateClientMinimap(); }
 
   // ---- DB model preview FBO render (runs before ImGui so the texture is ready) --
   if (mode_ == EditorMode::Database && showDbWindow_) dbRenderPreview(dt);
@@ -804,7 +817,6 @@ void EditorApp::renderFrame(float dt) {
       drawPreferencesWindow();
       draw3DViewportWindow();
       drawGridView();
-      drawMinimapWindow();
       break;
     case EditorMode::World:
       ImGui::SetNextWindowPos(wsPos,  ImGuiCond_Always);
@@ -1182,9 +1194,9 @@ void EditorApp::drawModeRail(float railW) {
     if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
   };
 
-  modeBtn("Map",   EditorMode::Map,      "Map Editor — edit the open chunk map");
-  modeBtn("World", EditorMode::World,    "World Editor — assign chunk maps to the world grid");
-  modeBtn("DB",    EditorMode::Database, "Database — items, NPCs, objects, actions, skills");
+  modeBtn("World", EditorMode::World,    "World Editor - assign chunk maps to the world grid");
+  modeBtn("Map",   EditorMode::Map,      "Map Editor - edit the open chunk map");
+  modeBtn("DB",    EditorMode::Database, "Database - items, NPCs, objects, actions, skills");
 
   ImGui::End();
   ImGui::PopStyleColor();
@@ -1227,14 +1239,14 @@ void EditorApp::drawMenuBar() {
       dirty_ = true; updateWindowTitle();
       rebuildTerrainGL(); rebuildObstacles();
       waterRenderer_.rebuild(map_, waterUniforms_.waterOffset);
-      minimap_.rebuild(map_, npcSpawns_);
+      clientMinimap_.invalidateRegion();
     }
     if (ImGui::MenuItem("Redo", "Ctrl+Y", false, undo_.canRedo())) {
       const auto& s = undo_.redo(); map_ = s.map; npcSpawns_ = s.npcs;
       dirty_ = true; updateWindowTitle();
       rebuildTerrainGL(); rebuildObstacles();
       waterRenderer_.rebuild(map_, waterUniforms_.waterOffset);
-      minimap_.rebuild(map_, npcSpawns_);
+      clientMinimap_.invalidateRegion();
     }
     ImGui::Separator();
     if (ImGui::MenuItem("Preferences...")) showPrefsWindow_ = true;
@@ -1247,10 +1259,9 @@ void EditorApp::drawMenuBar() {
   // World/Database mode switching lives on the left rail; the menus keep only
   // the world-manifest file actions (no nav duplication).
   if (ImGui::BeginMenu("World")) {
-    if (ImGui::MenuItem("New World"))       { worldNewManifest(); setMode(EditorMode::World); }
-    if (ImGui::MenuItem("Open World..."))   { worldOpenManifest(); setMode(EditorMode::World); }
-    if (ImGui::MenuItem("Save World", nullptr, false, !worldManifest_.chunks.empty() || worldDirty_))
-      worldSaveManifest();
+    if (ImGui::MenuItem("Save World", nullptr, false,
+                        !worldManifest_.chunks.empty() || worldDirty_ || !dirtyCells_.empty()))
+      worldSaveAll();
     ImGui::EndMenu();
   }
   if (ImGui::BeginMenu("View")) {
@@ -1321,20 +1332,9 @@ void EditorApp::drawToolbar() {
     ImGui::Separator();
     ImGui::TextDisabled("-- World --");
     ImGui::TextDisabled("Active (%d,%d)", activeCell_.first, activeCell_.second);
-    ImGui::SetNextItemWidth(-1);
-    ImGui::SliderInt("##wdd", &editorDrawDistance_, 1, 8, "Draw:%d");
     if (!dirtyCells_.empty())
       ImGui::TextDisabled("%d chunk(s) unsaved", static_cast<int>(dirtyCells_.size()));
   }
-
-  ImGui::Separator();
-  ImGui::TextDisabled("LMB = primary");
-  ImGui::TextDisabled("RMB = secondary");
-  ImGui::Separator();
-  ImGui::TextDisabled("Ctrl+Scroll");
-  ImGui::TextDisabled("= brush size");
-  ImGui::Separator();
-  ImGui::TextDisabled("WASD = pan cam");
 
   ImGui::End();
 }
@@ -1417,7 +1417,7 @@ void EditorApp::drawWaterSettings() {
       if (ImGui::Button("Clear Caustic Map", ImVec2(-1, 0)))
         waterUniforms_.causticMapPath.clear();  // procedural fallback resumes next launch
     } else {
-      ImGui::TextDisabled("(none — using procedural)");
+      ImGui::TextDisabled("(none - using procedural)");
     }
   }
 
@@ -1482,7 +1482,7 @@ void EditorApp::drawProperties() {
       obstBtn("Fishing Spot", "fishing_spot");
     }
     ImGui::Separator();
-    ImGui::TextDisabled("Rotation (Q / E)");
+    ImGui::TextDisabled("Rotation");
     ImGui::Text("%d\xC2\xB0", (placeRotation_ & 3) * 90);
     ImGui::SameLine();
     if (ImGui::SmallButton("Q -90")) placeRotation_ = (placeRotation_ + 1) & 3;
@@ -1595,13 +1595,12 @@ void EditorApp::drawProperties() {
     ImGui::Spacing();
     ImGui::Text("Shape %d", overlayShape_);
     ImGui::Separator();
-    ImGui::TextDisabled("Rotation (Q / E)");
+    ImGui::TextDisabled("Rotation");
     ImGui::Text("%d\xC2\xB0", (overlayRotation_ & 3) * 90);
     ImGui::SameLine();
     if (ImGui::SmallButton("Q -90##ov")) overlayRotation_ = (overlayRotation_ + 3) & 3;
     ImGui::SameLine();
     if (ImGui::SmallButton("E +90##ov")) overlayRotation_ = (overlayRotation_ + 1) & 3;
-    ImGui::TextDisabled("L-click: paint  R-click: erase");
   }
 
   ImGui::End();
@@ -1670,7 +1669,7 @@ void EditorApp::drawPreferencesWindow() {
       if (ImGui::Button("Reset AO Defaults")) aoStrength_ = 0.50f;
       ImGui::Separator();
       ImGui::EndDisabled();
-      if (aoEnabled_) ImGui::TextDisabled("AO is baked — rebuild terrain to update.");
+      if (aoEnabled_) ImGui::TextDisabled("AO is baked - rebuild terrain to update.");
       break;
     }
     case 4: { // Rendering
@@ -1687,6 +1686,12 @@ void EditorApp::drawPreferencesWindow() {
       if (ImGui::Checkbox("Height Overlay",      &showHeightOverlay_))      overlayHeightAuto_      = false;
       if (ImGui::Checkbox("Walkability Overlay",  &showWalkabilityOverlay_)) overlayWalkabilityAuto_ = false;
       ImGui::Checkbox("Gridmap Overlay",          &showGridmapOverlay_);
+      ImGui::Separator();
+      ImGui::TextDisabled("World");
+      ImGui::SetNextItemWidth(-1);
+      ImGui::SliderInt("Draw Distance##wdd", &editorDrawDistance_, 1, 8, "%d chunks");
+      editorDrawDistance_ = std::clamp(editorDrawDistance_, 1, 8);
+      ImGui::TextDisabled("Chunks meshed around the active cell");
       break;
     }
   }
@@ -1735,6 +1740,19 @@ void EditorApp::draw3DViewportWindow() {
                ImVec2(static_cast<float>(viewport3dW_),
                       static_cast<float>(viewport3dH_)),
                ImVec2(0, 1), ImVec2(1, 0));
+
+  // Client-style circular minimap overlay, top-right of the viewport — same
+  // position relative to the 3D view as the in-game HUD. It tracks the editor
+  // camera (centre = camera look-at, rotation = camera yaw) and updates live.
+  if (clientMinimap_.isReady()) {
+    if (GLuint mmTex = clientMinimap_.texture()) {
+      const float mmSize = static_cast<float>(ui::MinimapRenderer::kSize);
+      const float margin = 12.0f;
+      const ImVec2 a(imgPos.x + viewport3dW_ - margin - mmSize, imgPos.y + margin);
+      const ImVec2 b(a.x + mmSize, a.y + mmSize);
+      ImGui::GetWindowDrawList()->AddImage((ImTextureID)(uintptr_t)mmTex, a, b);
+    }
+  }
 
   // Interaction when cursor is over the image
   const bool imageHovered = ImGui::IsItemHovered();
@@ -2067,7 +2085,7 @@ void EditorApp::drawGridView() {
             ov.end());
           rebuildObstacles();
           waterRenderer_.rebuild(map_, waterUniforms_.waterOffset);
-          minimap_.rebuild(map_, npcSpawns_);
+          clientMinimap_.invalidateRegion();
         }
         hadStroke_ = true;
       } else {
@@ -2084,26 +2102,19 @@ void EditorApp::drawGridView() {
 }
 
 // -----------------------------------------------------------------------
-void EditorApp::drawMinimapWindow() {
-  ImGui::SetNextWindowSize(ImVec2(196.0f, 220.0f), ImGuiCond_FirstUseEver);
-  ImGui::Begin(kMinimapName);
-  const GLuint mmTex = minimap_.texture();
-  if (mmTex) {
-    const ImVec2 avail = ImGui::GetContentRegionAvail();
-    // Preserve the map's aspect ratio (the assembled world can be non-square,
-    // e.g. 128×64) so it isn't stretched to fit a square box.
-    const float tw = static_cast<float>(std::max(1, minimap_.texW()));
-    const float th = static_cast<float>(std::max(1, minimap_.texH()));
-    const float box = std::min(avail.x, avail.y);
-    float imgW = box, imgH = box;
-    if (tw >= th) imgH = box * th / tw; else imgW = box * tw / th;
-    // Mirror horizontally (u0=1, u1=0) so +tileX (east) appears on the LEFT,
-    // matching the 3D viewport's lookAtLH convention (east = screen-left).
-    ImGui::Image((ImTextureID)(uintptr_t)(mmTex), ImVec2(imgW, imgH), ImVec2(1, 0), ImVec2(0, 1));
-  } else {
-    ImGui::TextDisabled("(no minimap)");
-  }
-  ImGui::End();
+// Recompute the client-style circular minimap composite once per frame so it
+// follows the editor camera. Centre = camera look-at (world XZ → tile space),
+// rotation = camera yaw; the editor has no live players/NPCs/items so those
+// containers are empty (the base terrain layer + spawn markers are enough).
+void EditorApp::updateClientMinimap() {
+  if (!clientMinimap_.isReady()) return;
+  const glm::vec3 look = camera_.lookAtTarget();
+  static const std::unordered_map<std::string, shared::PlayerState> kNoPlayers;
+  static const std::vector<shared::NPCState>                        kNoNpcs;
+  static const std::vector<shared::DroppedItemState>               kNoItems;
+  clientMinimap_.updateFrame(look.x, look.z, nullptr,
+                             kNoPlayers, kNoNpcs, kNoItems,
+                             camera_.cameraYaw(), minimapTileRadius_);
 }
 
 // -----------------------------------------------------------------------
@@ -2147,7 +2158,7 @@ void EditorApp::applyBrush(int cx, int cy, float dt, bool rightClick) {
     pools_.rebuildFromMap(map_);
   }
   if (dirtyObstacles) rebuildObstacles();
-  if (dirtyMinimap)   minimap_.rebuild(map_, npcSpawns_);
+  if (dirtyMinimap)   clientMinimap_.invalidateRegion();
 
   // World mode: every cell the brush footprint overlaps is now dirty (Ctrl+S
   // slices them back). A seam vertex naturally marks both adjacent cells.
@@ -2440,8 +2451,7 @@ void EditorApp::initNewMap(int w, int h) {
   npcSpawns_.clear();
   undo_.clear();
   pushUndo();
-  minimap_.init(w, h);
-  minimap_.rebuild(map_, npcSpawns_);
+  clientMinimap_.buildBaseLayer(map_);
   camera_.snapTo({ static_cast<float>(w) * 0.5f, 0.0f, static_cast<float>(h) * 0.5f });
 }
 
@@ -2742,7 +2752,7 @@ void EditorApp::resizeMap(int newW, int newH) {
 
   rebuildTerrainGL(); rebuildObstacles();
   waterRenderer_.rebuild(map_, waterUniforms_.waterOffset);
-  minimap_.init(newW, newH); minimap_.rebuild(map_, npcSpawns_);
+  clientMinimap_.buildBaseLayer(map_);
 }
 
 // -----------------------------------------------------------------------
@@ -2758,7 +2768,7 @@ void EditorApp::updateWindowTitle() {
   const std::string filename = currentFilePath_.empty()
       ? "untitled"
       : std::filesystem::path(currentFilePath_).filename().string();
-  const std::string title = (dirty_ ? "* " : "") + filename + " — Snook Editor";
+  const std::string title = (dirty_ ? "* " : "") + filename + " - Snook Editor";
   glfwSetWindowTitle(window_.handle(), title.c_str());
 }
 
@@ -2809,7 +2819,7 @@ void EditorApp::openFileDialog() {
   updateWindowTitle();
   rebuildTerrainGL(); rebuildObstacles();
   waterRenderer_.rebuild(map_, waterUniforms_.waterOffset);
-  minimap_.init(map_.width, map_.height); minimap_.rebuild(map_, npcSpawns_);
+  clientMinimap_.buildBaseLayer(map_);
   camera_.snapTo({ static_cast<float>(map_.width) * 0.5f, 0.0f,
                    static_cast<float>(map_.height) * 0.5f });
   worldMode_ = false;   // single-file open leaves world mode
@@ -2828,7 +2838,7 @@ void EditorApp::openRecentFile(const std::string& path) {
   updateWindowTitle();
   rebuildTerrainGL(); rebuildObstacles();
   waterRenderer_.rebuild(map_, waterUniforms_.waterOffset);
-  minimap_.init(map_.width, map_.height); minimap_.rebuild(map_, npcSpawns_);
+  clientMinimap_.buildBaseLayer(map_);
   camera_.snapTo({ static_cast<float>(map_.width) * 0.5f, 0.0f,
                    static_cast<float>(map_.height) * 0.5f });
   worldMode_ = false;   // single-file open leaves world mode
