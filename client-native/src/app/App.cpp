@@ -39,6 +39,7 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <set>
 
 // Entity defs carried in the server's `init` message. Reuses the editor def
 // structs (their glaze metas already map the snake_case DB columns). Parsed via
@@ -2947,19 +2948,25 @@ void App::collectFontOptions_() {
   // Bundled pixel font (ships with the game; the historical default).
   add("ProggyClean (pixel)", resolveFromExe("assets/ProggyClean.ttf"), 13.0f);
 
-  // Any extra fonts the user drops into assets/ are auto-listed.
-  const auto assetsDir = resolveFromExe("assets");
-  if (std::filesystem::exists(assetsDir, ec)) {
-    for (const auto& de : std::filesystem::directory_iterator(assetsDir, ec)) {
+  // Any extra fonts the user drops into assets/ are auto-listed. Scan both the
+  // assets dir next to the exe (shipped/copied) and the repo source assets dir
+  // (../../assets in a dev build) so dropping a .ttf in source shows up after a
+  // restart without a full rebuild. Dedup by filename (exe copy wins).
+  std::set<std::string> seenFiles{ "ProggyClean.ttf" };   // already added
+  auto scanDir = [&](const std::filesystem::path& dir) {
+    if (!std::filesystem::exists(dir, ec)) return;
+    for (const auto& de : std::filesystem::directory_iterator(dir, ec)) {
       if (ec) break;
       if (!de.is_regular_file()) continue;
       const auto ext = de.path().extension().string();
       if (ext != ".ttf" && ext != ".otf") continue;
       const auto fn = de.path().filename().string();
-      if (fn == "ProggyClean.ttf") continue;   // already added
+      if (!seenFiles.insert(fn).second) continue;   // already listed
       add(de.path().stem().string(), de.path(), 18.0f);
     }
-  }
+  };
+  scanDir(resolveFromExe("assets"));
+  scanDir(resolveFromExe("../../assets"));   // repo source dir in a dev build
 
   // A handful of common Windows system fonts so there's something to audition
   // out of the box without bundling anything.
