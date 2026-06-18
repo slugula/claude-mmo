@@ -686,6 +686,7 @@ bool App::init() {
     reg("item_drop",      {"cloth3.ogg"});
     reg("fish_start",     {"bloop.wav"});
     reg("fish_catch",     {"splash.wav"});
+    reg("fish_reel",      {"reel.ogg"});
     reg("tree_fall",      {"chop-tree-fall.ogg"});
     reg("ore_break",      {"rock_break.ogg"});
   }
@@ -3441,8 +3442,17 @@ void App::processNetworkMessages() {
           seenFishTick_  = cp.lastFishTick;
           oneShotClip_   = "Sword_Attack";
           oneShotEndsAt_ = lastTickTime_ + std::chrono::milliseconds(oneShotDurMs("Sword_Attack"));
-          // First roll of a fishing session = the loop actually started → cast.
-          if (fishStartPending_) { audio_.playSfx("fish_start"); fishStartPending_ = false; }
+          if (fishStartPending_) {
+            // First roll of a session = the loop actually started → cast.
+            audio_.playSfx("fish_start");
+            fishStartPending_ = false;
+          } else if (!firstState) {
+            // A subsequent roll: reel-in on a miss (no fishing XP gained this
+            // state); a catch instead plays splash via the XP block below.
+            const auto it = cp.skills.find("fishing");
+            const double fxpNow = (it != cp.skills.end()) ? it->second.xp : 0.0;
+            if (fxpNow <= seenFishingXp_ + 1e-6) audio_.playSfx("fish_reel");
+          }
         }
         // Arm the fishing cast when a spot is targeted (player clicked / walking
         // to it); the bloop fires on the first roll above. Disarm if they stop.
