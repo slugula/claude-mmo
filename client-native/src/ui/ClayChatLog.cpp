@@ -51,8 +51,8 @@ static constexpr float kSbW    =   6.f;  // scrollbar width
 static constexpr Clay_Color kBg         = {  10,   5,   0, 200 };
 static constexpr Clay_Color kBorder     = {  80,  60,  40, 200 };
 static constexpr Clay_Color kInputBg    = {   5,   3,   0, 220 };
-static constexpr Clay_Color kSysText    = { 255, 224, 102, 255 };
-static constexpr Clay_Color kPlayerText = { 255, 255, 255, 255 };
+static constexpr Clay_Color kSysText    = { 255, 255, 255, 255 };   // system/game → white
+static constexpr Clay_Color kPlayerText = { 255, 224, 102, 255 };   // player chat → yellow
 static constexpr Clay_Color kSbTrack    = {  20,  12,   4, 180 };
 static constexpr Clay_Color kSbThumb    = {  90,  65,  30, 220 };
 
