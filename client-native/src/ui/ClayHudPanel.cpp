@@ -52,10 +52,10 @@ static constexpr Clay_Color kGrey         = { 160, 160, 160, 180 };
 static constexpr Clay_Color kDivider      = {  70,  50,  20, 200 };
 
 // ── Skills meta ───────────────────────────────────────────────────────────────
-static constexpr std::array<const char*, 7> kSkillOrder = {
-    "hitpoints", "defence", "warrior", "gunner", "woodcutting", "mining", "fishing",
+static constexpr std::array<const char*, 8> kSkillOrder = {
+    "hitpoints", "defence", "warrior", "gunner", "woodcutting", "mining", "fishing", "cooking",
 };
-static constexpr std::array<Clay_Color, 7> kSkillColors = {{
+static constexpr std::array<Clay_Color, 8> kSkillColors = {{
     { 220,  40,  40, 255 },  // hitpoints   — red
     {  60, 120, 220, 255 },  // defence     — blue
     { 200, 136,  44, 255 },  // warrior     — orange
@@ -63,6 +63,7 @@ static constexpr std::array<Clay_Color, 7> kSkillColors = {{
     {  80, 144,  64, 255 },  // woodcutting — green
     { 150, 150, 160, 255 },  // mining      — grey
     {  90, 160, 220, 255 },  // fishing     — light blue
+    { 200,  90,  60, 255 },  // cooking     — burnt orange/red
 }};
 
 // ── Equipment grid ────────────────────────────────────────────────────────────
