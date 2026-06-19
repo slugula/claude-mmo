@@ -166,7 +166,7 @@ static const char* primaryVerb(const std::string& id) {
         bool hand = !std::strcmp(slot,"rightHand")||!std::strcmp(slot,"leftHand");
         return hand ? "Wield" : "Wear";
     }
-    if (id=="shrimp"||id=="trout") return "Eat";
+    if (ui::itemIsFood(id)) return "Eat";
     return "";
 }
 
@@ -921,6 +921,9 @@ void clayHudHandleInput(const shared::PlayerState* player,
                         if (s_bankOpen) {
                             // Bank open: a plain click deposits 1.
                             netc->sendDepositItem(s_pressedSlot, 1);
+                        } else if (ui::itemIsFood(opt->itemId)) {
+                            // Food: a plain click eats it.
+                            netc->sendEatFood(s_pressedSlot);
                         } else if (equipSlotForItem(opt->itemId)[0]) {
                             // Otherwise equip if equippable.
                             netc->sendEquipItem(s_pressedSlot);

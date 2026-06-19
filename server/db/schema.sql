@@ -116,6 +116,24 @@ CREATE TABLE IF NOT EXISTS item_definitions (
   grip_scale      REAL NOT NULL DEFAULT 1
 );
 
+-- Production recipes — data-driven blueprint for all production skills (cooking
+-- today; smelting/smithing later). A recipe converts an input item into an
+-- output at a facility object; fail_item_id (when set) is produced on a failed
+-- skill check, with success scaling from required_level up to no_fail_level.
+CREATE TABLE IF NOT EXISTS recipe_definitions (
+  id             TEXT  PRIMARY KEY,
+  facility_id    TEXT  NOT NULL,                 -- object_definitions.id of the station
+  skill          TEXT  NOT NULL,                 -- SkillId trained (e.g. 'cooking')
+  required_level INT   NOT NULL DEFAULT 1,
+  xp             FLOAT NOT NULL DEFAULT 0,
+  input_item_id  TEXT  NOT NULL,
+  input_qty      INT   NOT NULL DEFAULT 1,
+  output_item_id TEXT  NOT NULL,
+  output_qty     INT   NOT NULL DEFAULT 1,
+  fail_item_id   TEXT,                            -- NULL = never fails
+  no_fail_level  INT   NOT NULL DEFAULT 99
+);
+
 -- Skill definitions — fixed set of SkillIds; the editor only authors the icon.
 CREATE TABLE IF NOT EXISTS skill_definitions (
   id         TEXT PRIMARY KEY,   -- mirrors SkillId (warrior, defence, …)
@@ -133,7 +151,8 @@ INSERT INTO skill_definitions (id, name, icon_path, sort_order) VALUES
   ('gunner',      'Cowboy',      NULL, 3),
   ('woodcutting', 'Woodcutting', NULL, 4),
   ('mining',      'Mining',      NULL, 5),
-  ('fishing',     'Fishing',     NULL, 6)
+  ('fishing',     'Fishing',     NULL, 6),
+  ('cooking',     'Cooking',     NULL, 7)
 ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO action_definitions (id, display_name, handler_type) VALUES
@@ -143,6 +162,7 @@ INSERT INTO action_definitions (id, display_name, handler_type) VALUES
   ('harvest', 'Harvest', 'gather_resource'),
   ('smith',   'Smith',   'production_facility'),
   ('cook',    'Cook',    'production_facility'),
+  ('prepare', 'Prepare', 'production_facility'),
   ('equip',   'Equip',   'equip'),
   ('eat',     'Eat',     'eat'),
   ('talk',    'Talk-to', 'talk'),
@@ -156,6 +176,19 @@ INSERT INTO object_definitions (id, name, object_type, collision, action_id, req
   ('chest',        'Chest',        'Decoration',         'full_blocking', 'bank', NULL,           NULL, NULL,         1, 0,   'A secure bank chest.'),
   ('fishing_spot', 'Fishing Spot', 'ResourceNode',       'none',          'fish', NULL,           1,    'raw_shrimp', 1, 10,  'A calm fishing spot.'),
   ('fence',        'Fence',        'Decoration',         'half_blocking', NULL,   NULL,           NULL, NULL,         1, 0,   'A wooden fence.')
+ON CONFLICT (id) DO NOTHING;
+
+-- Production facilities (Cooking). craft_action_id drives the client's verb.
+INSERT INTO object_definitions (id, name, object_type, collision, craft_action_id, examine_text) VALUES
+  ('prep_table',    'Preparation Table', 'ProductionFacility', 'full_blocking', 'prepare', 'A table for preparing raw ingredients.'),
+  ('cooking_range', 'Cooking Range',     'ProductionFacility', 'full_blocking', 'cook',    'A hot range for cooking food.')
+ON CONFLICT (id) DO NOTHING;
+
+-- Cooking recipes: raw_shrimp -> prepared_shrimp (always), then
+-- prepared_shrimp -> cooked_shrimp / burnt_shrimp (level-scaled).
+INSERT INTO recipe_definitions (id, facility_id, skill, required_level, xp, input_item_id, input_qty, output_item_id, output_qty, fail_item_id, no_fail_level) VALUES
+  ('prepare_shrimp', 'prep_table',    'cooking', 1, 5,  'raw_shrimp',      1, 'prepared_shrimp', 1, NULL,           1),
+  ('cook_shrimp',    'cooking_range', 'cooking', 1, 30, 'prepared_shrimp', 1, 'cooked_shrimp',   1, 'burnt_shrimp', 20)
 ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO npc_definitions (id, name, size_x, size_y, is_attackable, max_hp, attack, strength, melee_defense, ranged_defense, attack_speed_ticks, respawn_ticks, is_talkable, ai, examine_text) VALUES
@@ -202,6 +235,14 @@ INSERT INTO item_definitions (id, name, stackable, tradable, value, item_type, e
   ('bronze_longsword','Bronze longsword',FALSE, TRUE,  60,  'equipment', 'rightHand',  FALSE, 8,  7, 0, 0, 0, 0, NULL,          NULL, NULL,      'melee',  'Careful not to poke your eye out!'),
   ('kinetic_charges', 'Kinetic Charges', TRUE,  TRUE,  1,   'equipment', 'ammo',       FALSE, 0,  0, 0, 0, 0, 0, NULL,          NULL, NULL,      NULL,     NULL),
   ('basic_chaingun',  'Basic Chaingun',  FALSE, TRUE,  200, 'equipment', 'rightHand',  TRUE,  0,  0, 0, 8, 4, 0, NULL,          NULL, NULL,      'gunner', 'A heavy two-handed energy weapon.')
+ON CONFLICT (id) DO NOTHING;
+
+-- Cooking-chain items (item_type + heal_amount on the food). Separate insert so
+-- the food columns are explicit.
+INSERT INTO item_definitions (id, name, stackable, tradable, value, item_type, heal_amount, examine_text) VALUES
+  ('prepared_shrimp', 'Prepared shrimp', FALSE, TRUE, 6,  'resource', NULL, 'Raw shrimp, prepped and ready to cook.'),
+  ('cooked_shrimp',   'Cooked shrimp',   FALSE, TRUE, 12, 'food',     3,    'Some nicely cooked shrimp.'),
+  ('burnt_shrimp',    'Burnt shrimp',    FALSE, TRUE, 1,  'resource', NULL, 'Oops. Charred beyond edible.')
 ON CONFLICT (id) DO NOTHING;
 
 -- Migration: add animation/orientation columns to object_definitions if not present.

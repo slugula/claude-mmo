@@ -54,6 +54,8 @@ public:
   void sendChopTree    (int tileX,   int tileY);
   void sendMineRock    (int tileX,   int tileY);
   void sendFish        (int tileX,   int tileY);
+  void sendUseFacility (int tileX,   int tileY);
+  void sendEatFood     (int slotIndex);
   void sendAttackNpc   (const std::string& npcId);
   void sendTalkTo      (const std::string& npcId);
   void sendTakeItem    (const std::string& droppedItemId);

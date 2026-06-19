@@ -22,5 +22,7 @@ export function clearActionIntents<T extends PlayerState>(p: T): T {
     mineTargetY:    null,
     fishTargetX:    null,
     fishTargetY:    null,
+    useTargetX:     null,
+    useTargetY:     null,
   };
 }

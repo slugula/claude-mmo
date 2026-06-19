@@ -195,6 +195,10 @@ struct PlayerState {
   int                                          lastChopTick    = -999;
   int                                          lastMineTick    = -999;
   int                                          lastFishTick    = -999;
+  // Bumped on each production attempt (prep/cook) — drives the craft animation.
+  int                                          lastProduceTick = -999;
+  // Player is locked out of attacking until this tick (set when eating starts).
+  int                                          eatUntilTick    = -999;
   // Set while the server has a pending pick-up queued for this player.
   // Transitions from has_value() → nullopt indicate a completed pickup.
   std::optional<std::string>                   pickupItemId;

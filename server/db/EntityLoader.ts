@@ -1,8 +1,9 @@
 import { pool } from './client';
-import type { ItemDefinition } from '../../src/shared/types';
+import type { ItemDefinition, SkillId } from '../../src/shared/types';
 import { reloadItems } from '../../src/items/ItemRegistry';
 import type { NPCDefinition, DropEntry } from '../../src/npcs/NPCRegistry';
 import { reloadNPCs } from '../../src/npcs/NPCRegistry';
+import { reloadRecipes, type ProductionRecipe } from '../../src/production/RecipeRegistry';
 
 function rowToItemDef(row: Record<string, unknown>): ItemDefinition {
   const def: ItemDefinition = {
@@ -17,6 +18,8 @@ function rowToItemDef(row: Record<string, unknown>): ItemDefinition {
   if (row.tool_type     != null) def.toolType    = row.tool_type    as ItemDefinition['toolType'];
   if (row.combat_style  != null) def.combatStyle = row.combat_style as ItemDefinition['combatStyle'];
   if (row.two_handed    != null) def.twoHanded   = row.two_handed   as boolean;
+  if (row.item_type     != null) def.itemType    = row.item_type    as ItemDefinition['itemType'];
+  if (row.heal_amount   != null) def.healAmount  = row.heal_amount  as number;
   if (row.required_skill != null && row.required_level != null) {
     def.requirements = { [row.required_skill as string]: row.required_level as number } as ItemDefinition['requirements'];
   }
@@ -94,6 +97,14 @@ export async function loadEntitiesFromDB(): Promise<void> {
     } catch {
       console.warn('[EntityLoader] skill_definitions not found — run schema.sql to enable skill icons');
     }
+    // Recipes are tolerated separately too: a DB that predates the cooking
+    // migration just has no production recipes rather than failing the load.
+    let recipeRows: { rows: Record<string, unknown>[] } = { rows: [] };
+    try {
+      recipeRows = await pool.query('SELECT * FROM recipe_definitions ORDER BY id');
+    } catch {
+      console.warn('[EntityLoader] recipe_definitions not found — run schema.sql to enable production skills');
+    }
     // Strip null-valued columns from every def row before relaying them to the
     // client. The native client parses these with glaze into structs whose
     // string/number fields are non-nullable; a JSON `null` (from a nullable DB
@@ -133,6 +144,23 @@ export async function loadEntitiesFromDB(): Promise<void> {
       }
       reloadNPCs(npcRows.rows.map(r => rowToNPCDef(r, dropMap.get(r.id as string) ?? [])));
       console.log(`[EntityLoader] loaded ${npcRows.rows.length} NPCs from DB`);
+    }
+    if (recipeRows.rows.length > 0) {
+      const recipes: ProductionRecipe[] = recipeRows.rows.map(r => ({
+        id:            r.id              as string,
+        facilityId:    r.facility_id     as string,
+        skill:         r.skill           as SkillId,
+        requiredLevel: (r.required_level as number) ?? 1,
+        xp:            (r.xp             as number) ?? 0,
+        inputItemId:   r.input_item_id   as string,
+        inputQty:      (r.input_qty      as number) ?? 1,
+        outputItemId:  r.output_item_id  as string,
+        outputQty:     (r.output_qty     as number) ?? 1,
+        failItemId:    (r.fail_item_id   as string) ?? null,
+        noFailLevel:   (r.no_fail_level  as number) ?? 99,
+      }));
+      reloadRecipes(recipes);
+      console.log(`[EntityLoader] loaded ${recipes.length} recipes from DB`);
     }
   } catch (e) {
     console.warn('[EntityLoader] DB load failed — registries retain JSON defaults:', e);

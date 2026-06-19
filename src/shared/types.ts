@@ -16,16 +16,16 @@ export type SkinColor  = 'fair' | 'tan' | 'olive' | 'brown';
 
 export type SkillId =
   | 'warrior' | 'defence' | 'hitpoints'
-  | 'woodcutting' | 'mining' | 'fishing' | 'gunner';
+  | 'woodcutting' | 'mining' | 'fishing' | 'cooking' | 'gunner';
 
 export const ALL_SKILLS: SkillId[] = [
   'warrior', 'defence', 'hitpoints',
-  'woodcutting', 'mining', 'fishing', 'gunner'
+  'woodcutting', 'mining', 'fishing', 'cooking', 'gunner'
 ];
 
 // Only skills with active gameplay systems — shown in the Skills panel
 export const VISIBLE_SKILLS: SkillId[] = [
-  'hitpoints', 'defence', 'warrior', 'gunner', 'woodcutting', 'mining', 'fishing'
+  'hitpoints', 'defence', 'warrior', 'gunner', 'woodcutting', 'mining', 'fishing', 'cooking'
 ];
 
 export interface SkillState {
@@ -63,6 +63,10 @@ export interface ItemDefinition {
   toolType?: 'axe' | 'pickaxe' | 'fishing_rod';
   combatStyle?: 'melee' | 'gunner';
   twoHanded?: boolean;
+  // 'resource' | 'equipment' | 'food'. Food items can be eaten to heal.
+  itemType?: 'resource' | 'equipment' | 'food';
+  // HP restored when this food is eaten (only meaningful for itemType==='food').
+  healAmount?: number;
 }
 
 export interface ItemStack {
@@ -207,6 +211,13 @@ export interface PlayerState {
   fishTargetX: number | null;
   fishTargetY: number | null;
   lastFishTick: number;
+  // Production facility (Preparation Table / Cooking Range) the player is using.
+  useTargetX: number | null;
+  useTargetY: number | null;
+  lastProduceTick: number;
+  // Eating: the player cannot attack/gather-roll until this tick. The heal is
+  // applied immediately on EAT_FOOD; this only gates actions for the duration.
+  eatUntilTick: number;
   // Item id the player visually holds while gathering (axe/pickaxe/fishing rod),
   // overriding their equipped weapon on the client. '' = none (show equipped).
   // Server-derived each tick (see systems/GatheringTool.ts); not persisted.
@@ -297,6 +308,8 @@ export interface MoveToAction      { type: 'MOVE_TO';     targetX: number; targe
 export interface ChopTreeAction    { type: 'CHOP_TREE';   tileX: number;   tileY: number; }
 export interface MineRockAction    { type: 'MINE_ROCK';   tileX: number;   tileY: number; }
 export interface FishAction        { type: 'FISH';        tileX: number;   tileY: number; }
+export interface UseFacilityAction { type: 'USE_FACILITY'; tileX: number;  tileY: number; }
+export interface EatFoodAction     { type: 'EAT_FOOD';    slotIndex: number; }
 export interface AttackNPCAction   { type: 'ATTACK_NPC';  npcId: string; }
 export interface TalkToAction      { type: 'TALK_TO';     npcId: string; }
 export interface TakeItemAction    { type: 'TAKE_ITEM';   droppedItemId: string; }
@@ -315,6 +328,7 @@ export interface WithdrawItemAction   { type: 'WITHDRAW_ITEM'; bankSlot: number;
 
 export type GameAction =
   | MoveToAction | ChopTreeAction | MineRockAction | FishAction
+  | UseFacilityAction | EatFoodAction
   | AttackNPCAction | TalkToAction | TakeItemAction
   | DropItemAction | MoveSlotAction | MoveBankSlotAction
   | EquipItemAction | UnequipItemAction | SendChatAction

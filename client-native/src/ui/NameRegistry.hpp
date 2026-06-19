@@ -16,6 +16,7 @@ inline std::unordered_map<std::string, std::string> g_npcNames;   // kind  → "
 inline std::unordered_map<std::string, std::string> g_itemNames;  // id    → "Bronze sword"
 inline std::unordered_map<std::string, std::string> g_skillNames; // id    → "Cowboy"
 inline std::unordered_map<std::string, bool>        g_npcAttackable; // kind → isAttackable
+inline std::unordered_map<std::string, bool>        g_itemFood;       // id   → itemType=='food'
 
 // ---- Fallback prettification (id/kind → human-readable) --------------------
 // e.g. "bronze_sword" → "Bronze sword",  "shopkeeper" → "Shopkeeper"
@@ -52,6 +53,13 @@ inline std::string itemName(const std::string& id) {
 inline std::string skillName(const std::string& id) {
     auto it = g_skillNames.find(id);
     return (it != g_skillNames.end() && !it->second.empty()) ? it->second : prettifyId(id);
+}
+
+// Returns true when the item id is a food (itemType=='food' in the DB) and so
+// can be eaten. Falls back to false when offline / unknown.
+inline bool itemIsFood(const std::string& id) {
+    auto it = g_itemFood.find(id);
+    return (it != g_itemFood.end()) ? it->second : false;
 }
 
 // Returns true when the NPC kind is flagged as attackable in the DB.

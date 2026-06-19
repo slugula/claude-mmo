@@ -125,6 +125,10 @@ private:
   std::vector<editor::ItemDef>             dbItemDefs_;
   std::unordered_map<std::string, const editor::ItemDef*> itemDefById_;  // points into dbItemDefs_
 
+  // If the object on tile (tx,ty) is a production facility, return the verb
+  // (craft action display name, e.g. "Prepare"/"Cook"); otherwise empty.
+  std::string facilityVerbAt(int tx, int ty) const;
+
   // Draw the player's equipped weapon (equipped["rightHand"]) attached to the
   // hand socket. Call immediately after that player's skinned render (so the
   // shared SkinnedMesh pose/modelSpace_ is still valid).
@@ -168,6 +172,7 @@ private:
     int   seenChopTick     = -999;
     int   seenMineTick     = -999;
     int   seenFishTick     = -999;
+    int   seenProduceTick  = -999;
     int   seenHitTick      = -999;
     bool  prevPickupActive = false;  // was pickupItemId non-empty last tick?
     bool  seeded           = false;  // baseline stamps set on first sight (no replay)
@@ -248,6 +253,8 @@ private:
   int                                      seenChopTick_      = -999;
   int                                      seenMineTick_      = -999;
   int                                      seenFishTick_      = -999;
+  int                                      seenProduceTick_   = -999;
+  int                                      seenEatTick_       = -999;
   int                                      seenHitTick_       = -999;
   bool                                     prevPickupActive_  = false; // was pickupItemId non-empty last tick?
   // Per-equip-slot snapshot for detecting equip/unequip events vs the

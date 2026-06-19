@@ -5,6 +5,9 @@ import { getItem } from '../items/ItemRegistry';
 import { findPath } from '../world/Pathfinder';
 import { directionTo } from './CombatSystem';
 
+// Ticks the player is locked out of attacking/producing after starting to eat.
+const EAT_TICKS = 3;
+
 export function processItems(
   player: PlayerState,
   droppedItems: DroppedItemState[],
@@ -74,6 +77,25 @@ export function processItems(
         tileY: nextPlayer.tileY,
         droppedAtTick: tick,
       });
+    }
+
+    if (action.type === 'EAT_FOOD') {
+      // Already mid-bite? Ignore further eat requests until done.
+      if (tick < nextPlayer.eatUntilTick) continue;
+      const slot = nextPlayer.inventory[action.slotIndex];
+      if (!slot) continue;
+      const def = getItem(slot.itemId);
+      if (def?.itemType !== 'food') continue;
+      const heal = def.healAmount ?? 0;
+      // Consume one unit; heal immediately (snapshotting the food's heal value),
+      // and lock out attacks/production for the eat duration. Combat/gather
+      // intents are deliberately preserved so the player resumes when done.
+      const newInv = removeItem(nextPlayer.inventory, action.slotIndex, 1);
+      const newHp  = Math.min(nextPlayer.maxHp, nextPlayer.hp + heal);
+      nextPlayer = { ...nextPlayer, inventory: newInv, hp: newHp, eatUntilTick: tick + EAT_TICKS };
+      const name = (def.name ?? slot.itemId).toLowerCase();
+      messages.push(`You eat the ${name}.`);
+      if (heal > 0) messages.push(`It heals some health.`);
     }
 
     if (action.type === 'MOVE_SLOT') {

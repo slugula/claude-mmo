@@ -307,7 +307,7 @@ export function processCombat(
           if (nextPlayer.path.length > 0) nextPlayer = { ...nextPlayer, path: [] };
           nextPlayer = { ...nextPlayer, facing: directionTo(pos(nextPlayer), pos(target)) };
 
-          if (tick - nextPlayer.lastAttackTick >= GUNNER_ATTACK_SPEED) {
+          if (tick - nextPlayer.lastAttackTick >= GUNNER_ATTACK_SPEED && tick >= nextPlayer.eatUntilTick) {
             // Check ammo
             const ammoStack = nextPlayer.equipped.ammo;
             if (!ammoStack || ammoStack.itemId !== 'kinetic_charges') {
@@ -377,7 +377,7 @@ export function processCombat(
           if (nextPlayer.path.length > 0) nextPlayer = { ...nextPlayer, path: [] };
           nextPlayer = { ...nextPlayer, facing: directionTo(pos(nextPlayer), pos(target)) };
 
-          if (tick - nextPlayer.lastAttackTick >= PLAYER_ATTACK_SPEED) {
+          if (tick - nextPlayer.lastAttackTick >= PLAYER_ATTACK_SPEED && tick >= nextPlayer.eatUntilTick) {
             const def = getNPCDef(target.kind);
             const idx = nextNPCs.findIndex(n => n.id === target.id);
             const bonuses      = getEquipBonuses(nextPlayer.equipped);

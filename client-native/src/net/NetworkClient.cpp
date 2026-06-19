@@ -282,6 +282,21 @@ void NetworkClient::sendFish(int tileX, int tileY) {
   sendActionRaw(buf);
 }
 
+void NetworkClient::sendUseFacility(int tileX, int tileY) {
+  char buf[96];
+  std::snprintf(buf, sizeof(buf),
+                "{\"type\":\"USE_FACILITY\",\"tileX\":%d,\"tileY\":%d}",
+                tileX, tileY);
+  sendActionRaw(buf);
+}
+
+void NetworkClient::sendEatFood(int slotIndex) {
+  char buf[64];
+  std::snprintf(buf, sizeof(buf),
+                "{\"type\":\"EAT_FOOD\",\"slotIndex\":%d}", slotIndex);
+  sendActionRaw(buf);
+}
+
 void NetworkClient::sendAttackNpc(const std::string& npcId) {
   sendActionRaw("{\"type\":\"ATTACK_NPC\",\"npcId\":\"" + jsonEscape(npcId) + "\"}");
 }

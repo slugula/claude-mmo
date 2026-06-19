@@ -460,6 +460,13 @@ bool App::init() {
                 }
                 if (!verb.empty()) cm.entries.push_back({ verb, subject });
               }
+              // Production facility (Preparation Table / Cooking Range): the
+              // verb comes from the craft action's display name (Prepare/Cook).
+              if (!od->craftActionId.empty()) {
+                std::string verb = od->craftActionId;
+                for (const auto& a : dbActionDefs_) if (a.id == od->craftActionId) { verb = a.displayName; break; }
+                if (!verb.empty()) cm.entries.push_back({ verb, subject });
+              }
               cm.entries.push_back({ "Examine", subject });
             } else if (obs == "tree") {
               cm.entries.push_back({ "Chop down", "Tree" });
@@ -878,6 +885,7 @@ void App::applyEntityDefs(const std::vector<editor::NpcDef>&    npcs,
   spriteEntries.reserve(items.size());
   for (const auto& def : dbItemDefs_) {
     if (!def.name.empty()) ui::g_itemNames[def.id] = def.name;
+    ui::g_itemFood[def.id] = (def.itemType == "food");
     entities_.ensureItemModel(def.id, def.modelDropped, 1, 1);
     if (!def.spritePath.empty())
       spriteEntries.push_back({ def.id, resolveFromExe(def.spritePath.c_str()).string() });
@@ -1908,6 +1916,17 @@ void App::renderFrame() {
             else if (obs == "rock")  { ctxVerb = "Mine"; ctxSubject = "Rock"; }
             else if (obs == "fishing_spot") { ctxVerb = "Fish"; ctxSubject = "Fishing spot"; }
             else if (obs == "chest") { ctxVerb = "Bank"; ctxSubject = "Chest"; }
+            else {
+              const std::string fv = facilityVerbAt(ex, ey);
+              if (!fv.empty()) {
+                static std::string s_fVerb, s_fSubj;
+                s_fVerb = fv;
+                const editor::ObjectDef* od = nullptr;
+                for (const auto& o : dbObjectDefs_) if (o.id == obs) { od = &o; break; }
+                s_fSubj = od ? od->name : obs;
+                ctxVerb = s_fVerb.c_str(); ctxSubject = s_fSubj.c_str();
+              }
+            }
           }
           break;
         }
@@ -2159,6 +2178,16 @@ void App::renderFrame() {
               pendingBankTileY_ = ty;
               oneShotClip_.clear();
               dispatched = true; clickFeedbackColor_ = 0;
+            } else {
+              // Production facility (Preparation Table / Cooking Range) — any
+              // object with a craft action is used generically via USE_FACILITY.
+              const editor::ObjectDef* od = nullptr;
+              for (const auto& o : dbObjectDefs_) if (o.id == obs) { od = &o; break; }
+              if (od && !od->craftActionId.empty()) {
+                network_.sendUseFacility(tx, ty);
+                oneShotClip_.clear();
+                dispatched = true; clickFeedbackColor_ = 1;
+              }
             }
           }
         }
@@ -2199,6 +2228,8 @@ void App::renderFrame() {
         if (e.verb == "Drop") {
           network_.sendDropItem(slot);
           audio_.playSfx("item_drop");
+        } else if (e.verb == "Eat") {
+          network_.sendEatFood(slot);
         } else if (e.verb == "Examine") {
           if (!cm.contextItemId.empty()) {
             const std::string msg = "It's a " + ui::itemName(cm.contextItemId) + ".";
@@ -2206,7 +2237,7 @@ void App::renderFrame() {
             ui::chatAppendSystem(msg);
           }
         } else {
-          // Primary verb: Wield / Wear / Eat → equip
+          // Primary verb: Wield / Wear → equip
           network_.sendEquipItem(slot);
         }
         cm.inventoryCtxSlot = -1;
@@ -2297,6 +2328,11 @@ void App::renderFrame() {
         pendingBankTileX_ = ctxMenuTileX_;
         pendingBankTileY_ = ctxMenuTileY_;
         oneShotClip_.clear();
+      } else if (facilityVerbAt(ctxMenuTileX_, ctxMenuTileY_) == e.verb &&
+                 !e.verb.empty()) {
+        // Production facility (Prepare / Cook) — verb is the craft action's
+        // display name for the object on this tile.
+        network_.sendUseFacility(ctxMenuTileX_, ctxMenuTileY_); oneShotClip_.clear();
       } else if (e.verb == "Attack") {
         for (const auto& n : npcs_)
           if (n.tileX == ctxMenuTileX_ && n.tileY == ctxMenuTileY_ && !n.dying)
@@ -2935,6 +2971,20 @@ void App::initOutlineMaskFbo(int w, int h) {
   glNamedFramebufferTexture(outlineMaskFbo_, GL_COLOR_ATTACHMENT0, outlineMaskTex_, 0);
 }
 
+// If the object on tile (tx,ty) is a production facility, return the craft
+// action's display name (the menu verb, e.g. "Prepare"/"Cook"); else "".
+std::string App::facilityVerbAt(int tx, int ty) const {
+  if (ty < 0 || ty >= static_cast<int>(map_.tiles.size()) ||
+      tx < 0 || tx >= static_cast<int>(map_.tiles[ty].size())) return "";
+  const std::string& obs = map_.tiles[ty][tx].obstacle;
+  if (obs.empty()) return "";
+  const editor::ObjectDef* od = nullptr;
+  for (const auto& o : dbObjectDefs_) if (o.id == obs) { od = &o; break; }
+  if (!od || od->craftActionId.empty()) return "";
+  for (const auto& a : dbActionDefs_) if (a.id == od->craftActionId) return a.displayName;
+  return od->craftActionId;
+}
+
 // Build the list of fonts the previewer can switch between. Only paths that
 // actually exist are added; the bundled pixel font is always first (index 0).
 void App::collectFontOptions_() {
@@ -3453,6 +3503,7 @@ void App::processNetworkMessages() {
             ra.seenChopTick    = ps.lastChopTick;
             ra.seenMineTick    = ps.lastMineTick;
             ra.seenFishTick    = ps.lastFishTick;
+            ra.seenProduceTick = ps.lastProduceTick;
             ra.seenHitTick     = ps.lastHitTick;
             ra.prevPickupActive= ps.pickupItemId.has_value();
             continue;
@@ -3478,6 +3529,12 @@ void App::processNetworkMessages() {
           // Chop → Sword_Attack (overwrites attack if both fire same tick).
           if (ps.lastChopTick > ra.seenChopTick) {
             ra.seenChopTick  = ps.lastChopTick;
+            ra.oneShotClip   = "Sword_Attack";
+            ra.oneShotEndsAt = nowRem + remDurMs("Sword_Attack");
+          }
+          // Production (Prepare / Cook) — placeholder swing.
+          if (ps.lastProduceTick > ra.seenProduceTick) {
+            ra.seenProduceTick = ps.lastProduceTick;
             ra.oneShotClip   = "Sword_Attack";
             ra.oneShotEndsAt = nowRem + remDurMs("Sword_Attack");
           }
@@ -3615,6 +3672,20 @@ void App::processNetworkMessages() {
             const double fxpNow = (it != cp.skills.end()) ? it->second.xp : 0.0;
             if (fxpNow <= seenFishingXp_ + 1e-6) audio_.playSfx("fish_reel");
           }
+        }
+        // Production (Prepare / Cook) — each attempt advances lastProduceTick.
+        // Placeholder swing animation; bespoke clips to come.
+        if (cp.lastProduceTick > seenProduceTick_) {
+          seenProduceTick_ = cp.lastProduceTick;
+          oneShotClip_   = "Sword_Attack";
+          oneShotEndsAt_ = lastTickTime_ + std::chrono::milliseconds(oneShotDurMs("Sword_Attack"));
+        }
+        // Eating — eatUntilTick jumps up when a new bite starts. Placeholder
+        // swing animation; bespoke eat clip to come.
+        if (cp.eatUntilTick > seenEatTick_) {
+          seenEatTick_   = cp.eatUntilTick;
+          oneShotClip_   = "Sword_Attack";
+          oneShotEndsAt_ = lastTickTime_ + std::chrono::milliseconds(oneShotDurMs("Sword_Attack"));
         }
         // Arm the fishing cast when a spot is targeted (player clicked / walking
         // to it); the bloop fires on the first roll above. Disarm if they stop.
