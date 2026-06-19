@@ -64,6 +64,22 @@ template<> struct glz::meta<editor::ObjectDef> {
     "pickable",          &T::pickable);
 };
 
+template<> struct glz::meta<editor::RecipeDef> {
+  using T = editor::RecipeDef;
+  static constexpr auto value = glz::object(
+    "id",             &T::id,
+    "facility_id",    &T::facilityId,
+    "skill",          &T::skill,
+    "required_level", &T::requiredLevel,
+    "xp",             &T::xp,
+    "input_item_id",  &T::inputItemId,
+    "input_qty",      &T::inputQty,
+    "output_item_id", &T::outputItemId,
+    "output_qty",     &T::outputQty,
+    "fail_item_id",   &T::failItemId,
+    "no_fail_level",  &T::noFailLevel);
+};
+
 template<> struct glz::meta<editor::NpcDef> {
   using T = editor::NpcDef;
   static constexpr auto value = glz::object(
@@ -221,6 +237,28 @@ struct EntityClient {
       entityHttpRequest(L"PUT", entityToWide("/api/db/skills/" + d.id), *json);
       lastError.clear(); return true;
     } catch (const std::exception& e) { lastError = e.what(); return false; }
+  }
+
+  // ---- Recipes (production: input item -> output at a facility object)
+  std::vector<RecipeDef> getRecipes() {
+    auto json = entityHttpRequest(L"GET", L"/api/db/recipes");
+    std::vector<RecipeDef> out;
+    (void)glz::read_json(out, json);
+    return out;
+  }
+  bool saveRecipe(const RecipeDef& d, bool isNew) {
+    if (d.id.empty()) { lastError = "ID is required."; return false; }
+    auto json = glz::write_json(d);
+    if (!json) { lastError = "JSON serialization failed."; return false; }
+    try {
+      if (isNew) entityHttpRequest(L"POST", L"/api/db/recipes", *json);
+      else       entityHttpRequest(L"PUT",  entityToWide("/api/db/recipes/" + d.id), *json);
+      lastError.clear(); return true;
+    } catch (const std::exception& e) { lastError = e.what(); return false; }
+  }
+  bool deleteRecipe(const std::string& id) {
+    try { entityHttpRequest(L"DELETE", entityToWide("/api/db/recipes/" + id)); lastError.clear(); return true; }
+    catch (const std::exception& e) { lastError = e.what(); return false; }
   }
 
   // ---- Actions

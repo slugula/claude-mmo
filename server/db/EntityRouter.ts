@@ -280,6 +280,62 @@ entityRouter.delete('/npcs/:id', async (req, res) => {
   } catch (e) { err(res, e); }
 });
 
+// ---- Recipes (production: input item -> output at a facility object) ---------
+
+entityRouter.get('/recipes', async (_req, res) => {
+  try {
+    const r = await pool.query(`
+      SELECT id,
+        COALESCE(facility_id,    '') AS facility_id,
+        COALESCE(skill,          '') AS skill,
+        COALESCE(required_level, 1)  AS required_level,
+        COALESCE(xp,             0)  AS xp,
+        COALESCE(input_item_id,  '') AS input_item_id,
+        COALESCE(input_qty,      1)  AS input_qty,
+        COALESCE(output_item_id, '') AS output_item_id,
+        COALESCE(output_qty,     1)  AS output_qty,
+        COALESCE(fail_item_id,   '') AS fail_item_id,
+        COALESCE(no_fail_level,  99) AS no_fail_level
+      FROM recipe_definitions ORDER BY id`);
+    ok(res, r.rows);
+  } catch (e) { err(res, e); }
+});
+
+entityRouter.post('/recipes', async (req, res) => {
+  try {
+    const b = req.body;
+    await pool.query(`
+      INSERT INTO recipe_definitions
+        (id,facility_id,skill,required_level,xp,input_item_id,input_qty,
+         output_item_id,output_qty,fail_item_id,no_fail_level)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+      [b.id,b.facility_id,b.skill,b.required_level??1,b.xp??0,b.input_item_id,b.input_qty??1,
+       b.output_item_id,b.output_qty??1,nullIfEmpty(b.fail_item_id),b.no_fail_level??99]);
+    ok(res, { ok: true });
+  } catch (e) { err(res, e); }
+});
+
+entityRouter.put('/recipes/:id', async (req, res) => {
+  try {
+    const b = req.body;
+    await pool.query(`
+      UPDATE recipe_definitions SET
+        facility_id=$1,skill=$2,required_level=$3,xp=$4,input_item_id=$5,input_qty=$6,
+        output_item_id=$7,output_qty=$8,fail_item_id=$9,no_fail_level=$10
+      WHERE id=$11`,
+      [b.facility_id,b.skill,b.required_level??1,b.xp??0,b.input_item_id,b.input_qty??1,
+       b.output_item_id,b.output_qty??1,nullIfEmpty(b.fail_item_id),b.no_fail_level??99,req.params.id]);
+    ok(res, { ok: true });
+  } catch (e) { err(res, e); }
+});
+
+entityRouter.delete('/recipes/:id', async (req, res) => {
+  try {
+    await pool.query('DELETE FROM recipe_definitions WHERE id=$1', [req.params.id]);
+    ok(res, { ok: true });
+  } catch (e) { err(res, e); }
+});
+
 // ---- Items ------------------------------------------------------------------
 
 entityRouter.get('/items', async (_req, res) => {

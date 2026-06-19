@@ -51,6 +51,23 @@ struct DropEntry {
   float       rate     = 1.0f;
 };
 
+// A production recipe (recipe_definitions): input item -> output at a facility
+// object. failItemId empty = never fails; otherwise success scales with level
+// from requiredLevel up to noFailLevel.
+struct RecipeDef {
+  std::string id;
+  std::string facilityId;       // object id of the station
+  std::string skill;            // SkillId trained
+  int         requiredLevel = 1;
+  float       xp            = 0.f;
+  std::string inputItemId;
+  int         inputQty      = 1;
+  std::string outputItemId;
+  int         outputQty     = 1;
+  std::string failItemId;       // "" = never fails
+  int         noFailLevel   = 99;
+};
+
 struct NpcDef {
   std::string id;
   std::string name;

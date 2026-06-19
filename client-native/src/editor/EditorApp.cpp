@@ -3028,6 +3028,7 @@ void EditorApp::dbLoadAll() {
     dbObjects_ = dbClient_.getObjects();
     dbActions_ = dbClient_.getActions();
     dbSkills_  = dbClient_.getSkills();
+    dbRecipes_ = dbClient_.getRecipes();
     dbLoaded_  = true;
     dbStatus_  = "Loaded from server.";
 
@@ -3772,6 +3773,109 @@ void EditorApp::dbDrawActionsTab() {
   ImGui::EndChild();
 }
 
+void EditorApp::dbDrawRecipesTab() {
+  ImGui::BeginChild("##rec_list", ImVec2(220, 0), true);
+  if (ImGui::Button("+ New Recipe", ImVec2(-1, 0))) {
+    dbEditRecipe_ = RecipeDef{};
+    dbSelRecipe_  = -1;
+    dbEditIsNew_  = true;
+  }
+  ImGui::Separator();
+  for (int i = 0; i < (int)dbRecipes_.size(); ++i) {
+    bool sel = (dbSelRecipe_ == i);
+    const auto& r = dbRecipes_[i];
+    char lbl[160];
+    std::snprintf(lbl, sizeof(lbl), "%s -> %s  (%s)",
+                  r.inputItemId.c_str(), r.outputItemId.c_str(), r.id.c_str());
+    if (ImGui::Selectable(lbl, sel)) {
+      dbSelRecipe_  = i;
+      dbEditRecipe_ = dbRecipes_[i];
+      dbEditIsNew_  = false;
+    }
+  }
+  ImGui::EndChild();
+
+  ImGui::SameLine();
+
+  ImGui::BeginChild("##rec_edit", ImVec2(0, 0), false);
+  if (dbSelRecipe_ >= 0 || dbEditIsNew_) {
+    RecipeDef& d = dbEditRecipe_;
+
+    // Dynamic combo from a list of ids; "(none)" clears when allowEmpty.
+    auto comboVec = [](const char* label, std::string& val,
+                       const std::vector<std::string>& opts, bool allowEmpty) {
+      if (ImGui::BeginCombo(label, val.empty() ? "(none)" : val.c_str())) {
+        if (allowEmpty && ImGui::Selectable("(none)", val.empty())) val.clear();
+        for (const auto& o : opts)
+          if (ImGui::Selectable(o.c_str(), val == o)) val = o;
+        ImGui::EndCombo();
+      }
+    };
+    // Build option lists from the other loaded definitions.
+    std::vector<std::string> itemIds, facilityIds, skillIds;
+    for (const auto& it : dbItems_)  itemIds.push_back(it.id);
+    for (const auto& o  : dbObjects_) if (o.objectType == "ProductionFacility") facilityIds.push_back(o.id);
+    for (const auto& s  : dbSkills_)  skillIds.push_back(s.id);
+
+    ImGui::TextDisabled("ID (slug, e.g. 'cook_shrimp')");
+    if (dbEditIsNew_) { ImGui::SetNextItemWidth(-1); dbInputText("##rec_id", d.id); }
+    else              ImGui::TextUnformatted(d.id.c_str());
+
+    ImGui::SetNextItemWidth(-1); comboVec("Facility (object)##rec", d.facilityId, facilityIds, false);
+    ImGui::SetNextItemWidth(-1); comboVec("Skill##rec",            d.skill,      skillIds,    false);
+
+    ImGui::SetNextItemWidth(120); ImGui::InputInt("Req. Level##rec", &d.requiredLevel); ImGui::SameLine();
+    ImGui::SetNextItemWidth(120); ImGui::InputFloat("XP##rec",       &d.xp);
+
+    ImGui::Separator();
+    ImGui::TextDisabled("Input");
+    ImGui::SetNextItemWidth(-120); comboVec("Item##rec_in", d.inputItemId, itemIds, false); ImGui::SameLine();
+    ImGui::SetNextItemWidth(100);  ImGui::InputInt("Qty##rec_inq", &d.inputQty);
+
+    ImGui::TextDisabled("Output (on success)");
+    ImGui::SetNextItemWidth(-120); comboVec("Item##rec_out", d.outputItemId, itemIds, false); ImGui::SameLine();
+    ImGui::SetNextItemWidth(100);  ImGui::InputInt("Qty##rec_outq", &d.outputQty);
+
+    ImGui::Separator();
+    ImGui::TextDisabled("Failure (leave empty = never fails, like a prep table)");
+    ImGui::SetNextItemWidth(-1); comboVec("Fail Item##rec_fail", d.failItemId, itemIds, true);
+    ImGui::SetNextItemWidth(120); ImGui::InputInt("No-fail Level##rec", &d.noFailLevel);
+    ImGui::TextDisabled("Success chance scales from Req. Level up to No-fail Level.");
+
+    // Clamp to sane ranges.
+    d.requiredLevel = std::clamp(d.requiredLevel, 1, 99);
+    d.noFailLevel   = std::clamp(d.noFailLevel, 1, 99);
+    d.inputQty      = std::max(1, d.inputQty);
+    d.outputQty     = std::max(1, d.outputQty);
+    if (d.xp < 0.0f) d.xp = 0.0f;
+
+    ImGui::Separator();
+    if (!dbStatus_.empty()) ImGui::TextDisabled("%s", dbStatus_.c_str());
+    const bool valid = !d.facilityId.empty() && !d.skill.empty() &&
+                       !d.inputItemId.empty() && !d.outputItemId.empty();
+    if (!valid) ImGui::TextColored({1,0.6f,0.3f,1}, "Facility, skill, input and output are required.");
+    ImGui::BeginDisabled(!valid);
+    if (ImGui::Button("Save##rec")) {
+      if (dbClient_.saveRecipe(d, dbEditIsNew_)) {
+        dbStatus_ = "Saved."; dbLoadAll();
+        for (int i = 0; i < (int)dbRecipes_.size(); ++i)
+          if (dbRecipes_[i].id == d.id) { dbSelRecipe_ = i; dbEditIsNew_ = false; break; }
+      } else { dbStatus_ = "Save failed: " + dbClient_.lastError; }
+    }
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    if (!dbEditIsNew_ && ImGui::Button("Delete##rec")) {
+      if (dbClient_.deleteRecipe(d.id)) { dbStatus_ = "Deleted."; dbSelRecipe_ = -1; dbLoadAll(); }
+      else dbStatus_ = "Delete failed: " + dbClient_.lastError;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Revert##rec")) { if (dbSelRecipe_ >= 0) dbEditRecipe_ = dbRecipes_[dbSelRecipe_]; }
+  } else {
+    ImGui::TextDisabled("Select a recipe or click '+ New Recipe'.");
+  }
+  ImGui::EndChild();
+}
+
 // ---- Main window -----------------------------------------------------------
 
 void EditorApp::drawDatabaseWindow() {
@@ -3824,6 +3928,10 @@ void EditorApp::drawDatabaseWindow() {
     }
     if (ImGui::BeginTabItem("Actions")) {
       dbDrawActionsTab();
+      ImGui::EndTabItem();
+    }
+    if (ImGui::BeginTabItem("Recipes")) {
+      dbDrawRecipesTab();
       ImGui::EndTabItem();
     }
     if (ImGui::BeginTabItem("Skills")) {

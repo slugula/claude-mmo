@@ -334,6 +334,7 @@ private:
   void dbDrawNPCsTab();
   void dbDrawObjectsTab();
   void dbDrawActionsTab();
+  void dbDrawRecipesTab();
   void dbDrawSkillsTab();
 
   // Offscreen FBO for the 3D model preview inside the DB window.
@@ -393,6 +394,7 @@ private:
   std::vector<ObjectDef> dbObjects_;
   std::vector<ActionDef> dbActions_;
   std::vector<SkillDef>  dbSkills_;
+  std::vector<RecipeDef> dbRecipes_;
 
   // Selected + edit copies
   int       dbSelItem_   = -1;
@@ -400,11 +402,13 @@ private:
   int       dbSelObject_ = -1;
   int       dbSelAction_ = -1;
   int       dbSelSkill_  = -1;
+  int       dbSelRecipe_ = -1;
   ItemDef   dbEditItem_;
   NpcDef    dbEditNPC_;
   ObjectDef dbEditObject_;
   ActionDef dbEditAction_;
   SkillDef  dbEditSkill_;
+  RecipeDef dbEditRecipe_;
   bool      dbEditIsNew_ = false;
 
   std::chrono::steady_clock::time_point lastFrameTime_{};
