@@ -105,6 +105,9 @@ void XpTracker::render(const SpriteCache* sprites, float screenW, float screenH,
     // the (opaque) box they're hidden. easeOut decelerates as they near the box.
     const float startY  = screenH * 0.46f;
     const float targetY = boxY + boxH * 0.5f;        // settle inside the box → occluded
+    // Clip drops to the area BELOW the tracker so they vanish as they slide
+    // behind it — works even though the box is translucent (no see-through).
+    dl->PushClipRect(ImVec2(0.0f, boxY + boxH), ImVec2(screenW, screenH), true);
     for (auto& d : drops_) {
         d.age += dt;
         const float t = std::clamp(d.age / d.life, 0.0f, 1.0f);
@@ -132,6 +135,7 @@ void XpTracker::render(const SpriteCache* sprites, float screenW, float screenH,
         dl->AddText(ImGui::GetFont(), fs, ImVec2(tp.x + 1, tp.y + 1), IM_COL32(0, 0, 0, a), buf);
         dl->AddText(ImGui::GetFont(), fs, tp, IM_COL32(255, 255, 255, a), buf);
     }
+    dl->PopClipRect();
     drops_.erase(std::remove_if(drops_.begin(), drops_.end(),
                  [](const Drop& d) { return d.age >= d.life; }), drops_.end());
 
@@ -144,9 +148,10 @@ void XpTracker::render(const SpriteCache* sprites, float screenW, float screenH,
             dl->AddRect(ImVec2(boxX - g, boxY - g), ImVec2(boxX + boxW + g, boxY + boxH + g),
                         IM_COL32(sc.r, sc.g, sc.b, ga), 4.0f * s, 0, 2.0f * s);
         }
-        // Opaque box (so drops vanish cleanly behind it) + 1px border.
+        // Box bg matches the HUD panel translucency (kPanelBg = {18,10,3,200});
+        // drops are clipped above, so no see-through despite the alpha.
         dl->AddRectFilled(ImVec2(boxX, boxY), ImVec2(boxX + boxW, boxY + boxH),
-                          IM_COL32(18, 14, 8, 255), 3.0f * s);
+                          IM_COL32(18, 10, 3, 200), 3.0f * s);
         const int border = static_cast<int>(std::clamp(0.6f + 0.4f * pulse_, 0.f, 1.f) * 255.0f);
         dl->AddRect(ImVec2(boxX, boxY), ImVec2(boxX + boxW, boxY + boxH),
                     IM_COL32(sc.r, sc.g, sc.b, border), 3.0f * s, 0, 1.0f);
