@@ -119,7 +119,7 @@ void XpTracker::render(const SpriteCache* sprites, float screenW, float screenH,
 
         char buf[24];
         std::snprintf(buf, sizeof(buf), "%d", d.amount);   // no leading '+'
-        const float fs = 18.0f * s;
+        const float fs = 13.0f * s;   // native pixel-font size — crisp, matches the UI
         ImVec2 ts = ImGui::GetFont()->CalcTextSizeA(fs, FLT_MAX, -1.f, buf);
         const float gap = 5.0f * s;
         const float totalW = iconSz + gap + ts.x;
@@ -158,7 +158,7 @@ void XpTracker::render(const SpriteCache* sprites, float screenW, float screenH,
 
         // Total XP (right-aligned in the row).
         const std::string xpStr = commafy(static_cast<long long>(shownXp_ + 0.5));
-        const float fs = 17.0f * s;
+        const float fs = 13.0f * s;   // native pixel-font size — crisp, matches the UI
         ImVec2 ts = ImGui::GetFont()->CalcTextSizeA(fs, FLT_MAX, -1.f, xpStr.c_str());
         ImVec2 tp{ boxX + boxW - pad - ts.x, boxY + pad * 0.5f + (iconSz - ts.y) * 0.5f };
         dl->AddText(ImGui::GetFont(), fs, ImVec2(tp.x + 1, tp.y + 1), IM_COL32(0, 0, 0, 255), xpStr.c_str());
