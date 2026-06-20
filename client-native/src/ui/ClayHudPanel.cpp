@@ -419,12 +419,15 @@ static void buildSkillsTab(const shared::PlayerState* player,
                                 .layoutDirection = CLAY_LEFT_TO_RIGHT,
                             }
                         }) {
-                            // Icon: uploaded sprite if present, else colored square.
+                            // Icon: uploaded sprite at its NATIVE size (1:1, never
+                            // stretched), centered in the row; else colored square.
                             if (sprites && sprites->has(skillId)) {
                                 GLuint tex = sprites->get(skillId);
+                                int iw = static_cast<int>(kIconPx), ih = static_cast<int>(kIconPx);
+                                sprites->size(skillId, iw, ih);
                                 CLAY(CLAY_IDI("SkillIcon", si), {
-                                    .layout = { .sizing = { CLAY_SIZING_FIXED(kIconPx),
-                                                            CLAY_SIZING_FIXED(kIconPx) } },
+                                    .layout = { .sizing = { CLAY_SIZING_FIXED(static_cast<float>(iw)),
+                                                            CLAY_SIZING_FIXED(static_cast<float>(ih)) } },
                                     .image  = { .imageData = reinterpret_cast<void*>(
                                                     static_cast<uintptr_t>(tex)) }
                                 }) {}

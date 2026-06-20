@@ -31,6 +31,11 @@ public:
     // GL texture for itemId, or the neutral fallback if the id has no sprite.
     GLuint get(const std::string& itemId) const;
 
+    // Native pixel dimensions of the loaded sprite for itemId. Returns false
+    // (leaving w/h untouched) when the id has no real sprite. Lets callers draw
+    // icons at 100% original size — no stretching/blur.
+    bool size(const std::string& itemId, int& w, int& h) const;
+
     // True if a real (non-fallback) sprite was loaded for this id.
     bool has(const std::string& itemId) const { return cache_.count(itemId) > 0; }
 
@@ -38,8 +43,9 @@ public:
     void destroy();
 
 private:
-    std::unordered_map<std::string, GLuint> cache_;
-    GLuint                                  fallback_ = 0;  // neutral "no sprite" square
+    struct Tex { GLuint id = 0; int w = 0; int h = 0; };
+    std::unordered_map<std::string, Tex> cache_;
+    GLuint                               fallback_ = 0;  // neutral "no sprite" square
 };
 
 } // namespace ui

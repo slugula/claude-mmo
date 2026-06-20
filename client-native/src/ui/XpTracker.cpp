@@ -15,7 +15,6 @@ namespace ui {
 
 // ── Tuning ──────────────────────────────────────────────────────────────────
 static constexpr float kDropLife = 2.4f;   // seconds a drop lives (slower rise)
-static constexpr float kIconNative = 32.0f; // sprite native size — draw 1:1 to stay crisp
 
 static float easeOutCubic(float t) { t = 1.0f - t; return 1.0f - t * t * t; }
 
@@ -51,6 +50,15 @@ static void drawIcon(ImDrawList* dl, const SpriteCache* sprites,
         ImVec2 tp{ (p0.x + p1.x) * 0.5f - ts.x * 0.5f, (p0.y + p1.y) * 0.5f - ts.y * 0.5f };
         dl->AddText(ImGui::GetFont(), fs, tp, IM_COL32(255, 255, 255, alpha), letter);
     }
+}
+
+// Native pixel size of a skill icon (drawn 1:1 so it's never stretched/blurry),
+// or a square fallback when the skill has no sprite.
+static ImVec2 iconDims(const SpriteCache* sprites, const std::string& skillId, float fallbackPx) {
+    int w = 0, h = 0;
+    if (sprites && sprites->size(skillId, w, h) && w > 0 && h > 0)
+        return ImVec2(static_cast<float>(w), static_cast<float>(h));
+    return ImVec2(fallbackPx, fallbackPx);
 }
 
 void XpTracker::pushGain(const std::string& skillId, int amount, double totalXp, int level) {
@@ -91,9 +99,9 @@ void XpTracker::render(const SpriteCache* sprites, float screenW, float screenH,
 
     // ── Tracker geometry (top-center, raised up) ─────────────────────────────
     const float boxW = 172.0f * s;
-    const float iconSz = kIconNative * s;           // draw the 32px sprite 1:1
+    const ImVec2 tIcon = iconDims(sprites, skillId_, 24.0f);  // native size, drawn 1:1
     const float pad  = 6.0f  * s;
-    const float rowH = iconSz + pad;                 // icon + number row
+    const float rowH = tIcon.y + pad;                // icon + number row
     const float barH = 9.0f  * s;                    // progress bar (a touch taller)
     const float boxH = rowH + barH + pad * 1.5f;
     const float boxX = cx - boxW * 0.5f;
@@ -117,7 +125,8 @@ void XpTracker::render(const SpriteCache* sprites, float screenW, float screenH,
         const int a = static_cast<int>(alpha * 255.0f);
         if (a <= 0) continue;
 
-        const float y = startY - d.slot * (iconSz * 0.6f)
+        const ImVec2 di = iconDims(sprites, d.skillId, 16.0f);  // native size, drawn 1:1
+        const float y = startY - d.slot * (di.y * 0.6f)
                       - (startY - targetY) * easeOutCubic(t);
 
         char buf[24];
@@ -125,13 +134,13 @@ void XpTracker::render(const SpriteCache* sprites, float screenW, float screenH,
         const float fs = 13.0f * s;   // native pixel-font size — crisp, matches the UI
         ImVec2 ts = ImGui::GetFont()->CalcTextSizeA(fs, FLT_MAX, -1.f, buf);
         const float gap = 5.0f * s;
-        const float totalW = iconSz + gap + ts.x;
+        const float totalW = di.x + gap + ts.x;
         const float x0 = cx - totalW * 0.5f;
 
         // Full-size icon + white number (shadowed for legibility over the world).
-        drawIcon(dl, sprites, d.skillId, ImVec2(x0, y - iconSz * 0.5f),
-                 ImVec2(x0 + iconSz, y + iconSz * 0.5f), a);
-        const ImVec2 tp{ x0 + iconSz + gap, y - ts.y * 0.5f };
+        drawIcon(dl, sprites, d.skillId, ImVec2(x0, y - di.y * 0.5f),
+                 ImVec2(x0 + di.x, y + di.y * 0.5f), a);
+        const ImVec2 tp{ x0 + di.x + gap, y - ts.y * 0.5f };
         dl->AddText(ImGui::GetFont(), fs, ImVec2(tp.x + 1, tp.y + 1), IM_COL32(0, 0, 0, a), buf);
         dl->AddText(ImGui::GetFont(), fs, tp, IM_COL32(255, 255, 255, a), buf);
     }
@@ -156,16 +165,16 @@ void XpTracker::render(const SpriteCache* sprites, float screenW, float screenH,
         dl->AddRect(ImVec2(boxX, boxY), ImVec2(boxX + boxW, boxY + boxH),
                     IM_COL32(sc.r, sc.g, sc.b, border), 3.0f * s, 0, 1.0f);
 
-        // Icon (left, full size).
+        // Icon (left, native size, vertically centered in the row).
         const ImVec2 ip0{ boxX + pad, boxY + pad * 0.5f };
-        const ImVec2 ip1{ ip0.x + iconSz, ip0.y + iconSz };
+        const ImVec2 ip1{ ip0.x + tIcon.x, ip0.y + tIcon.y };
         drawIcon(dl, sprites, skillId_, ip0, ip1, 255);
 
         // Total XP (right-aligned in the row).
         const std::string xpStr = commafy(static_cast<long long>(shownXp_ + 0.5));
         const float fs = 13.0f * s;   // native pixel-font size — crisp, matches the UI
         ImVec2 ts = ImGui::GetFont()->CalcTextSizeA(fs, FLT_MAX, -1.f, xpStr.c_str());
-        ImVec2 tp{ boxX + boxW - pad - ts.x, boxY + pad * 0.5f + (iconSz - ts.y) * 0.5f };
+        ImVec2 tp{ boxX + boxW - pad - ts.x, boxY + pad * 0.5f + (tIcon.y - ts.y) * 0.5f };
         dl->AddText(ImGui::GetFont(), fs, ImVec2(tp.x + 1, tp.y + 1), IM_COL32(0, 0, 0, 255), xpStr.c_str());
         dl->AddText(ImGui::GetFont(), fs, tp, IM_COL32(255, 255, 255, 255), xpStr.c_str());
 

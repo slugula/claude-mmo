@@ -58,7 +58,7 @@ void SpriteCache::load(const std::vector<Entry>& entries) {
                          e.id.c_str(), e.absPath.c_str(), stbi_failure_reason());
             continue;
         }
-        cache_[e.id] = uploadRGBA(data, w, h);
+        cache_[e.id] = { uploadRGBA(data, w, h), w, h };
         stbi_image_free(data);
     }
     std::fprintf(stdout, "[SpriteCache] loaded %zu item sprites\n", cache_.size());
@@ -66,11 +66,18 @@ void SpriteCache::load(const std::vector<Entry>& entries) {
 
 GLuint SpriteCache::get(const std::string& itemId) const {
     auto it = cache_.find(itemId);
-    return (it != cache_.end()) ? it->second : fallback_;
+    return (it != cache_.end()) ? it->second.id : fallback_;
+}
+
+bool SpriteCache::size(const std::string& itemId, int& w, int& h) const {
+    auto it = cache_.find(itemId);
+    if (it == cache_.end()) return false;
+    w = it->second.w; h = it->second.h;
+    return true;
 }
 
 void SpriteCache::destroy() {
-    for (auto& [id, tex] : cache_) glDeleteTextures(1, &tex);
+    for (auto& [id, tex] : cache_) glDeleteTextures(1, &tex.id);
     cache_.clear();
     if (fallback_) { glDeleteTextures(1, &fallback_); fallback_ = 0; }
 }
