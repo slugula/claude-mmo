@@ -3029,6 +3029,7 @@ void EditorApp::dbLoadAll() {
     dbActions_ = dbClient_.getActions();
     dbSkills_  = dbClient_.getSkills();
     dbRecipes_ = dbClient_.getRecipes();
+    dbConfig_  = dbClient_.getConfig();
     dbLoaded_  = true;
     dbStatus_  = "Loaded from server.";
 
@@ -3876,6 +3877,40 @@ void EditorApp::dbDrawRecipesTab() {
   ImGui::EndChild();
 }
 
+void EditorApp::dbDrawTunablesTab() {
+  ImGui::TextDisabled("Global gameplay knobs (in 200ms server ticks). Saving applies live — no restart.");
+  ImGui::Separator();
+
+  if (dbConfig_.empty()) {
+    ImGui::TextDisabled("No tunables found. Run schema.sql / migration 007 on the DB, then Refresh.");
+    return;
+  }
+
+  ImGui::BeginChild("##cfg_list", ImVec2(0, -36), false);
+  std::string lastCategory = "\x01";   // sentinel so the first header always prints
+  for (auto& c : dbConfig_) {
+    if (c.category != lastCategory) {
+      lastCategory = c.category;
+      ImGui::SeparatorText(c.category.empty() ? "Other" : c.category.c_str());
+    }
+    const std::string label = (c.label.empty() ? c.key : c.label) + "##cfg_" + c.key;
+    ImGui::SetNextItemWidth(160);
+    ImGui::InputInt(label.c_str(), &c.value);
+    c.value = std::clamp(c.value, 1, 1000);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("key: %s", c.key.c_str());
+  }
+  ImGui::EndChild();
+
+  ImGui::Separator();
+  if (ImGui::Button("Save##cfg")) {
+    if (dbClient_.saveConfig(dbConfig_)) { dbStatus_ = "Saved (applied live)."; dbLoadAll(); }
+    else dbStatus_ = "Save failed: " + dbClient_.lastError;
+  }
+  ImGui::SameLine();
+  if (ImGui::Button("Revert##cfg")) dbConfig_ = dbClient_.getConfig();
+  if (!dbStatus_.empty()) { ImGui::SameLine(); ImGui::TextDisabled("%s", dbStatus_.c_str()); }
+}
+
 // ---- Main window -----------------------------------------------------------
 
 void EditorApp::drawDatabaseWindow() {
@@ -3932,6 +3967,10 @@ void EditorApp::drawDatabaseWindow() {
     }
     if (ImGui::BeginTabItem("Recipes")) {
       dbDrawRecipesTab();
+      ImGui::EndTabItem();
+    }
+    if (ImGui::BeginTabItem("Tunables")) {
+      dbDrawTunablesTab();
       ImGui::EndTabItem();
     }
     if (ImGui::BeginTabItem("Skills")) {

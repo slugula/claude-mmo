@@ -4,6 +4,7 @@ import { reloadItems } from '../../src/items/ItemRegistry';
 import type { NPCDefinition, DropEntry } from '../../src/npcs/NPCRegistry';
 import { reloadNPCs } from '../../src/npcs/NPCRegistry';
 import { reloadRecipes, type ProductionRecipe } from '../../src/production/RecipeRegistry';
+import { reloadTunables } from '../../src/config/Tunables';
 
 function rowToItemDef(row: Record<string, unknown>): ItemDefinition {
   const def: ItemDefinition = {
@@ -105,6 +106,14 @@ export async function loadEntitiesFromDB(): Promise<void> {
     } catch {
       console.warn('[EntityLoader] recipe_definitions not found — run schema.sql to enable production skills');
     }
+    // Tunables (game_config) — tolerated separately; missing table just keeps
+    // the code defaults in src/config/Tunables.ts.
+    let configRows: { rows: Record<string, unknown>[] } = { rows: [] };
+    try {
+      configRows = await pool.query('SELECT key, value FROM game_config');
+    } catch {
+      console.warn('[EntityLoader] game_config not found — using default tunables');
+    }
     // Strip null-valued columns from every def row before relaying them to the
     // client. The native client parses these with glaze into structs whose
     // string/number fields are non-nullable; a JSON `null` (from a nullable DB
@@ -161,6 +170,10 @@ export async function loadEntitiesFromDB(): Promise<void> {
       }));
       reloadRecipes(recipes);
       console.log(`[EntityLoader] loaded ${recipes.length} recipes from DB`);
+    }
+    if (configRows.rows.length > 0) {
+      reloadTunables(configRows.rows.map(r => ({ key: r.key as string, value: r.value as number })));
+      console.log(`[EntityLoader] loaded ${configRows.rows.length} tunables from DB`);
     }
   } catch (e) {
     console.warn('[EntityLoader] DB load failed — registries retain JSON defaults:', e);

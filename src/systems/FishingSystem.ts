@@ -3,10 +3,10 @@ import { getItem } from '../items/ItemRegistry';
 import { addXP } from './SkillSystem';
 import { findReachableAdjacent } from './CombatSystem';
 import { clearActionIntents } from './ActionIntent';
+import { tunable } from '../config/Tunables';
 
 // Fishing spots are inexhaustible (no depletion/respawn) — simpler than
 // woodcutting/mining. Stand adjacent, roll on an interval, get a fish + XP.
-const FISH_INTERVAL = 12;    // ticks between each success roll
 const SUCCESS_CHANCE = 0.5;  // base success probability per roll
 
 interface FishDef {
@@ -158,7 +158,7 @@ export function processFishing(
     p = { ...p, facing: directionTo(p.tileX, p.tileY, tx, ty) };
 
     // Not yet time to roll?
-    if (tick - p.lastFishTick < FISH_INTERVAL) {
+    if (tick - p.lastFishTick < tunable('fish_interval')) {
       nextPlayers[playerId] = p;
       continue;
     }

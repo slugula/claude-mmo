@@ -134,6 +134,16 @@ CREATE TABLE IF NOT EXISTS recipe_definitions (
   no_fail_level  INT   NOT NULL DEFAULT 99
 );
 
+-- Global gameplay tunables — one integer knob per key (e.g. action tick rates).
+-- Loaded into src/config/Tunables.ts at startup; edited in the editor's
+-- Database > Tunables tab. value is in 200ms server ticks.
+CREATE TABLE IF NOT EXISTS game_config (
+  key      TEXT PRIMARY KEY,
+  value    INT  NOT NULL,
+  label    TEXT,           -- friendly name shown in the editor
+  category TEXT            -- grouping for the editor (e.g. 'Interaction speed')
+);
+
 -- Skill definitions — fixed set of SkillIds; the editor only authors the icon.
 CREATE TABLE IF NOT EXISTS skill_definitions (
   id         TEXT PRIMARY KEY,   -- mirrors SkillId (warrior, defence, …)
@@ -154,6 +164,13 @@ INSERT INTO skill_definitions (id, name, icon_path, sort_order) VALUES
   ('fishing',     'Fishing',     NULL, 6),
   ('cooking',     'Cooking',     NULL, 7)
 ON CONFLICT (id) DO NOTHING;
+
+INSERT INTO game_config (key, value, label, category) VALUES
+  ('chop_interval',    12, 'Chop interval (ticks)',    'Interaction speed'),
+  ('mine_interval',    12, 'Mine interval (ticks)',    'Interaction speed'),
+  ('fish_interval',    12, 'Fish interval (ticks)',    'Interaction speed'),
+  ('produce_interval',  3, 'Produce interval (ticks)', 'Interaction speed')
+ON CONFLICT (key) DO NOTHING;
 
 INSERT INTO action_definitions (id, display_name, handler_type) VALUES
   ('chop',    'Chop',    'gather_resource'),

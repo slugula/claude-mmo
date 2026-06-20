@@ -3,8 +3,8 @@ import { getItem } from '../items/ItemRegistry';
 import { addXP } from './SkillSystem';
 import { findReachableAdjacent } from './CombatSystem';
 import { clearActionIntents } from './ActionIntent';
+import { tunable } from '../config/Tunables';
 
-const CHOP_INTERVAL = 12;   // ticks between each success roll
 const SUCCESS_CHANCE = 0.5; // base success probability per roll
 const REGEN_INTERVAL = 5;   // game ticks per 1 health point restored (= 1 real second)
 
@@ -193,7 +193,7 @@ export function processWoodcutting(
     nextHealth[key] = newHealth;
 
     // Not yet time to roll?
-    if (tick - p.lastChopTick < CHOP_INTERVAL) {
+    if (tick - p.lastChopTick < tunable('chop_interval')) {
       nextPlayers[playerId] = p;
       continue;
     }

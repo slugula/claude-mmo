@@ -4,13 +4,13 @@ import { addXP } from './SkillSystem';
 import { findReachableAdjacent } from './CombatSystem';
 import { clearActionIntents } from './ActionIntent';
 import { getRecipesForFacility, successChance, type ProductionRecipe } from '../production/RecipeRegistry';
+import { tunable } from '../config/Tunables';
 
 // Production facilities (Preparation Table, Cooking Range, future furnace/anvil).
-// The player stands adjacent and, every PRODUCE_INTERVAL ticks, converts one
+// The player stands adjacent and, every produce_interval ticks, converts one
 // matching input item in their inventory into an output (or a fail item) and
 // gains skill XP. Generic + data-driven via recipe_definitions — adding a new
 // production skill is just new recipes + a facility object, no new system.
-const PRODUCE_INTERVAL = 3;   // ticks between each production attempt
 
 function directionTo(fx: number, fy: number, tx: number, ty: number): Direction {
   const dx = Math.sign(tx - fx);
@@ -175,7 +175,7 @@ export function processProduction(
     }
 
     // Not yet time for the next attempt.
-    if (tick - p.lastProduceTick < PRODUCE_INTERVAL) { nextPlayers[playerId] = p; continue; }
+    if (tick - p.lastProduceTick < tunable('produce_interval')) { nextPlayers[playerId] = p; continue; }
 
     // Resolve success/fail and the resulting item.
     const success = Math.random() < successChance(recipe, p.skills[recipe.skill].level);

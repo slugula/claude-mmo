@@ -335,6 +335,7 @@ private:
   void dbDrawObjectsTab();
   void dbDrawActionsTab();
   void dbDrawRecipesTab();
+  void dbDrawTunablesTab();
   void dbDrawSkillsTab();
 
   // Offscreen FBO for the 3D model preview inside the DB window.
@@ -395,6 +396,7 @@ private:
   std::vector<ActionDef> dbActions_;
   std::vector<SkillDef>  dbSkills_;
   std::vector<RecipeDef> dbRecipes_;
+  std::vector<ConfigDef> dbConfig_;
 
   // Selected + edit copies
   int       dbSelItem_   = -1;

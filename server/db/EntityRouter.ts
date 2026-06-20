@@ -1,5 +1,6 @@
 import { Router, type Request, type Response } from 'express';
 import { pool } from './client';
+import { reloadTunables } from '../../src/config/Tunables';
 
 export const entityRouter = Router();
 
@@ -276,6 +277,37 @@ entityRouter.put('/npcs/:id', async (req, res) => {
 entityRouter.delete('/npcs/:id', async (req, res) => {
   try {
     await pool.query('DELETE FROM npc_definitions WHERE id=$1', [req.params.id]);
+    ok(res, { ok: true });
+  } catch (e) { err(res, e); }
+});
+
+// ---- Tunables (game_config: global integer knobs) ---------------------------
+
+entityRouter.get('/config', async (_req, res) => {
+  try {
+    const r = await pool.query(`
+      SELECT key,
+        COALESCE(value,    0)  AS value,
+        COALESCE(label,    '') AS label,
+        COALESCE(category, '') AS category
+      FROM game_config ORDER BY category, key`);
+    ok(res, r.rows);
+  } catch (e) { err(res, e); }
+});
+
+// Bulk update: body is an array of { key, value }. Applies the new values to
+// the running server immediately (reloadTunables) so changes take effect
+// without a restart.
+entityRouter.put('/config', async (req, res) => {
+  try {
+    const rows = Array.isArray(req.body) ? req.body : [];
+    for (const r of rows) {
+      if (typeof r.key !== 'string') continue;
+      await pool.query('UPDATE game_config SET value=$1 WHERE key=$2',
+                       [Math.max(1, Math.floor(Number(r.value) || 1)), r.key]);
+    }
+    const all = await pool.query('SELECT key, value FROM game_config');
+    reloadTunables(all.rows.map(r => ({ key: r.key as string, value: r.value as number })));
     ok(res, { ok: true });
   } catch (e) { err(res, e); }
 });

@@ -10,6 +10,15 @@ struct ActionDef {
   std::string handlerType;  // gather_resource | production_facility | equip | eat | talk | bank | examine
 };
 
+// A single global tunable (game_config row): an integer knob with a friendly
+// label + category for grouping in the editor.
+struct ConfigDef {
+  std::string key;
+  int         value = 0;
+  std::string label;
+  std::string category;
+};
+
 struct SkillDef {
   std::string id;            // mirrors SkillId (warrior, defence, …)
   std::string name;

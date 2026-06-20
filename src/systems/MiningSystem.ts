@@ -3,9 +3,9 @@ import { getItem } from '../items/ItemRegistry';
 import { addXP } from './SkillSystem';
 import { findReachableAdjacent } from './CombatSystem';
 import { clearActionIntents } from './ActionIntent';
+import { tunable } from '../config/Tunables';
 
 // Mirrors WoodcuttingSystem: rocks deplete with active mining, then respawn.
-const MINE_INTERVAL = 12;    // ticks between each success roll
 const SUCCESS_CHANCE = 0.5;  // base success probability per roll
 const REGEN_INTERVAL = 5;    // game ticks per 1 health point restored
 
@@ -189,7 +189,7 @@ export function processMining(
     nextHealth[key] = newHealth;
 
     // Not yet time to roll?
-    if (tick - p.lastMineTick < MINE_INTERVAL) {
+    if (tick - p.lastMineTick < tunable('mine_interval')) {
       nextPlayers[playerId] = p;
       continue;
     }

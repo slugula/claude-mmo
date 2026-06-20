@@ -20,6 +20,15 @@ template<> struct glz::meta<editor::ActionDef> {
     "handler_type", &T::handlerType);
 };
 
+template<> struct glz::meta<editor::ConfigDef> {
+  using T = editor::ConfigDef;
+  static constexpr auto value = glz::object(
+    "key",      &T::key,
+    "value",    &T::value,
+    "label",    &T::label,
+    "category", &T::category);
+};
+
 template<> struct glz::meta<editor::SkillDef> {
   using T = editor::SkillDef;
   static constexpr auto value = glz::object(
@@ -258,6 +267,20 @@ struct EntityClient {
   }
   bool deleteRecipe(const std::string& id) {
     try { entityHttpRequest(L"DELETE", entityToWide("/api/db/recipes/" + id)); lastError.clear(); return true; }
+    catch (const std::exception& e) { lastError = e.what(); return false; }
+  }
+
+  // ---- Tunables (game_config). Saved in bulk; the server applies them live.
+  std::vector<ConfigDef> getConfig() {
+    auto json = entityHttpRequest(L"GET", L"/api/db/config");
+    std::vector<ConfigDef> out;
+    (void)glz::read_json(out, json);
+    return out;
+  }
+  bool saveConfig(const std::vector<ConfigDef>& defs) {
+    auto json = glz::write_json(defs);
+    if (!json) { lastError = "JSON serialization failed."; return false; }
+    try { entityHttpRequest(L"PUT", L"/api/db/config", *json); lastError.clear(); return true; }
     catch (const std::exception& e) { lastError = e.what(); return false; }
   }
 
