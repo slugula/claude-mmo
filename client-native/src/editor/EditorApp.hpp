@@ -336,6 +336,12 @@ private:
   void dbDrawActionsTab();
   void dbDrawRecipesTab();
   void dbDrawTunablesTab();
+
+  // Live skill-icon preview: loads an icon PNG from disk and hot-reloads it when
+  // the file's mtime changes, so editing the art updates the editor instantly.
+  struct EditorIcon { unsigned int tex = 0; std::filesystem::file_time_type mtime{}; int w = 0; int h = 0; };
+  std::unordered_map<std::string, EditorIcon> iconCache_;
+  unsigned int editorIcon(const std::string& relPath, int& w, int& h);
   void dbDrawSkillsTab();
 
   // Offscreen FBO for the 3D model preview inside the DB window.

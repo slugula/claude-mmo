@@ -19,6 +19,8 @@
 #include <imgui_impl_opengl3.h>
 #include <imgui_internal.h>   // DockBuilder
 
+#include <stb_image.h>        // live skill-icon preview (hot-reload)
+
 #include <glm/gtc/matrix_transform.hpp>
 
 #define WIN32_LEAN_AND_MEAN
@@ -3318,11 +3320,58 @@ void EditorApp::dbDrawItemsTab() {
 // Skills are a fixed set (mirrors SkillId); the editor only authors the icon
 // and display name, so there is no create/delete — just select + Save (PUT).
 
+// Load (and hot-reload) an icon PNG into a GL texture. Resolves source-first so
+// editing client-native/assets/... updates live; re-reads whenever the file's
+// mtime changes. Returns 0 if the path is empty/missing. w/h get the native px.
+unsigned int EditorApp::editorIcon(const std::string& relPath, int& w, int& h) {
+  if (relPath.empty()) return 0;
+  const auto path = resolveSourceFirst(relPath);
+  std::error_code ec;
+  if (!std::filesystem::exists(path, ec)) return 0;
+  const auto mtime = std::filesystem::last_write_time(path, ec);
+
+  auto it = iconCache_.find(relPath);
+  if (it != iconCache_.end() && it->second.tex && it->second.mtime == mtime) {
+    w = it->second.w; h = it->second.h;
+    return it->second.tex;
+  }
+
+  int iw = 0, ih = 0, ch = 0;
+  stbi_set_flip_vertically_on_load(false);
+  unsigned char* data = stbi_load(path.string().c_str(), &iw, &ih, &ch, 4);
+  if (!data) {                                   // keep the old texture on a failed read
+    if (it != iconCache_.end()) { w = it->second.w; h = it->second.h; return it->second.tex; }
+    return 0;
+  }
+  GLuint tex = (it != iconCache_.end() && it->second.tex) ? it->second.tex : 0;
+  if (!tex) glGenTextures(1, &tex);
+  glBindTexture(GL_TEXTURE_2D, tex);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, iw, ih, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
+  glBindTexture(GL_TEXTURE_2D, 0);
+  stbi_image_free(data);
+
+  iconCache_[relPath] = { tex, mtime, iw, ih };
+  w = iw; h = ih;
+  return tex;
+}
+
 void EditorApp::dbDrawSkillsTab() {
   ImGui::BeginChild("##skill_list", ImVec2(200, 0), true);
   for (int i = 0; i < (int)dbSkills_.size(); ++i) {
     bool sel = (dbSelSkill_ == i);
     const auto& s = dbSkills_[i];
+    // Live icon thumbnail (hot-reloads with the file) next to the name.
+    int iw = 0, ih = 0;
+    const GLuint tex = editorIcon(s.iconPath, iw, ih);
+    if (tex) {
+      ImGui::Image((ImTextureID)(uintptr_t)tex, ImVec2(20, 20)); ImGui::SameLine();
+    } else {
+      ImGui::Dummy(ImVec2(20, 20)); ImGui::SameLine();
+    }
     const char* label = s.name.empty() ? s.id.c_str() : s.name.c_str();
     if (ImGui::Selectable(label, sel)) {
       dbSelSkill_  = i;
@@ -3352,6 +3401,20 @@ void EditorApp::dbDrawSkillsTab() {
       if (!rel.empty()) d.iconPath = rel;
     }
     ImGui::TextDisabled("Authored as a 32x32 PNG (like item sprites).");
+
+    // Live preview — re-reads the PNG from disk whenever it changes, so you can
+    // overwrite the file and see the new art without reloading the editor.
+    int iw = 0, ih = 0;
+    const GLuint tex = editorIcon(d.iconPath, iw, ih);
+    if (tex) {
+      ImGui::Spacing();
+      ImGui::TextDisabled("Live preview (auto-updates on file change) — %dx%d", iw, ih);
+      ImGui::Image((ImTextureID)(uintptr_t)tex, ImVec2((float)iw, (float)ih));   // native 1:1
+      ImGui::SameLine();
+      ImGui::Image((ImTextureID)(uintptr_t)tex, ImVec2(64, 64));                 // zoomed
+    } else if (!d.iconPath.empty()) {
+      ImGui::TextColored({1.f,0.5f,0.3f,1.f}, "Icon file not found on disk.");
+    }
 
     ImGui::Separator();
     if (!dbStatus_.empty()) ImGui::TextDisabled("%s", dbStatus_.c_str());
