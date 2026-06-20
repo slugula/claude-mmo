@@ -14,9 +14,8 @@
 namespace ui {
 
 // ── Tuning ──────────────────────────────────────────────────────────────────
-static constexpr float kHold     = 4.0f;   // seconds the tracker stays after a gain
-static constexpr float kFade     = 0.6f;   // fade-out duration
-static constexpr float kDropLife = 1.5f;   // seconds a drop lives
+static constexpr float kDropLife = 2.4f;   // seconds a drop lives (slower rise)
+static constexpr float kIconNative = 32.0f; // sprite native size — draw 1:1 to stay crisp
 
 static float easeOutCubic(float t) { t = 1.0f - t; return 1.0f - t * t * t; }
 
@@ -90,98 +89,91 @@ void XpTracker::render(const SpriteCache* sprites, float screenW, float screenH,
     shownProg_ += (targetProg_ - shownProg_) * k;
     pulse_ = std::max(0.0f, pulse_ - dt * 2.5f);
 
-    // ── XP tracker box (top-center) ──────────────────────────────────────────
-    float trackerAlpha = 0.0f;
-    if (active_) trackerAlpha = std::clamp((kHold - sinceGain_) / kFade, 0.0f, 1.0f);
-
+    // ── Tracker geometry (top-center, raised up) ─────────────────────────────
     const float boxW = 172.0f * s;
-    const float rowH = 30.0f  * s;   // icon + number row
-    const float barH = 6.0f   * s;
-    const float pad  = 6.0f   * s;
+    const float iconSz = kIconNative * s;           // draw the 32px sprite 1:1
+    const float pad  = 6.0f  * s;
+    const float rowH = iconSz + pad;                 // icon + number row
+    const float barH = 9.0f  * s;                    // progress bar (a touch taller)
     const float boxH = rowH + barH + pad * 1.5f;
     const float boxX = cx - boxW * 0.5f;
-    const float boxY = 54.0f * s;
+    const float boxY = 22.0f * s;                    // higher up the screen
+    const SkillColor sc = skillColor(skillId_);
 
-    if (trackerAlpha > 0.001f) {
-        const int a = static_cast<int>(trackerAlpha * 255.0f);
-        const SkillColor sc = skillColor(skillId_);
-
-        // Pulse: a soft outer glow + a touch of border brightening.
-        if (pulse_ > 0.001f) {
-            const int ga = static_cast<int>(pulse_ * trackerAlpha * 120.0f);
-            const float g = 3.0f * s * pulse_;
-            dl->AddRect(ImVec2(boxX - g, boxY - g), ImVec2(boxX + boxW + g, boxY + boxH + g),
-                        IM_COL32(sc.r, sc.g, sc.b, ga), 4.0f * s, 0, 2.0f * s);
-        }
-        // Box: dark fill + 1px border (brightens on pulse).
-        dl->AddRectFilled(ImVec2(boxX, boxY), ImVec2(boxX + boxW, boxY + boxH),
-                          IM_COL32(18, 14, 8, static_cast<int>(trackerAlpha * 225)), 3.0f * s);
-        const int border = static_cast<int>(std::clamp(0.55f + 0.45f * pulse_, 0.f, 1.f) * a);
-        dl->AddRect(ImVec2(boxX, boxY), ImVec2(boxX + boxW, boxY + boxH),
-                    IM_COL32(sc.r, sc.g, sc.b, border), 3.0f * s, 0, 1.0f);
-
-        // Icon (left).
-        const float iconSz = rowH - pad;
-        const ImVec2 ip0{ boxX + pad, boxY + pad * 0.75f };
-        const ImVec2 ip1{ ip0.x + iconSz, ip0.y + iconSz };
-        drawIcon(dl, sprites, skillId_, ip0, ip1, a);
-
-        // Total XP (right-aligned in the row).
-        const std::string xpStr = commafy(static_cast<long long>(shownXp_ + 0.5));
-        const float fs = 16.0f * s;
-        ImVec2 ts = ImGui::GetFont()->CalcTextSizeA(fs, FLT_MAX, -1.f, xpStr.c_str());
-        ImVec2 tp{ boxX + boxW - pad - ts.x, boxY + pad * 0.75f + (iconSz - ts.y) * 0.5f };
-        dl->AddText(ImGui::GetFont(), fs, ImVec2(tp.x + 1, tp.y + 1),
-                    IM_COL32(0, 0, 0, a), xpStr.c_str());
-        dl->AddText(ImGui::GetFont(), fs, tp, IM_COL32(255, 240, 200, a), xpStr.c_str());
-
-        // Progress bar (underneath).
-        const ImVec2 bp0{ boxX + pad, boxY + rowH + pad * 0.25f };
-        const ImVec2 bp1{ boxX + boxW - pad, bp0.y + barH };
-        dl->AddRectFilled(bp0, bp1, IM_COL32(0, 0, 0, static_cast<int>(trackerAlpha * 180)), barH * 0.5f);
-        const float fillW = (bp1.x - bp0.x) * std::clamp(shownProg_, 0.0f, 1.0f);
-        if (fillW > 1.0f)
-            dl->AddRectFilled(bp0, ImVec2(bp0.x + fillW, bp1.y),
-                              IM_COL32(sc.r, sc.g, sc.b, a), barH * 0.5f);
-        dl->AddRect(bp0, bp1, IM_COL32(0, 0, 0, static_cast<int>(trackerAlpha * 150)), barH * 0.5f);
-    }
-
-    // ── XP drops (rise from above center into the tracker) ───────────────────
+    // ── XP drops (drawn FIRST so the tracker box occludes them) ──────────────
+    // Rise from just above center up toward the tracker; once they slide behind
+    // the (opaque) box they're hidden. easeOut decelerates as they near the box.
     const float startY  = screenH * 0.46f;
-    const float targetY = boxY + boxH;   // just under the tracker
+    const float targetY = boxY + boxH * 0.5f;        // settle inside the box → occluded
     for (auto& d : drops_) {
         d.age += dt;
         const float t = std::clamp(d.age / d.life, 0.0f, 1.0f);
 
-        // Fade in quickly, hold, fade out over the last 45%.
-        float alpha = 1.0f;
-        if (t < 0.12f)      alpha = t / 0.12f;
-        else if (t > 0.55f) alpha = std::clamp((1.0f - t) / 0.45f, 0.0f, 1.0f);
+        // Fade in only; disappearance is by occlusion behind the tracker.
+        float alpha = (t < 0.12f) ? (t / 0.12f) : 1.0f;
         const int a = static_cast<int>(alpha * 255.0f);
         if (a <= 0) continue;
 
-        const float y = startY - d.slot * 16.0f * s
+        const float y = startY - d.slot * (iconSz * 0.6f)
                       - (startY - targetY) * easeOutCubic(t);
-        const SkillColor sc = skillColor(d.skillId);
 
         char buf[24];
-        std::snprintf(buf, sizeof(buf), "+%d", d.amount);
-        const float fs = 17.0f * s;
+        std::snprintf(buf, sizeof(buf), "%d", d.amount);   // no leading '+'
+        const float fs = 18.0f * s;
         ImVec2 ts = ImGui::GetFont()->CalcTextSizeA(fs, FLT_MAX, -1.f, buf);
-        const float iconSz = 16.0f * s;
-        const float gap = 4.0f * s;
+        const float gap = 5.0f * s;
         const float totalW = iconSz + gap + ts.x;
         const float x0 = cx - totalW * 0.5f;
 
-        // Icon then "+N" text (shadowed for legibility over the world).
+        // Full-size icon + white number (shadowed for legibility over the world).
         drawIcon(dl, sprites, d.skillId, ImVec2(x0, y - iconSz * 0.5f),
                  ImVec2(x0 + iconSz, y + iconSz * 0.5f), a);
         const ImVec2 tp{ x0 + iconSz + gap, y - ts.y * 0.5f };
         dl->AddText(ImGui::GetFont(), fs, ImVec2(tp.x + 1, tp.y + 1), IM_COL32(0, 0, 0, a), buf);
-        dl->AddText(ImGui::GetFont(), fs, tp, IM_COL32(sc.r, sc.g, sc.b, a), buf);
+        dl->AddText(ImGui::GetFont(), fs, tp, IM_COL32(255, 255, 255, a), buf);
     }
     drops_.erase(std::remove_if(drops_.begin(), drops_.end(),
                  [](const Drop& d) { return d.age >= d.life; }), drops_.end());
+
+    // ── XP tracker box (drawn on top; stays once active — no idle fade) ───────
+    if (active_) {
+        // Pulse: a soft outer glow + border brightening.
+        if (pulse_ > 0.001f) {
+            const int ga = static_cast<int>(pulse_ * 120.0f);
+            const float g = 3.0f * s * pulse_;
+            dl->AddRect(ImVec2(boxX - g, boxY - g), ImVec2(boxX + boxW + g, boxY + boxH + g),
+                        IM_COL32(sc.r, sc.g, sc.b, ga), 4.0f * s, 0, 2.0f * s);
+        }
+        // Opaque box (so drops vanish cleanly behind it) + 1px border.
+        dl->AddRectFilled(ImVec2(boxX, boxY), ImVec2(boxX + boxW, boxY + boxH),
+                          IM_COL32(18, 14, 8, 255), 3.0f * s);
+        const int border = static_cast<int>(std::clamp(0.6f + 0.4f * pulse_, 0.f, 1.f) * 255.0f);
+        dl->AddRect(ImVec2(boxX, boxY), ImVec2(boxX + boxW, boxY + boxH),
+                    IM_COL32(sc.r, sc.g, sc.b, border), 3.0f * s, 0, 1.0f);
+
+        // Icon (left, full size).
+        const ImVec2 ip0{ boxX + pad, boxY + pad * 0.5f };
+        const ImVec2 ip1{ ip0.x + iconSz, ip0.y + iconSz };
+        drawIcon(dl, sprites, skillId_, ip0, ip1, 255);
+
+        // Total XP (right-aligned in the row).
+        const std::string xpStr = commafy(static_cast<long long>(shownXp_ + 0.5));
+        const float fs = 17.0f * s;
+        ImVec2 ts = ImGui::GetFont()->CalcTextSizeA(fs, FLT_MAX, -1.f, xpStr.c_str());
+        ImVec2 tp{ boxX + boxW - pad - ts.x, boxY + pad * 0.5f + (iconSz - ts.y) * 0.5f };
+        dl->AddText(ImGui::GetFont(), fs, ImVec2(tp.x + 1, tp.y + 1), IM_COL32(0, 0, 0, 255), xpStr.c_str());
+        dl->AddText(ImGui::GetFont(), fs, tp, IM_COL32(255, 255, 255, 255), xpStr.c_str());
+
+        // Progress bar (solid fill, no rounding/gradient).
+        const ImVec2 bp0{ boxX + pad, boxY + rowH + pad * 0.25f };
+        const ImVec2 bp1{ boxX + boxW - pad, bp0.y + barH };
+        dl->AddRectFilled(bp0, bp1, IM_COL32(0, 0, 0, 200), 0.0f);
+        const float fillW = (bp1.x - bp0.x) * std::clamp(shownProg_, 0.0f, 1.0f);
+        if (fillW > 1.0f)
+            dl->AddRectFilled(bp0, ImVec2(bp0.x + fillW, bp1.y),
+                              IM_COL32(sc.r, sc.g, sc.b, 255), 0.0f);
+        dl->AddRect(bp0, bp1, IM_COL32(0, 0, 0, 160), 0.0f);
+    }
 }
 
 } // namespace ui
