@@ -2098,6 +2098,11 @@ void App::renderFrame() {
                   showLogin, showJoin, bankOpen_,
                   minimap_.isReady() ? minimap_.texture() : 0);
 
+    // XP drops + tracker (foreground overlay, above the HUD). Only while in-world.
+    if (connected2 && !showJoin)
+      xpTracker_.render(&spriteCache_, static_cast<float>(fbW), static_cast<float>(fbH),
+                        dt, uiScale_);
+
     // Refresh claySteals with the current frame's ownership (clayFrame() just ran
     // and updated s_clayOwned via Clay_PointerOver).  All rendering that reads
     // claySteals below (context info, tooltips, outline) now uses fresh data so
@@ -3707,6 +3712,18 @@ void App::processNetworkMessages() {
           }
           seenMiningXp_  = mxp;
           seenFishingXp_ = fxp;
+
+          // XP drops: emit a floating "+N" for every skill whose xp rose. On the
+          // first state we only seed the baseline (no replay of pre-login xp).
+          for (const auto& [skillId, sst] : cp.skills) {
+            auto sit = seenSkillXp_.find(skillId);
+            const double prev = (sit != seenSkillXp_.end()) ? sit->second : sst.xp;
+            if (!firstState && sst.xp > prev + 1e-6) {
+              const int gained = static_cast<int>(std::lround(sst.xp - prev));
+              if (gained > 0) xpTracker_.pushGain(skillId, gained, sst.xp, sst.level);
+            }
+            seenSkillXp_[skillId] = sst.xp;
+          }
         }
         // Hit / flinch — Hit_Chest overrides attack if both fire same tick.
         if (cp.lastHitTick > seenHitTick_) {

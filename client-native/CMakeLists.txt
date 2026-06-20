@@ -100,6 +100,7 @@ add_executable(client-native
   src/ui/Panels.cpp
   src/ui/UiAudio.cpp
   src/ui/WorldOverlays.cpp
+  src/ui/XpTracker.cpp
   src/ui/ClayRenderer.cpp
   src/ui/ClayHudPanel.cpp
   src/ui/ClayContextMenu.cpp

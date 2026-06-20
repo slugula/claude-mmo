@@ -15,6 +15,7 @@
 #include "ui/MinimapRenderer.hpp"
 #include "ui/Panels.hpp"
 #include "ui/WorldOverlays.hpp"
+#include "ui/XpTracker.hpp"
 #include "world/EntityRenderer.hpp"
 #include "world/AttachmentRenderer.hpp"
 #include "world/ObstacleSystem.hpp"
@@ -239,6 +240,9 @@ private:
   ui::UiHoverState                         uiHover_;
   ui::ChatLog                              chatLog_;
   ui::WorldOverlays                        overlays_;
+  ui::XpTracker                            xpTracker_;
+  // Per-skill xp seen on the local player, to emit XP drops on increases.
+  std::unordered_map<std::string, double>  seenSkillXp_;
   bool                                     loginAnnounced_ = false;
   bool                                     bankOpen_       = false;
   // Chest the player walked toward to bank: the bank opens once the
