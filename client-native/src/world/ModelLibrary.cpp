@@ -201,9 +201,10 @@ void ModelLibrary::buildGeometry(Entry& e, const std::filesystem::path& path,
   if (haveFile) {
     auto model = world::loadGlb(path);
     if (model && !model->primitives.empty()) {
-      for (const auto& prim : model->primitives) accumulate(prim.positions);
       if (!model->animations.empty()) {
-        // Animated → SkinnedMesh.
+        // Animated → SkinnedMesh. (Bounds from the unmirrored source; animated
+        // obstacles are symmetric so they aren't X-corrected here.)
+        for (const auto& prim : model->primitives) accumulate(prim.positions);
         auto sk = std::make_unique<SkinnedMesh>();
         if (sk->load(path)) {
           sk->setClip("");
@@ -213,19 +214,29 @@ void ModelLibrary::buildGeometry(Entry& e, const std::filesystem::path& path,
       }
       if (!e.animated) {
         // Static → one kit per primitive (preserve material colour).
+        // The world renders left-handed (lookAtLH/perspectiveLH) while glTF is
+        // right-handed, which mirrors every model on X. Symmetric props hide it,
+        // but asymmetric ones come out backwards — so un-mirror the obstacle
+        // geometry on X (positions + normals) at bake time. Culling is disabled
+        // globally, so the reversed winding is a non-issue.
         for (const auto& prim : model->primitives) {
           if (prim.positions.empty() || prim.indices.empty()) continue;
+          std::vector<float> p = prim.positions;
+          for (std::size_t i = 0; i + 2 < p.size(); i += 3) p[i] = -p[i];
           std::vector<float> n = prim.normals;
-          if (n.size() < prim.positions.size()) n.assign(prim.positions.size(), 0.f);
+          if (n.size() < p.size()) n.assign(p.size(), 0.f);
+          else for (std::size_t i = 0; i + 2 < n.size(); i += 3) n[i] = -n[i];
           glm::vec3 col = (prim.materialIndex >= 0 &&
                            prim.materialIndex < (int)model->materials.size())
                           ? glm::vec3(model->materials[prim.materialIndex].baseColor)
                           : glm::vec3(0.7f);
-          Kit k; uploadKit(k, prim.positions, n, prim.colors, prim.indices, col);
+          accumulate(p);
+          Kit k; uploadKit(k, p, n, prim.colors, prim.indices, col);
           e.staticKits.push_back(k);
-          // Retain merged CPU geometry for narrow-phase ray picking.
+          // Retain merged CPU geometry for narrow-phase ray picking (mirrored to
+          // match what's drawn).
           const unsigned int base = static_cast<unsigned int>(e.cpuPos.size() / 3);
-          e.cpuPos.insert(e.cpuPos.end(), prim.positions.begin(), prim.positions.end());
+          e.cpuPos.insert(e.cpuPos.end(), p.begin(), p.end());
           for (unsigned int idx : prim.indices) e.cpuIdx.push_back(base + idx);
         }
       }
