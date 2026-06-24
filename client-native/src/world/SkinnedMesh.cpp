@@ -10,6 +10,19 @@
 
 namespace world {
 
+// The world renders left-handed (lookAtLH/perspectiveLH) while glTF is
+// right-handed, which mirrors every model on X. Static models are un-mirrored in
+// ModelLibrary; skinned models (player, animated NPCs/items, fishing spots) are
+// un-mirrored here by baking a -X reflection into u_model. Because weapon sockets
+// (jointModelMatrix) carry the same reflection, equipped weapons follow and stay
+// in the same frame. Normals use mat3(u_model) in skinned.vert so they reflect
+// correctly; culling is disabled globally so the reversed winding is a non-issue.
+static const glm::mat4 kReflectX(
+    -1.0f, 0.0f, 0.0f, 0.0f,
+     0.0f, 1.0f, 0.0f, 0.0f,
+     0.0f, 0.0f, 1.0f, 0.0f,
+     0.0f, 0.0f, 0.0f, 1.0f);
+
 namespace {
 
 // Find the last keyframe index with time <= t. If t is before the first
@@ -304,7 +317,7 @@ void SkinnedMesh::render(render::Shader& shader, const glm::mat4& modelMatrix,
 
   evaluatePose(/*applyBlend=*/true);
 
-  shader.setMat4("u_model", modelMatrix);
+  shader.setMat4("u_model", modelMatrix * kReflectX);
 
   // Upload joint matrices as a single uniform array. setMat4 only handles
   // one matrix at a time, so we hit the GL directly.
@@ -373,7 +386,9 @@ int SkinnedMesh::findJointIndex(const std::string& name) const {
 glm::mat4 SkinnedMesh::jointModelMatrix(int jointIndex) const {
   if (jointIndex < 0 || jointIndex >= static_cast<int>(modelSpace_.size()))
     return glm::mat4(1.0f);
-  return modelSpace_[jointIndex];
+  // Carry the same -X reflection as u_model so weapon attachments line up with
+  // the (reflected) skinned body and render in the same frame.
+  return kReflectX * modelSpace_[jointIndex];
 }
 
 void SkinnedMesh::renderAs(render::Shader& shader, const glm::mat4& modelMatrix,
@@ -399,7 +414,7 @@ void SkinnedMesh::renderAs(render::Shader& shader, const glm::mat4& modelMatrix,
   activeClipIndex_ = savedIndex;
   clipTime_        = savedTime;
 
-  shader.setMat4("u_model", modelMatrix);
+  shader.setMat4("u_model", modelMatrix * kReflectX);
   const GLint loc = glGetUniformLocation(shader.id(), "u_jointMatrices");
   if (loc >= 0) {
     const int count = std::min(static_cast<int>(jointMatrices_.size()), kMaxJoints);
@@ -456,7 +471,7 @@ void SkinnedMesh::renderAsBlended(render::Shader& shader, const glm::mat4& model
   for (int j = 0; j < jc && j < kMaxJoints; ++j)
     jointMatrices_[j] = modelSpace_[j] * model_.joints[j].inverseBind;
 
-  shader.setMat4("u_model", modelMatrix);
+  shader.setMat4("u_model", modelMatrix * kReflectX);
   const GLint loc = glGetUniformLocation(shader.id(), "u_jointMatrices");
   if (loc >= 0) {
     const int count = std::min(static_cast<int>(jointMatrices_.size()), kMaxJoints);
