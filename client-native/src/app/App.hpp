@@ -57,6 +57,7 @@ public:
 
 private:
   void renderFrame();
+  void hotReloadModels();   // dev: live-reload changed model files each frame
   void initImGui();
   void shutdownImGui();
   void onResize(int width, int height);

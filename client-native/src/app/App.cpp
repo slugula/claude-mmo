@@ -205,6 +205,18 @@ std::filesystem::path resolveFromExe(const char* relative) {
   return std::filesystem::path(buf).parent_path() / relative;
 }
 
+// Prefer the repo SOURCE asset (client-native/<rel>, reached via ../../ from
+// build/Release) when it exists, so model edits hot-reload live in the running
+// game — the same source-first scheme the editor uses. In a packaged/production
+// build the source tree is absent, so this falls back to the exe-relative path
+// and behaves exactly as before (models come from assets.pak).
+std::filesystem::path resolveSourceFirst(const std::string& rel) {
+  std::error_code ec;
+  auto src = std::filesystem::weakly_canonical(resolveFromExe(("../../" + rel).c_str()), ec);
+  if (!ec && std::filesystem::exists(src)) return src;
+  return resolveFromExe(rel.c_str());
+}
+
 // True if the map has any water overlay tiles (materialId == water). Water is
 // stored in overlayTiles now; the legacy waterTiles[] is migrated on load.
 bool mapHasWater(const shared::WorldMapFile& map) {
@@ -613,20 +625,16 @@ bool App::init() {
   walls_.initGL();
   // Resolve object model_path (relative) → absolute path next to the exe. This
   // also primes the ModelLibrary with the object placeholder.
-  obstacles_.setModelResolver([](const std::string& rel) {
-    return resolveFromExe(rel.c_str());
-  });
-  walls_.setModelResolver([](const std::string& rel) {
-    return resolveFromExe(rel.c_str());
-  });
-  pools_.setModelResolver([](const std::string& rel) {
-    return resolveFromExe(rel.c_str());
-  });
+  // Source-first resolvers so model edits hot-reload live in the running game
+  // (dev); production builds with no source tree fall back to the exe/pak path.
+  obstacles_.setModelResolver(resolveSourceFirst);
+  walls_.setModelResolver(resolveSourceFirst);
+  pools_.setModelResolver(resolveSourceFirst);
   entities_.initGL();
 
   // Model resolvers (relative model_path → absolute on disk). Set once.
-  entities_.setNpcModelResolver ([](const std::string& rel){ return resolveFromExe(rel.c_str()); });
-  entities_.setItemModelResolver([](const std::string& rel){ return resolveFromExe(rel.c_str()); });
+  entities_.setNpcModelResolver (resolveSourceFirst);
+  entities_.setItemModelResolver(resolveSourceFirst);
 
   // Entity definitions. In a dev build the localhost DB API is available, so we
   // fetch at startup. In a shared/production build there's no localhost API and
@@ -795,10 +803,27 @@ bool App::init() {
 int App::run() {
   while (!window_.shouldClose()) {
     window_.pollEvents();
+    hotReloadModels();
     renderFrame();
     window_.swapBuffers();
   }
   return 0;
+}
+
+// Live model hot-reload (dev): each system polls its model files' mtimes
+// (throttled internally) and swaps geometry in place when they change, so
+// editing/exporting a model updates the running game with no rebuild or
+// re-select. No-op in production (packed models / no source tree never change).
+void App::hotReloadModels() {
+  if (pools_.pollReloadIfChanged()) pools_.rebuildFromMap(map_);
+  bool reloaded = false;
+  reloaded |= obstacles_.reloadModelsIfChanged();
+  reloaded |= walls_.reloadModelsIfChanged();
+  reloaded |= entities_.reloadModelsIfChanged();
+  if (reloaded) {
+    obstacles_.rebuildFromMap(map_, depletedTiles_);
+    walls_.rebuildFromMap(map_);
+  }
 }
 
 void App::generateAndBuildTerrain() {
