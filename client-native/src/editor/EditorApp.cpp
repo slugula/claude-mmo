@@ -206,11 +206,14 @@ void EditorApp::dbLoadPreviewModel(const std::string& modelPath, bool forceReloa
   }
   if (!model || model->primitives.empty()) return;
 
-  // Compute model-space AABB from all primitives
+  // Compute model-space AABB from all primitives. Negate X to match the world's
+  // un-mirroring (the engine renders left-handed, so glTF is X-mirrored; static
+  // obstacles are un-mirrored in ModelLibrary — do the same here so the preview
+  // matches what's placed in-world / shown in Paint 3D).
   glm::vec3 bmin( 1e9f), bmax(-1e9f);
   for (const auto& prim : model->primitives) {
     for (size_t i = 0; i + 2 < prim.positions.size(); i += 3) {
-      glm::vec3 v(prim.positions[i], prim.positions[i+1], prim.positions[i+2]);
+      glm::vec3 v(-prim.positions[i], prim.positions[i+1], prim.positions[i+2]);
       bmin = glm::min(bmin, v);
       bmax = glm::max(bmax, v);
     }
@@ -229,13 +232,17 @@ void EditorApp::dbLoadPreviewModel(const std::string& modelPath, bool forceReloa
         prim.materialIndex < (int)model->materials.size())
       gp.color = model->materials[prim.materialIndex].baseColor;
 
+    // Un-mirror on X (positions + normals) to match the in-world orientation.
+    std::vector<float> mpos = prim.positions;
+    for (std::size_t i = 0; i + 2 < mpos.size(); i += 3) mpos[i] = -mpos[i];
     glCreateBuffers(1, &gp.vboPos);
     glNamedBufferStorage(gp.vboPos,
-      prim.positions.size() * sizeof(float), prim.positions.data(), 0);
+      mpos.size() * sizeof(float), mpos.data(), 0);
 
     // Use flat normals if none supplied (some static props omit normals)
     std::vector<float> norms = prim.normals;
-    if (norms.size() < prim.positions.size()) norms.assign(prim.positions.size(), 0.f);
+    if (norms.size() < mpos.size()) norms.assign(mpos.size(), 0.f);
+    else for (std::size_t i = 0; i + 2 < norms.size(); i += 3) norms[i] = -norms[i];
     glCreateBuffers(1, &gp.vboNorm);
     glNamedBufferStorage(gp.vboNorm, norms.size() * sizeof(float), norms.data(), 0);
 
