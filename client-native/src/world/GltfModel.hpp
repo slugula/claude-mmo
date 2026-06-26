@@ -29,6 +29,7 @@ struct GltfPrimitive {
   std::vector<float>    positions;     // 3 floats per vertex
   std::vector<float>    normals;       // 3 floats per vertex
   std::vector<float>    colors;        // 4 floats (RGBA) per vertex from COLOR_0; empty if none
+  std::vector<float>    uvs;           // 2 floats per vertex from TEXCOORD_0; empty if none
   std::vector<uint8_t>  jointIndices;  // 4 u8 per vertex (zeros if mesh isn't skinned)
   std::vector<float>    jointWeights;  // 4 floats per vertex (zeros + one 1.0 if mesh isn't skinned)
   std::vector<uint32_t> indices;
@@ -37,6 +38,11 @@ struct GltfPrimitive {
 
 struct GltfMaterial {
   glm::vec4 baseColor = glm::vec4(1.0f);
+  // Decoded baseColorTexture pixels (RGBA8, top-down). Empty = no texture.
+  // Loaded from the glTF's embedded image (.glb buffer view) or an external uri.
+  std::vector<uint8_t> texRGBA;
+  int                  texW = 0;
+  int                  texH = 0;
 };
 
 // One joint of the skin (i.e. one bone). `parent` is the index of the

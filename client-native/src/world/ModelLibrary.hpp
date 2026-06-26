@@ -113,7 +113,9 @@ private:
     GLuint    vboPos     = 0;
     GLuint    vboNrm     = 0;
     GLuint    vboCol     = 0;   // per-vertex RGBA (location 4)
+    GLuint    vboUv      = 0;   // per-vertex UV   (location 8); 0 if untextured
     GLuint    ebo        = 0;
+    GLuint    texture    = 0;   // baseColorTexture; 0 = none (use vertex/material colour)
     GLsizei   indexCount = 0;
     glm::vec3 color      = glm::vec3(0.7f);
   };
@@ -141,7 +143,10 @@ private:
   void uploadKit(Kit& k, const std::vector<float>& pos,
                  const std::vector<float>& nrm,
                  const std::vector<float>& col,   // RGBA per vertex; empty → white
-                 const std::vector<uint32_t>& idx, glm::vec3 color);
+                 const std::vector<uint32_t>& idx, glm::vec3 color,
+                 const std::vector<float>&   uv = {},        // UV per vertex; empty → untextured
+                 const std::vector<uint8_t>& texRGBA = {},   // baseColorTexture pixels; empty → none
+                 int texW = 0, int texH = 0);
   void destroyKit(Kit& k);
 
   std::function<std::filesystem::path(const std::string&)> resolver_;

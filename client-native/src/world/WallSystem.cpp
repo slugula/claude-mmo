@@ -173,6 +173,7 @@ void WallSystem::rebuildFromMap(const shared::WorldMapFile& map) {
 void WallSystem::drawKit(render::Shader& shader, Kit& k) {
   if (k.insts.empty()) return;
   shader.setVec3("u_color", k.color);
+  shader.setFloat("u_hasTexture", 0.0f);   // procedural kits are untextured
   glBindVertexArray(k.vao);
   glDrawElementsInstanced(GL_TRIANGLES, k.indexCount, GL_UNSIGNED_INT, nullptr,
                           static_cast<GLsizei>(k.insts.size()));

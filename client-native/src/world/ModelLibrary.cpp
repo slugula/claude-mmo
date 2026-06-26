@@ -75,11 +75,13 @@ void ModelLibrary::init(std::function<std::filesystem::path(const std::string&)>
 }
 
 void ModelLibrary::destroyKit(Kit& k) {
-  if (k.vao)    glDeleteVertexArrays(1, &k.vao);
-  if (k.ebo)    glDeleteBuffers(1, &k.ebo);
-  if (k.vboCol) glDeleteBuffers(1, &k.vboCol);
-  if (k.vboNrm) glDeleteBuffers(1, &k.vboNrm);
-  if (k.vboPos) glDeleteBuffers(1, &k.vboPos);
+  if (k.vao)     glDeleteVertexArrays(1, &k.vao);
+  if (k.ebo)     glDeleteBuffers(1, &k.ebo);
+  if (k.vboCol)  glDeleteBuffers(1, &k.vboCol);
+  if (k.vboUv)   glDeleteBuffers(1, &k.vboUv);
+  if (k.vboNrm)  glDeleteBuffers(1, &k.vboNrm);
+  if (k.vboPos)  glDeleteBuffers(1, &k.vboPos);
+  if (k.texture) glDeleteTextures(1, &k.texture);
   k = {};
 }
 
@@ -97,7 +99,10 @@ void ModelLibrary::destroy() {
 void ModelLibrary::uploadKit(Kit& k, const std::vector<float>& pos,
                              const std::vector<float>& nrm,
                              const std::vector<float>& col,
-                             const std::vector<uint32_t>& idx, glm::vec3 color) {
+                             const std::vector<uint32_t>& idx, glm::vec3 color,
+                             const std::vector<float>&   uv,
+                             const std::vector<uint8_t>& texRGBA,
+                             int texW, int texH) {
   k.color      = color;
   k.indexCount = static_cast<GLsizei>(idx.size());
 
@@ -136,6 +141,32 @@ void ModelLibrary::uploadKit(Kit& k, const std::vector<float>& pos,
   glEnableVertexArrayAttrib (k.vao, 4);
   glVertexArrayAttribFormat (k.vao, 4, 4, GL_FLOAT, GL_FALSE, 0);
   glVertexArrayAttribBinding(k.vao, 4, 4);
+
+  // location 8 = per-vertex UV (binding 8). Only present for textured meshes;
+  // when absent we still bind the colour VBO so the attribute reads harmless
+  // values (the shader gates on u_hasTexture anyway).
+  if (uv.size() == vcount * 2) {
+    glCreateBuffers(1, &k.vboUv);
+    glNamedBufferStorage(k.vboUv, static_cast<GLsizeiptr>(uv.size() * sizeof(float)), uv.data(), 0);
+    glVertexArrayVertexBuffer (k.vao, 8, k.vboUv, 0, sizeof(float) * 2);
+    glEnableVertexArrayAttrib (k.vao, 8);
+    glVertexArrayAttribFormat (k.vao, 8, 2, GL_FLOAT, GL_FALSE, 0);
+    glVertexArrayAttribBinding(k.vao, 8, 8);
+  }
+
+  // baseColorTexture → GL texture (NEAREST so palette-atlas swatches stay crisp
+  // and don't bleed at UV seams). Treated as plain sRGB-space colour like the
+  // vertex colours (no GL_SRGB internal format) to match the existing pipeline.
+  if (!texRGBA.empty() && texW > 0 && texH > 0 &&
+      static_cast<size_t>(texW) * texH * 4 == texRGBA.size()) {
+    glCreateTextures(GL_TEXTURE_2D, 1, &k.texture);
+    glTextureParameteri(k.texture, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTextureParameteri(k.texture, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTextureParameteri(k.texture, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTextureParameteri(k.texture, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    glTextureStorage2D (k.texture, 1, GL_RGBA8, texW, texH);
+    glTextureSubImage2D(k.texture, 0, 0, 0, texW, texH, GL_RGBA, GL_UNSIGNED_BYTE, texRGBA.data());
+  }
   // locations 2,3 = per-instance pos + rotY (binding 2 = shared scratch VBO)
   glVertexArrayVertexBuffer  (k.vao, 2, scratchVbo_, 0, sizeof(Instance));
   glVertexArrayBindingDivisor(k.vao, 2, 1);
@@ -226,12 +257,19 @@ void ModelLibrary::buildGeometry(Entry& e, const std::filesystem::path& path,
           std::vector<float> n = prim.normals;
           if (n.size() < p.size()) n.assign(p.size(), 0.f);
           else for (std::size_t i = 0; i + 2 < n.size(); i += 3) n[i] = -n[i];
-          glm::vec3 col = (prim.materialIndex >= 0 &&
-                           prim.materialIndex < (int)model->materials.size())
-                          ? glm::vec3(model->materials[prim.materialIndex].baseColor)
-                          : glm::vec3(0.7f);
+          const GltfMaterial* mat =
+              (prim.materialIndex >= 0 && prim.materialIndex < (int)model->materials.size())
+              ? &model->materials[prim.materialIndex] : nullptr;
+          glm::vec3 col = mat ? glm::vec3(mat->baseColor) : glm::vec3(0.7f);
           accumulate(p);
-          Kit k; uploadKit(k, p, n, prim.colors, prim.indices, col);
+          // UVs are unchanged by the X-flip — the texture follows the (relocated)
+          // vertices, so the textured surface un-mirrors together with the mesh.
+          Kit k;
+          if (mat && !mat->texRGBA.empty())
+            uploadKit(k, p, n, prim.colors, prim.indices, col,
+                      prim.uvs, mat->texRGBA, mat->texW, mat->texH);
+          else
+            uploadKit(k, p, n, prim.colors, prim.indices, col);
           e.staticKits.push_back(k);
           // Retain merged CPU geometry for narrow-phase ray picking (mirrored to
           // match what's drawn).
@@ -358,6 +396,15 @@ void ModelLibrary::drawStaticInstanced(render::Shader& shader, const std::string
   for (const Kit& k : it->second.staticKits) {
     if (!k.vao) continue;
     shader.setVec3("u_color", k.color);
+    // Bind the baseColorTexture (unit 4; shadow map sits on unit 1). The shader
+    // gates on u_hasTexture so untextured kits keep the vertex/material colour.
+    if (k.texture) {
+      glBindTextureUnit(4, k.texture);
+      shader.setInt  ("u_albedo", 4);
+      shader.setFloat("u_hasTexture", 1.0f);
+    } else {
+      shader.setFloat("u_hasTexture", 0.0f);
+    }
     glBindVertexArray(k.vao);
     glDrawElementsInstanced(GL_TRIANGLES, k.indexCount, GL_UNSIGNED_INT,
                             nullptr, static_cast<GLsizei>(count));

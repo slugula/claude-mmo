@@ -11,12 +11,39 @@
 #include <glm/gtx/quaternion.hpp>
 #include <glm/gtx/matrix_decompose.hpp>
 
+#include <stb_image.h>   // decode embedded/external baseColorTexture images
+
 #include <cstdio>
 #include <cstring>
 #include <functional>
 #include <unordered_map>
 
 namespace world {
+
+namespace {
+// Decode a glTF image (embedded .glb buffer view, or an external file uri) into
+// tightly-packed top-down RGBA8. Returns false if it can't be read/decoded.
+bool decodeGltfImage(const cgltf_image* img, const std::filesystem::path& baseDir,
+                     std::vector<uint8_t>& outRGBA, int& w, int& h) {
+  if (!img) return false;
+  int comp = 0;
+  unsigned char* px = nullptr;
+  stbi_set_flip_vertically_on_load(false);
+  if (img->buffer_view && img->buffer_view->buffer && img->buffer_view->buffer->data) {
+    const auto* bv  = img->buffer_view;
+    const auto* src = static_cast<const unsigned char*>(bv->buffer->data) + bv->offset;
+    px = stbi_load_from_memory(src, static_cast<int>(bv->size), &w, &h, &comp, 4);
+  } else if (img->uri && std::strncmp(img->uri, "data:", 5) != 0) {
+    auto bytes = assets::loadBytes(baseDir / img->uri);
+    if (bytes)
+      px = stbi_load_from_memory(bytes->data(), static_cast<int>(bytes->size()), &w, &h, &comp, 4);
+  }
+  if (!px) return false;
+  outRGBA.assign(px, px + static_cast<size_t>(w) * h * 4);
+  stbi_image_free(px);
+  return true;
+}
+}  // namespace
 
 namespace {
 
@@ -112,6 +139,7 @@ void parseMeshPrimitives(
 
     const cgltf_accessor* aPos   = nullptr;
     const cgltf_accessor* aNorm  = nullptr;
+    const cgltf_accessor* aUV     = nullptr;
     const cgltf_accessor* aJoint = nullptr;
     const cgltf_accessor* aWt    = nullptr;
     // All COLOR_n sets, indexed by their set number (COLOR_0, COLOR_1, …).
@@ -121,6 +149,7 @@ void parseMeshPrimitives(
       switch (at.type) {
         case cgltf_attribute_type_position: aPos   = at.data; break;
         case cgltf_attribute_type_normal:   aNorm  = at.data; break;
+        case cgltf_attribute_type_texcoord: if (at.index == 0) aUV = at.data; break;
         case cgltf_attribute_type_joints:   if (at.index == 0) aJoint = at.data; break;
         case cgltf_attribute_type_weights:  if (at.index == 0) aWt    = at.data; break;
         case cgltf_attribute_type_color: {
@@ -135,6 +164,7 @@ void parseMeshPrimitives(
 
     readAccessorFloats(aPos,  out.positions, 3);
     readAccessorFloats(aNorm, out.normals,   3);
+    if (aUV) readAccessorFloats(aUV, out.uvs, 2);
 
     // Vertex colors. glTF's primary set is COLOR_0, but Blender can export a
     // stray all-white set as COLOR_0 while the painted colours land in COLOR_1.
@@ -268,6 +298,11 @@ std::optional<GltfModel> loadGlb(const std::filesystem::path& path) {
     if (m.has_pbr_metallic_roughness) {
       const auto* c = m.pbr_metallic_roughness.base_color_factor;
       out.baseColor = glm::vec4(c[0], c[1], c[2], c[3]);
+      const cgltf_texture* tex = m.pbr_metallic_roughness.base_color_texture.texture;
+      if (tex && tex->image) {
+        if (!decodeGltfImage(tex->image, path.parent_path(), out.texRGBA, out.texW, out.texH))
+          std::fprintf(stderr, "[GltfLoader] failed to decode baseColorTexture for %s\n", pathStr.c_str());
+      }
     }
     model.materials.push_back(out);
   }

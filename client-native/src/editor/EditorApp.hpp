@@ -359,7 +359,9 @@ private:
     GLuint  vboPos  = 0;
     GLuint  vboNorm = 0;
     GLuint  vboCol  = 0;
+    GLuint  vboUv   = 0;   // per-vertex UV (location 8); 0 if untextured
     GLuint  ebo     = 0;
+    GLuint  texture = 0;   // baseColorTexture; 0 = none
     GLsizei indexCount = 0;
     glm::vec4 color    = glm::vec4(0.7f, 0.7f, 0.7f, 1.0f);
   };

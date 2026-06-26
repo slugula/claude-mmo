@@ -7,8 +7,11 @@ in  vec4  v_shadowPos;
 in  float vLinearDepth;
 in  vec4  v_color;        // per-vertex RGBA (white when model has none)
 in  vec3  v_tint;         // per-instance tint (white = no tint)
+in  vec2  v_uv;           // per-vertex UV (textured meshes)
 out vec4  fragColor;
 
+uniform sampler2D u_albedo;          // baseColorTexture (bound on unit 4)
+uniform float     u_hasTexture;      // 0 = vertex/material colour, 1 = sample u_albedo
 uniform vec3      u_color;            // base RGB color for this obstacle type
 uniform vec3      u_paletteLevels;    // shared with terrain shader
 uniform float     u_paletteEnabled;   // 0 = bypass quantize, 1 = quantize
@@ -64,14 +67,18 @@ void main() {
     vec3  N      = normalize(v_normal);
     // glTF convention: vertex colour modulates the material/base colour; the
     // per-instance tint (white for most models) recolours the pool tileset.
+    // Textured meshes sample the baseColorTexture instead (palette atlases etc.).
     vec3  base   = u_color * v_color.rgb * v_tint;
+    if (u_hasTexture > 0.5) base = texture(u_albedo, v_uv).rgb * v_tint;
     vec3  rgb    = mix(base, applySky(base, N, v_shadowPos), u_lightingEnabled);
 
     vec3 hsl       = rgb2hsl(rgb);
     vec3 snapped   = floor(hsl * u_paletteLevels) / u_paletteLevels;
     vec3 quantized = hsl2rgb(snapped);
 
-    fragColor = vec4(mix(rgb, quantized, u_paletteEnabled), 1.0);
+    // Skip palette quantization for textured meshes (their colours are already
+    // authored in the atlas; re-quantizing would shift them).
+    fragColor = vec4(mix(rgb, quantized, u_paletteEnabled * (1.0 - u_hasTexture)), 1.0);
 
     // Exponential distance fog.
     float dist      = max(0.0, vLinearDepth - u_fogStart);

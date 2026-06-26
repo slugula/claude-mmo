@@ -10,6 +10,7 @@
 layout(location = 0) in vec3 a_position;
 layout(location = 1) in vec3 a_normal;
 layout(location = 4) in vec4 a_color;     // per-vertex RGBA (white when model has none)
+layout(location = 8) in vec2 a_uv;        // per-vertex UV (textured meshes only)
 
 // Per-instance (one per obstacle)
 layout(location = 2) in vec3  a_instancePos;
@@ -27,6 +28,7 @@ out vec4  v_shadowPos;
 out float vLinearDepth;
 out vec4  v_color;
 out vec3  v_tint;
+out vec2  v_uv;
 
 mat3 rotY(float angle) {
     float c = cos(angle);
@@ -77,6 +79,7 @@ void main() {
     }
     v_color       = a_color;
     v_tint        = a_instanceTint;
+    v_uv          = a_uv;
     vec4 world4   = vec4(worldPos, 1.0);
     gl_Position   = u_viewProj * world4;
     v_shadowPos   = u_lightViewProj * world4;

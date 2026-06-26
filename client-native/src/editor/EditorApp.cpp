@@ -146,7 +146,9 @@ void EditorApp::dbDestroyPreviewFbo() {
     if (p.vboPos) glDeleteBuffers(1, &p.vboPos);
     if (p.vboNorm)glDeleteBuffers(1, &p.vboNorm);
     if (p.vboCol) glDeleteBuffers(1, &p.vboCol);
+    if (p.vboUv)  glDeleteBuffers(1, &p.vboUv);
     if (p.ebo)    glDeleteBuffers(1, &p.ebo);
+    if (p.texture)glDeleteTextures(1, &p.texture);
   }
   dbPreviewPrims_.clear();
   if (dbPreviewFbo_) { glDeleteFramebuffers(1, &dbPreviewFbo_);   dbPreviewFbo_ = 0; }
@@ -163,7 +165,9 @@ void EditorApp::dbLoadPreviewModel(const std::string& modelPath, bool forceReloa
     if (p.vboPos) glDeleteBuffers(1, &p.vboPos);
     if (p.vboNorm)glDeleteBuffers(1, &p.vboNorm);
     if (p.vboCol) glDeleteBuffers(1, &p.vboCol);
+    if (p.vboUv)  glDeleteBuffers(1, &p.vboUv);
     if (p.ebo)    glDeleteBuffers(1, &p.ebo);
+    if (p.texture)glDeleteTextures(1, &p.texture);
   }
   dbPreviewPrims_.clear();
   dbPreviewHasAnim_  = false;
@@ -228,9 +232,10 @@ void EditorApp::dbLoadPreviewModel(const std::string& modelPath, bool forceReloa
     if (prim.positions.empty() || prim.indices.empty()) continue;
     DbPreviewPrim gp;
     gp.indexCount = static_cast<GLsizei>(prim.indices.size());
-    if (prim.materialIndex >= 0 &&
-        prim.materialIndex < (int)model->materials.size())
-      gp.color = model->materials[prim.materialIndex].baseColor;
+    const world::GltfMaterial* mat =
+        (prim.materialIndex >= 0 && prim.materialIndex < (int)model->materials.size())
+        ? &model->materials[prim.materialIndex] : nullptr;
+    if (mat) gp.color = mat->baseColor;
 
     // Un-mirror on X (positions + normals) to match the in-world orientation.
     std::vector<float> mpos = prim.positions;
@@ -273,6 +278,26 @@ void EditorApp::dbLoadPreviewModel(const std::string& modelPath, bool forceReloa
     glEnableVertexArrayAttrib(gp.vao, 4);
     glVertexArrayAttribFormat(gp.vao, 4, 4, GL_FLOAT, GL_FALSE, 0);
     glVertexArrayAttribBinding(gp.vao, 4, 4);
+    // UV — binding 8 (textured meshes); UVs unchanged by the X-flip.
+    if (prim.uvs.size() == vcount * 2) {
+      glCreateBuffers(1, &gp.vboUv);
+      glNamedBufferStorage(gp.vboUv, prim.uvs.size() * sizeof(float), prim.uvs.data(), 0);
+      glVertexArrayVertexBuffer(gp.vao, 8, gp.vboUv, 0, 2 * sizeof(float));
+      glEnableVertexArrayAttrib(gp.vao, 8);
+      glVertexArrayAttribFormat(gp.vao, 8, 2, GL_FLOAT, GL_FALSE, 0);
+      glVertexArrayAttribBinding(gp.vao, 8, 8);
+    }
+    // baseColorTexture → GL texture (NEAREST, like the in-world path).
+    if (mat && !mat->texRGBA.empty() && mat->texW > 0 && mat->texH > 0) {
+      glCreateTextures(GL_TEXTURE_2D, 1, &gp.texture);
+      glTextureParameteri(gp.texture, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+      glTextureParameteri(gp.texture, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+      glTextureParameteri(gp.texture, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+      glTextureParameteri(gp.texture, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+      glTextureStorage2D (gp.texture, 1, GL_RGBA8, mat->texW, mat->texH);
+      glTextureSubImage2D(gp.texture, 0, 0, 0, mat->texW, mat->texH,
+                          GL_RGBA, GL_UNSIGNED_BYTE, mat->texRGBA.data());
+    }
     // EBO
     glVertexArrayElementBuffer(gp.vao, gp.ebo);
     dbPreviewPrims_.push_back(gp);
@@ -423,6 +448,13 @@ void EditorApp::dbRenderPreview(float dt) {
       dbPreviewShader_.setMat4("u_viewProj", viewProj);
       for (const auto& prim : dbPreviewPrims_) {
         dbPreviewShader_.setVec4("u_color", prim.color);
+        if (prim.texture) {
+          glBindTextureUnit(0, prim.texture);
+          dbPreviewShader_.setInt  ("u_albedo", 0);
+          dbPreviewShader_.setFloat("u_hasTexture", 1.0f);
+        } else {
+          dbPreviewShader_.setFloat("u_hasTexture", 0.0f);
+        }
         glBindVertexArray(prim.vao);
         glDrawElements(GL_TRIANGLES, prim.indexCount, GL_UNSIGNED_INT, nullptr);
       }
