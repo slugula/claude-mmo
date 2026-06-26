@@ -8,8 +8,11 @@ in  vec3  v_normal;
 in  vec4  v_shadowPos;
 in  float vLinearDepth;
 in  vec4  v_color;
+in  vec2  v_uv;
 out vec4  fragColor;
 
+uniform sampler2D u_albedo;          // baseColorTexture (bound on unit 4)
+uniform float     u_hasTexture;      // 0 = vertex/material colour, 1 = sample u_albedo
 uniform vec3      u_color;
 uniform vec3      u_paletteLevels;
 uniform float     u_paletteEnabled;
@@ -59,15 +62,18 @@ vec3 hsl2rgb(vec3 hsl) {
 
 void main() {
     vec3  N      = normalize(v_normal);
-    // glTF convention: per-vertex colour modulates the material/base colour.
+    // glTF convention: per-vertex colour modulates the material/base colour;
+    // textured meshes sample the baseColorTexture instead.
     vec3  base   = u_color * v_color.rgb;
+    if (u_hasTexture > 0.5) base = texture(u_albedo, v_uv).rgb;
     vec3  rgb    = mix(base, applySky(base, N, v_shadowPos), u_lightingEnabled);
 
     vec3 hsl       = rgb2hsl(rgb);
     vec3 snapped   = floor(hsl * u_paletteLevels) / u_paletteLevels;
     vec3 quantized = hsl2rgb(snapped);
 
-    fragColor = vec4(mix(rgb, quantized, u_paletteEnabled), 1.0);
+    // Skip palette quantization for textured meshes (atlas colours are authored).
+    fragColor = vec4(mix(rgb, quantized, u_paletteEnabled * (1.0 - u_hasTexture)), 1.0);
 
     // Exponential distance fog.
     float dist      = max(0.0, vLinearDepth - u_fogStart);

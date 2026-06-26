@@ -40,11 +40,13 @@ bool AttachmentRenderer::init(
 void AttachmentRenderer::destroy() {
   for (auto& [path, model] : cache_) {
     for (auto& p : model.prims) {
-      if (p.ebo)    glDeleteBuffers(1, &p.ebo);
-      if (p.vboCol) glDeleteBuffers(1, &p.vboCol);
-      if (p.vboNrm) glDeleteBuffers(1, &p.vboNrm);
-      if (p.vboPos) glDeleteBuffers(1, &p.vboPos);
-      if (p.vao)    glDeleteVertexArrays(1, &p.vao);
+      if (p.ebo)     glDeleteBuffers(1, &p.ebo);
+      if (p.vboCol)  glDeleteBuffers(1, &p.vboCol);
+      if (p.vboUv)   glDeleteBuffers(1, &p.vboUv);
+      if (p.vboNrm)  glDeleteBuffers(1, &p.vboNrm);
+      if (p.vboPos)  glDeleteBuffers(1, &p.vboPos);
+      if (p.texture) glDeleteTextures(1, &p.texture);
+      if (p.vao)     glDeleteVertexArrays(1, &p.vao);
     }
   }
   cache_.clear();
@@ -70,9 +72,10 @@ AttachmentRenderer::ensure(const std::string& relPath) {
         if (prim.positions.empty() || prim.indices.empty()) continue;
         Prim gp;
         gp.indexCount = static_cast<GLsizei>(prim.indices.size());
-        if (prim.materialIndex >= 0 &&
-            prim.materialIndex < static_cast<int>(parsed->materials.size()))
-          gp.color = parsed->materials[prim.materialIndex].baseColor;
+        const world::GltfMaterial* mat =
+            (prim.materialIndex >= 0 && prim.materialIndex < static_cast<int>(parsed->materials.size()))
+            ? &parsed->materials[prim.materialIndex] : nullptr;
+        if (mat) gp.color = mat->baseColor;
 
         glCreateBuffers(1, &gp.vboPos);
         glNamedBufferStorage(gp.vboPos,
@@ -111,6 +114,26 @@ AttachmentRenderer::ensure(const std::string& relPath) {
         glEnableVertexArrayAttrib(gp.vao, 4);
         glVertexArrayAttribFormat(gp.vao, 4, 4, GL_FLOAT, GL_FALSE, 0);
         glVertexArrayAttribBinding(gp.vao, 4, 4);
+        // UV (location 8) + baseColorTexture for textured weapons.
+        if (prim.uvs.size() == vcount * 2) {
+          glCreateBuffers(1, &gp.vboUv);
+          glNamedBufferStorage(gp.vboUv,
+              static_cast<GLsizeiptr>(prim.uvs.size() * sizeof(float)), prim.uvs.data(), 0);
+          glVertexArrayVertexBuffer(gp.vao, 8, gp.vboUv, 0, 2 * sizeof(float));
+          glEnableVertexArrayAttrib(gp.vao, 8);
+          glVertexArrayAttribFormat(gp.vao, 8, 2, GL_FLOAT, GL_FALSE, 0);
+          glVertexArrayAttribBinding(gp.vao, 8, 8);
+        }
+        if (mat && !mat->texRGBA.empty() && mat->texW > 0 && mat->texH > 0) {
+          glCreateTextures(GL_TEXTURE_2D, 1, &gp.texture);
+          glTextureParameteri(gp.texture, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+          glTextureParameteri(gp.texture, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+          glTextureParameteri(gp.texture, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+          glTextureParameteri(gp.texture, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+          glTextureStorage2D (gp.texture, 1, GL_RGBA8, mat->texW, mat->texH);
+          glTextureSubImage2D(gp.texture, 0, 0, 0, mat->texW, mat->texH,
+                              GL_RGBA, GL_UNSIGNED_BYTE, mat->texRGBA.data());
+        }
         glVertexArrayElementBuffer(gp.vao, gp.ebo);
 
         model.prims.push_back(gp);
@@ -140,6 +163,13 @@ void AttachmentRenderer::draw(const std::string& relPath,
   shader_.setMat4("u_viewProj", viewProj);
   for (const auto& p : model.prims) {
     shader_.setVec4("u_color", p.color);
+    if (p.texture) {
+      glBindTextureUnit(0, p.texture);
+      shader_.setInt  ("u_albedo", 0);
+      shader_.setFloat("u_hasTexture", 1.0f);
+    } else {
+      shader_.setFloat("u_hasTexture", 0.0f);
+    }
     glBindVertexArray(p.vao);
     glDrawElements(GL_TRIANGLES, p.indexCount, GL_UNSIGNED_INT, nullptr);
   }

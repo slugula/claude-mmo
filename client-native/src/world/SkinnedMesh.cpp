@@ -23,6 +23,19 @@ static const glm::mat4 kReflectX(
      0.0f, 0.0f, 1.0f, 0.0f,
      0.0f, 0.0f, 0.0f, 1.0f);
 
+// Bind a primitive's baseColorTexture (unit 4) and flag the shader, or clear the
+// flag so untextured primitives keep the vertex/material colour. Shadow/mask
+// shaders lack these uniforms — setInt/setFloat no-op on a missing location.
+static void bindPrimTexture(render::Shader& shader, GLuint texture) {
+  if (texture) {
+    glBindTextureUnit(4, texture);
+    shader.setInt  ("u_albedo", 4);
+    shader.setFloat("u_hasTexture", 1.0f);
+  } else {
+    shader.setFloat("u_hasTexture", 0.0f);
+  }
+}
+
 namespace {
 
 // Find the last keyframe index with time <= t. If t is before the first
@@ -96,8 +109,10 @@ void SkinnedMesh::destroy() {
     if (p.vboWeight)  glDeleteBuffers(1, &p.vboWeight);
     if (p.vboJoint)   glDeleteBuffers(1, &p.vboJoint);
     if (p.vboCol)     glDeleteBuffers(1, &p.vboCol);
+    if (p.vboUv)      glDeleteBuffers(1, &p.vboUv);
     if (p.vboNrm)     glDeleteBuffers(1, &p.vboNrm);
     if (p.vboPos)     glDeleteBuffers(1, &p.vboPos);
+    if (p.texture)    glDeleteTextures(1, &p.texture);
     if (p.vao)        glDeleteVertexArrays(1, &p.vao);
   }
   primitives_.clear();
@@ -133,7 +148,22 @@ bool SkinnedMesh::load(const std::filesystem::path& glbPath) {
     uploadPrimitive(model_.primitives[i], primitives_[i]);
     const int mi = model_.primitives[i].materialIndex;
     if (mi >= 0 && mi < static_cast<int>(model_.materials.size())) {
-      primitives_[i].matColor = glm::vec3(model_.materials[mi].baseColor);
+      const GltfMaterial& mat = model_.materials[mi];
+      primitives_[i].matColor = glm::vec3(mat.baseColor);
+      // baseColorTexture → GL texture (NEAREST, like the static path).
+      if (!mat.texRGBA.empty() && mat.texW > 0 && mat.texH > 0 &&
+          static_cast<size_t>(mat.texW) * mat.texH * 4 == mat.texRGBA.size()) {
+        GLuint tex = 0;
+        glCreateTextures(GL_TEXTURE_2D, 1, &tex);
+        glTextureParameteri(tex, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+        glTextureParameteri(tex, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+        glTextureParameteri(tex, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTextureParameteri(tex, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTextureStorage2D (tex, 1, GL_RGBA8, mat.texW, mat.texH);
+        glTextureSubImage2D(tex, 0, 0, 0, mat.texW, mat.texH,
+                            GL_RGBA, GL_UNSIGNED_BYTE, mat.texRGBA.data());
+        primitives_[i].texture = tex;
+      }
     }
   }
 
@@ -205,6 +235,17 @@ void SkinnedMesh::uploadPrimitive(const GltfPrimitive& src, PrimitiveGl& dst) {
   glEnableVertexArrayAttrib(dst.vao, 3);
   glVertexArrayAttribFormat(dst.vao, 3, 4, GL_FLOAT, GL_FALSE, 0);
   glVertexArrayAttribBinding(dst.vao, 3, 3);
+  // Attribute 8: per-vertex UV (textured meshes only)
+  if (src.uvs.size() == vcount * 2) {
+    glCreateBuffers(1, &dst.vboUv);
+    glNamedBufferStorage(dst.vboUv,
+                         static_cast<GLsizeiptr>(src.uvs.size() * sizeof(float)),
+                         src.uvs.data(), 0);
+    glVertexArrayVertexBuffer(dst.vao, 8, dst.vboUv, 0, sizeof(float) * 2);
+    glEnableVertexArrayAttrib(dst.vao, 8);
+    glVertexArrayAttribFormat(dst.vao, 8, 2, GL_FLOAT, GL_FALSE, 0);
+    glVertexArrayAttribBinding(dst.vao, 8, 8);
+  }
 
   glVertexArrayElementBuffer(dst.vao, dst.ebo);
   dst.indexCount    = static_cast<GLsizei>(src.indices.size());
@@ -331,6 +372,7 @@ void SkinnedMesh::render(render::Shader& shader, const glm::mat4& modelMatrix,
     if (useMaterialColors) {
       shader.setVec3("u_color", p.matColor);
     }
+    bindPrimTexture(shader, p.texture);
     glBindVertexArray(p.vao);
     glDrawElements(GL_TRIANGLES, p.indexCount, GL_UNSIGNED_INT, nullptr);
   }
@@ -421,6 +463,7 @@ void SkinnedMesh::renderAs(render::Shader& shader, const glm::mat4& modelMatrix,
     glUniformMatrix4fv(loc, count, GL_FALSE, glm::value_ptr(jointMatrices_[0]));
   }
   for (const auto& p : primitives_) {
+    bindPrimTexture(shader, p.texture);
     glBindVertexArray(p.vao);
     glDrawElements(GL_TRIANGLES, p.indexCount, GL_UNSIGNED_INT, nullptr);
   }
@@ -478,6 +521,7 @@ void SkinnedMesh::renderAsBlended(render::Shader& shader, const glm::mat4& model
     glUniformMatrix4fv(loc, count, GL_FALSE, glm::value_ptr(jointMatrices_[0]));
   }
   for (const auto& p : primitives_) {
+    bindPrimTexture(shader, p.texture);
     glBindVertexArray(p.vao);
     glDrawElements(GL_TRIANGLES, p.indexCount, GL_UNSIGNED_INT, nullptr);
   }

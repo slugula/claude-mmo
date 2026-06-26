@@ -48,7 +48,8 @@ public:
 
 private:
   struct Prim {
-    GLuint    vao = 0, vboPos = 0, vboNrm = 0, vboCol = 0, ebo = 0;
+    GLuint    vao = 0, vboPos = 0, vboNrm = 0, vboCol = 0, vboUv = 0, ebo = 0;
+    GLuint    texture = 0;   // baseColorTexture; 0 = none
     GLsizei   indexCount = 0;
     glm::vec4 color = glm::vec4(0.7f, 0.7f, 0.7f, 1.0f);
   };

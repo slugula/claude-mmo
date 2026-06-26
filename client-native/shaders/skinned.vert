@@ -16,6 +16,7 @@ layout(location = 1) in vec3  a_normal;
 layout(location = 2) in uvec4 a_jointIndices;
 layout(location = 3) in vec4  a_jointWeights;
 layout(location = 4) in vec4  a_color;
+layout(location = 8) in vec2  a_uv;       // per-vertex UV (textured meshes only)
 
 uniform mat4 u_viewProj;
 uniform mat4 u_lightViewProj;
@@ -26,6 +27,7 @@ out vec3  v_normal;
 out vec4  v_shadowPos;
 out float vLinearDepth;
 out vec4  v_color;
+out vec2  v_uv;
 
 void main() {
     mat4 skin =
@@ -46,4 +48,5 @@ void main() {
     v_shadowPos  = u_lightViewProj * worldPos;
     vLinearDepth = gl_Position.w;
     v_color      = a_color;
+    v_uv         = a_uv;
 }
