@@ -1,5 +1,6 @@
 #include "world/WallSystem.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
 
@@ -127,14 +128,14 @@ void WallSystem::setModelResolver(std::function<std::filesystem::path(const std:
   }
 }
 
-void WallSystem::setWallDefs(const std::vector<std::pair<std::string, std::string>>& idToModel) {
+void WallSystem::setWallDefs(const std::vector<WallDef>& defs) {
   if (!meshesInited_) return;
   meshes_.clearEntries();
   meshIds_.clear();
-  for (const auto& [id, modelPath] : idToModel) {
-    if (id.empty() || modelPath.empty()) continue;   // no mesh → placeholder path
-    meshes_.ensure(id, modelPath, 1, 1);
-    meshIds_.insert(id);
+  for (const auto& d : defs) {
+    if (d.id.empty() || d.modelPath.empty()) continue;   // no mesh → placeholder path
+    meshes_.ensure(d.id, d.modelPath, std::max(1, d.sizeX), std::max(1, d.sizeY));
+    meshIds_.insert(d.id);
   }
 }
 

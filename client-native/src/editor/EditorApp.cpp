@@ -2330,14 +2330,18 @@ void EditorApp::applyToolAt(int tx, int ty, float dt, bool rightClick,
       const std::string& objId = pillar ? pillarSubtype_ : wallSubtype_;
       auto& ws = map_.walls;
       // A tile may hold several walls (one per edge — e.g. N+E make a corner)
-      // and pillars, deduped per orientation. Left-click adds the current
-      // orient; right-click removes the wall/pillar at that exact orient.
-      auto matches = [&](const shared::WallSeg& w){
+      // and pillars. Left-click adds the current orient (deduped on the exact
+      // orient + type). Right-click erases ANY wall/pillar on the clicked tile,
+      // regardless of its orientation or type, so you can clear a tile without
+      // first matching the selected variant.
+      auto exact = [&](const shared::WallSeg& w){
         return w.tileX == tx && w.tileY == ty &&
-               w.pillar == pillar && w.orient == orient; };
+               w.pillar == pillar && w.orient == orient && w.objectId == objId; };
+      auto onTile = [&](const shared::WallSeg& w){
+        return w.tileX == tx && w.tileY == ty && w.pillar == pillar; };
       if (rightClick) {
-        ws.erase(std::remove_if(ws.begin(), ws.end(), matches), ws.end());
-      } else if (!std::any_of(ws.begin(), ws.end(), matches)) {
+        ws.erase(std::remove_if(ws.begin(), ws.end(), onTile), ws.end());
+      } else if (!std::any_of(ws.begin(), ws.end(), exact)) {
         ws.push_back({ tx, ty, orient, pillar, objId });
       }
       dirtyObstacles = true;   // walls rebuild alongside obstacles
@@ -3103,10 +3107,10 @@ void EditorApp::dbLoadAll() {
 
     // Feed Wall/Pillar object defs (id → model) to the wall system so uploaded
     // meshes replace the placeholders.
-    std::vector<std::pair<std::string, std::string>> wallDefs;
+    std::vector<world::WallSystem::WallDef> wallDefs;
     for (const auto& obj : dbObjects_)
       if (obj.objectType == "Wall" || obj.objectType == "Pillar")
-        wallDefs.emplace_back(obj.id, obj.modelPath);
+        wallDefs.push_back({ obj.id, obj.modelPath, obj.sizeX, obj.sizeY });
     walls_.setWallDefs(wallDefs);
     walls_.rebuildFromMap(map_);
 

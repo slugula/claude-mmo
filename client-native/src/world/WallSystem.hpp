@@ -35,8 +35,16 @@ public:
   // Wire the model library so wall/pillar variants with an uploaded mesh render
   // their glTF instead of the placeholder. Call once after initGL().
   void setModelResolver(std::function<std::filesystem::path(const std::string&)> r);
-  // Register variant id → model path (empty path → placeholder). Loads meshes.
-  void setWallDefs(const std::vector<std::pair<std::string, std::string>>& idToModel);
+  // One wall/pillar variant: id → model path (empty path → placeholder) with
+  // its DB footprint size (multi-tile walls span sizeX×sizeY).
+  struct WallDef {
+    std::string id;
+    std::string modelPath;
+    int         sizeX = 1;
+    int         sizeY = 1;
+  };
+  // Register the variants and load their meshes at the authored footprint size.
+  void setWallDefs(const std::vector<WallDef>& defs);
 
   // Gather instances from the map's wall list. Cheap; call when the map changes.
   void rebuildFromMap(const shared::WorldMapFile& map);

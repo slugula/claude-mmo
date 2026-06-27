@@ -943,10 +943,10 @@ void App::applyEntityDefs(const std::vector<editor::NpcDef>&    npcs,
   obstacles_.rebuildFromDefinitions(caches);
 
   // Wall/Pillar variant meshes for the wall system.
-  std::vector<std::pair<std::string, std::string>> wallDefs;
+  std::vector<world::WallSystem::WallDef> wallDefs;
   for (const auto& obj : dbObjectDefs_)
     if (obj.objectType == "Wall" || obj.objectType == "Pillar")
-      wallDefs.emplace_back(obj.id, obj.modelPath);
+      wallDefs.push_back({ obj.id, obj.modelPath, obj.sizeX, obj.sizeY });
   walls_.setWallDefs(wallDefs);
   walls_.rebuildFromMap(map_);
 
