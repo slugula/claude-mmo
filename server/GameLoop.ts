@@ -34,7 +34,7 @@ interface WorldMapJSON {
   // OSRS-style shaped surface layer (v3+). Relayed to the client for rendering.
   overlayTiles?: { tileX: number; tileY: number; shape: number; materialId: number; rotation?: number }[];
   // Wall + pillar edge features — relayed to the client for rendering.
-  walls?: { tileX: number; tileY: number; orient: number; pillar: boolean; objectId: string }[];
+  walls?: { tileX: number; tileY: number; orient: number; pillar: boolean; objectId: string; length?: number }[];
   // legacy v1 fields (ignored by new renderer)
   pixelWidth?:  number;
   pixelHeight?: number;
@@ -79,7 +79,7 @@ export class GameLoop {
   private worldTiles: TileData[][];
   private waterTiles: { tileX: number; tileY: number }[] = [];
   private overlayTiles: { tileX: number; tileY: number; shape: number; materialId: number; rotation?: number }[] = [];
-  private walls: { tileX: number; tileY: number; orient: number; pillar: boolean; objectId: string }[] = [];
+  private walls: { tileX: number; tileY: number; orient: number; pillar: boolean; objectId: string; length?: number }[] = [];
   // Manifest spawn (global tile coords) when a multi-chunk world is loaded;
   // null in legacy single-map mode (falls back to PLAYER_START_X/Y clamping).
   private worldSpawn: { x: number; y: number } | null = null;
@@ -112,7 +112,7 @@ export class GameLoop {
       permanentItems?: PermanentItemSpawn[];
       waterTiles?: { tileX: number; tileY: number }[];
       overlayTiles?: { tileX: number; tileY: number; shape: number; materialId: number; rotation?: number }[];
-      walls?: { tileX: number; tileY: number; orient: number; pillar: boolean; objectId: string }[];
+      walls?: { tileX: number; tileY: number; orient: number; pillar: boolean; objectId: string; length?: number }[];
     }
     let mapData: LoadedWorld;
     if (manifest) {

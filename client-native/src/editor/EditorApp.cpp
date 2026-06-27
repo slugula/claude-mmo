@@ -2329,20 +2329,43 @@ void EditorApp::applyToolAt(int tx, int ty, float dt, bool rightClick,
       const int  orient  = pillar ? pillarOrient_ : wallOrient_;
       const std::string& objId = pillar ? pillarSubtype_ : wallSubtype_;
       auto& ws = map_.walls;
-      // A tile may hold several walls (one per edge — e.g. N+E make a corner)
-      // and pillars. Left-click adds the current orient (deduped on the exact
-      // orient + type). Right-click erases ANY wall/pillar on the clicked tile,
-      // regardless of its orientation or type, so you can clear a tile without
-      // first matching the selected variant.
-      auto exact = [&](const shared::WallSeg& w){
-        return w.tileX == tx && w.tileY == ty &&
-               w.pillar == pillar && w.orient == orient && w.objectId == objId; };
-      auto onTile = [&](const shared::WallSeg& w){
-        return w.tileX == tx && w.tileY == ty && w.pillar == pillar; };
+      // Multi-tile walls span `length` tiles (the object's DB sizeX) along the
+      // orient-rotated run; pillars are always single.
+      int length = 1;
+      if (!pillar && !objId.empty())
+        for (const auto& o : dbObjects_) if (o.id == objId) { length = std::max(1, o.sizeX); break; }
+      const shared::WallSeg neu{ tx, ty, orient, pillar, objId, length };
+      const auto footprint = shared::wallFootprint(neu);
+
+      auto coversTile = [&](const shared::WallSeg& w, int qx, int qy){
+        for (const auto& f : shared::wallFootprint(w))
+          if (f.first == qx && f.second == qy) return true;
+        return false; };
+      auto overlapsNew = [&](const shared::WallSeg& w){
+        for (const auto& b : footprint)
+          if (coversTile(w, b.first, b.second)) return true;
+        return false; };
+
       if (rightClick) {
-        ws.erase(std::remove_if(ws.begin(), ws.end(), onTile), ws.end());
-      } else if (!std::any_of(ws.begin(), ws.end(), exact)) {
-        ws.push_back({ tx, ty, orient, pillar, objId });
+        // Erase ANY wall (resp. pillar) whose footprint covers the clicked tile,
+        // regardless of its orientation/variant — so a multi-tile wall is removed
+        // by clicking any tile it spans.
+        ws.erase(std::remove_if(ws.begin(), ws.end(), [&](const shared::WallSeg& w){
+                   return w.pillar == pillar && coversTile(w, tx, ty); }), ws.end());
+      } else if (length > 1) {
+        // A multi-tile wall claims its whole footprint: drop any wall/pillar of
+        // the same kind overlapping it (replacing the single walls underneath).
+        ws.erase(std::remove_if(ws.begin(), ws.end(), [&](const shared::WallSeg& w){
+                   return w.pillar == pillar && overlapsNew(w); }), ws.end());
+        ws.push_back(neu);
+      } else {
+        // Single wall: keep additive corners (different orients coexist), but
+        // swap a same-edge variant and clear any multi-tile wall under this tile.
+        ws.erase(std::remove_if(ws.begin(), ws.end(), [&](const shared::WallSeg& w){
+                   if (w.pillar != pillar) return false;
+                   if (w.length > 1 && coversTile(w, tx, ty)) return true;
+                   return w.tileX == tx && w.tileY == ty && w.orient == orient; }), ws.end());
+        ws.push_back(neu);
       }
       dirtyObstacles = true;   // walls rebuild alongside obstacles
       dirtyMinimap   = true;

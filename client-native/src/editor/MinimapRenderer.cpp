@@ -74,24 +74,28 @@ void rasterMapBase(const shared::WorldMapFile& map, int pxPerTile,
     }
   }
 
-  // Walls + pillars (white edge/corner lines).
+  // Walls + pillars (white edge/corner lines). Multi-tile walls draw on every
+  // footprint tile.
   for (const auto& w : map.walls) {
-    if (w.tileX < 0 || w.tileY < 0 || w.tileX >= W || w.tileY >= H) continue;
-    const int px = w.tileX * pxPerTile, py = w.tileY * pxPerTile, n = pxPerTile;
-    constexpr uint8_t R = 255, G = 255, B = 255;
     const int o = w.orient & 7;
-    if (w.pillar) {
-      const int cx = (o == 0 || o == 2) ? px + n - 1 : px;
-      const int cy = (o == 0 || o == 6) ? py + n - 1 : py;
-      setPx(cx, cy, R, G, B);
-    } else if ((o & 1) == 0) {
-      if      (o == 0) for (int i = 0; i < n; ++i) setPx(px + i,     py + n - 1, R, G, B);
-      else if (o == 2) for (int i = 0; i < n; ++i) setPx(px + n - 1, py + i,     R, G, B);
-      else if (o == 4) for (int i = 0; i < n; ++i) setPx(px + i,     py,         R, G, B);
-      else             for (int i = 0; i < n; ++i) setPx(px,         py + i,     R, G, B);
-    } else {
-      if (o == 1 || o == 5) for (int i = 0; i < n; ++i) setPx(px + n - 1 - i, py + i, R, G, B);
-      else                  for (int i = 0; i < n; ++i) setPx(px + i,         py + i, R, G, B);
+    for (const auto& f : shared::wallFootprint(w)) {
+      const int fx = f.first, fy = f.second;
+      if (fx < 0 || fy < 0 || fx >= W || fy >= H) continue;
+      const int px = fx * pxPerTile, py = fy * pxPerTile, n = pxPerTile;
+      constexpr uint8_t R = 255, G = 255, B = 255;
+      if (w.pillar) {
+        const int cx = (o == 0 || o == 2) ? px + n - 1 : px;
+        const int cy = (o == 0 || o == 6) ? py + n - 1 : py;
+        setPx(cx, cy, R, G, B);
+      } else if ((o & 1) == 0) {
+        if      (o == 0) for (int i = 0; i < n; ++i) setPx(px + i,     py + n - 1, R, G, B);
+        else if (o == 2) for (int i = 0; i < n; ++i) setPx(px + n - 1, py + i,     R, G, B);
+        else if (o == 4) for (int i = 0; i < n; ++i) setPx(px + i,     py,         R, G, B);
+        else             for (int i = 0; i < n; ++i) setPx(px,         py + i,     R, G, B);
+      } else {
+        if (o == 1 || o == 5) for (int i = 0; i < n; ++i) setPx(px + n - 1 - i, py + i, R, G, B);
+        else                  for (int i = 0; i < n; ++i) setPx(px + i,         py + i, R, G, B);
+      }
     }
   }
 }

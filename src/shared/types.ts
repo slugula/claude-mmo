@@ -115,6 +115,10 @@ export interface WallSeg {
   orient: number;     // 0..7, 45° steps
   pillar: boolean;    // false = wall (edge), true = pillar (corner)
   objectId: string;   // variant id ("" = placeholder)
+  // Tiles spanned along the wall's run (multi-tile walls, from the object's
+  // DB sizeX). Absent/1 = single tile. The footprint extends from (tileX,tileY)
+  // in the orient-rotated +X direction; every covered tile blocks the same edge.
+  length?: number;
 }
 
 export interface WorldMapFile {

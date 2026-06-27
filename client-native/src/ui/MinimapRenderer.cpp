@@ -207,26 +207,30 @@ void MinimapRenderer::ensureRegion(int centerTx, int centerTy)
     // +tileX = right, +tileY = down in the base texture. Lines hug the inside
     // edge so building perimeters read as a continuous white outline.
     for (const auto& w : map.walls) {
-        if (w.tileX < regionOriginX_ || w.tileY < regionOriginY_ ||
-            w.tileX >= regionOriginX_ + regionW_ ||
-            w.tileY >= regionOriginY_ + regionH_) continue;
-        const int px = (w.tileX - regionOriginX_) * kPxPerTile;
-        const int py = (w.tileY - regionOriginY_) * kPxPerTile;
-        const int n  = kPxPerTile;
-        constexpr uint8_t R = 255, G = 255, B = 255;
         const int o = w.orient & 7;
-        if (w.pillar) {
-            const int cx = (o == 0 || o == 2) ? px + n - 1 : px;   // +X corners on the right
-            const int cy = (o == 0 || o == 6) ? py + n - 1 : py;   // +Z corners on the bottom
-            setPixel(cx, cy, R, G, B);
-        } else if ((o & 1) == 0) {
-            if      (o == 0) for (int i = 0; i < n; ++i) setPixel(px + i,     py + n - 1, R, G, B); // +Z (bottom)
-            else if (o == 2) for (int i = 0; i < n; ++i) setPixel(px + n - 1, py + i,     R, G, B); // +X (right)
-            else if (o == 4) for (int i = 0; i < n; ++i) setPixel(px + i,     py,         R, G, B); // -Z (top)
-            else             for (int i = 0; i < n; ++i) setPixel(px,         py + i,     R, G, B); // -X (left)
-        } else {
-            if (o == 1 || o == 5) for (int i = 0; i < n; ++i) setPixel(px + n - 1 - i, py + i, R, G, B); // "/"
-            else                  for (int i = 0; i < n; ++i) setPixel(px + i,         py + i, R, G, B); // "\"
+        // Multi-tile walls draw their edge on every footprint tile.
+        for (const auto& f : shared::wallFootprint(w)) {
+            const int fx = f.first, fy = f.second;
+            if (fx < regionOriginX_ || fy < regionOriginY_ ||
+                fx >= regionOriginX_ + regionW_ ||
+                fy >= regionOriginY_ + regionH_) continue;
+            const int px = (fx - regionOriginX_) * kPxPerTile;
+            const int py = (fy - regionOriginY_) * kPxPerTile;
+            const int n  = kPxPerTile;
+            constexpr uint8_t R = 255, G = 255, B = 255;
+            if (w.pillar) {
+                const int cx = (o == 0 || o == 2) ? px + n - 1 : px;   // +X corners on the right
+                const int cy = (o == 0 || o == 6) ? py + n - 1 : py;   // +Z corners on the bottom
+                setPixel(cx, cy, R, G, B);
+            } else if ((o & 1) == 0) {
+                if      (o == 0) for (int i = 0; i < n; ++i) setPixel(px + i,     py + n - 1, R, G, B); // +Z (bottom)
+                else if (o == 2) for (int i = 0; i < n; ++i) setPixel(px + n - 1, py + i,     R, G, B); // +X (right)
+                else if (o == 4) for (int i = 0; i < n; ++i) setPixel(px + i,     py,         R, G, B); // -Z (top)
+                else             for (int i = 0; i < n; ++i) setPixel(px,         py + i,     R, G, B); // -X (left)
+            } else {
+                if (o == 1 || o == 5) for (int i = 0; i < n; ++i) setPixel(px + n - 1 - i, py + i, R, G, B); // "/"
+                else                  for (int i = 0; i < n; ++i) setPixel(px + i,         py + i, R, G, B); // "\"
+            }
         }
     }
 

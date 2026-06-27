@@ -9,10 +9,12 @@
 // TypeScript -> C++ codegen script.
 
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace shared {
@@ -94,7 +96,23 @@ struct WallSeg {
   int         orient   = 0;       // 0..7 (45° increments)
   bool        pillar   = false;   // false = wall (edge), true = pillar (corner)
   std::string objectId;           // wall/pillar variant id ("" = built-in placeholder)
+  int         length   = 1;       // tiles spanned along the orient-rotated +X run
 };
+
+// Tiles a wall/pillar spans. Single-tile when length<=1 (always for pillars);
+// otherwise the footprint runs from (tileX,tileY) in the orient-rotated +X
+// direction for `length` tiles. Mirror of wallFootprint() in WorldState.ts.
+inline std::vector<std::pair<int,int>> wallFootprint(const WallSeg& w) {
+  const int    len = w.pillar ? 1 : (w.length > 1 ? w.length : 1);
+  const double a   = (w.orient & 7) * 0.78539816339744830961;   // 45° in radians
+  const int    dx  = static_cast<int>(std::lround(std::cos(a)));
+  const int    dy  = static_cast<int>(std::lround(std::sin(a)));
+  std::vector<std::pair<int,int>> out;
+  out.reserve(static_cast<size_t>(len));
+  for (int i = 0; i < len; ++i)
+    out.emplace_back(w.tileX + i * dx, w.tileY + i * dy);
+  return out;
+}
 
 // ---- In-memory map (produced by MapGenerator or loaded from JSON) --------
 

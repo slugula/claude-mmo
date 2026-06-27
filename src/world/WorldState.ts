@@ -47,12 +47,15 @@ export function createWorldFromTiles(
     ? Float32Array.from(vertexHeights)
     : migrateVertexHeights(normalized, W, H);
   // A diagonal wall cuts through the middle of its tile — block the whole tile
-  // (simpler and matches expectations) rather than an edge.
+  // (simpler and matches expectations) rather than an edge. Multi-tile diagonal
+  // walls block every tile in their footprint.
   if (walls) {
     for (const w of walls) {
       if (!w.pillar && (w.orient & 1) === 1) {
-        const t = normalized[w.tileY]?.[w.tileX];
-        if (t) t.walkable = false;
+        for (const f of wallFootprint(w)) {
+          const t = normalized[f.y]?.[f.x];
+          if (t) t.walkable = false;
+        }
       }
     }
   }
@@ -67,23 +70,40 @@ export function createWorldFromTiles(
 export const CLIP_XP = 1,  CLIP_XM = 2,  CLIP_YP = 4,  CLIP_YM = 8;     // +x,-x,+y,-y edges
 export const CLIP_PP = 16, CLIP_PM = 32, CLIP_MP = 64, CLIP_MM = 128;   // +x+y,+x-y,-x+y,-x-y diagonals
 
+// Tiles a wall spans. Single-tile when length<=1; otherwise the footprint runs
+// from (tileX,tileY) in the orient-rotated +X direction for `length` tiles.
+// Pillars never span (length forced to 1).
+export function wallFootprint(w: WallSeg): { x: number; y: number }[] {
+  const len = w.pillar ? 1 : Math.max(1, Math.floor(w.length ?? 1));
+  const a  = (w.orient & 7) * Math.PI / 4;
+  const dx = Math.round(Math.cos(a));
+  const dy = Math.round(Math.sin(a));
+  const out: { x: number; y: number }[] = [];
+  for (let i = 0; i < len; i++) out.push({ x: w.tileX + i * dx, y: w.tileY + i * dy });
+  return out;
+}
+
 export function buildWallClip(walls: WallSeg[], W: number, H: number): Uint8Array {
   const clip = new Uint8Array(W * H);
   const set = (x: number, y: number, bit: number) => {
     if (x >= 0 && x < W && y >= 0 && y < H) clip[y * W + x] |= bit;
   };
   for (const w of walls) {
-    const x = w.tileX, y = w.tileY, o = w.orient & 7;
+    const o = w.orient & 7;
     if (w.pillar) {
+      const x = w.tileX, y = w.tileY;
       if      (o === 0) { set(x, y, CLIP_PP); set(x + 1, y + 1, CLIP_MM); }
       else if (o === 2) { set(x, y, CLIP_PM); set(x + 1, y - 1, CLIP_MP); }
       else if (o === 4) { set(x, y, CLIP_MM); set(x - 1, y - 1, CLIP_PP); }
       else if (o === 6) { set(x, y, CLIP_MP); set(x - 1, y + 1, CLIP_PM); }
-    } else if ((o & 1) === 0) {   // cardinal edge wall
-      if      (o === 0) { set(x, y, CLIP_YP); set(x, y + 1, CLIP_YM); }
-      else if (o === 2) { set(x, y, CLIP_XP); set(x + 1, y, CLIP_XM); }
-      else if (o === 4) { set(x, y, CLIP_YM); set(x, y - 1, CLIP_YP); }
-      else if (o === 6) { set(x, y, CLIP_XM); set(x - 1, y, CLIP_XP); }
+    } else if ((o & 1) === 0) {   // cardinal edge wall — block the edge on every footprint tile
+      for (const f of wallFootprint(w)) {
+        const x = f.x, y = f.y;
+        if      (o === 0) { set(x, y, CLIP_YP); set(x, y + 1, CLIP_YM); }
+        else if (o === 2) { set(x, y, CLIP_XP); set(x + 1, y, CLIP_XM); }
+        else if (o === 4) { set(x, y, CLIP_YM); set(x, y - 1, CLIP_YP); }
+        else if (o === 6) { set(x, y, CLIP_XM); set(x - 1, y, CLIP_XP); }
+      }
     }
   }
   return clip;

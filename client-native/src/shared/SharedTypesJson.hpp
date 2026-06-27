@@ -65,7 +65,8 @@ struct glz::meta<shared::WallSeg> {
     "tileY",    &T::tileY,
     "orient",   &T::orient,
     "pillar",   &T::pillar,
-    "objectId", &T::objectId);
+    "objectId", &T::objectId,
+    "length",   &T::length);
 };
 
 template <>
